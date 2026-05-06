@@ -2,3 +2,4 @@ coverage.out
 *_coverage.out
 *.exe
 .codewiki/
+*.exe~
