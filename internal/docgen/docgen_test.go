@@ -1,8 +1,11 @@
 package docgen
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/splitsword/fine-codewiki/internal/analyzer"
@@ -185,4 +188,93 @@ func TestGenerateWikiFromGraph(t *testing.T) {
 	// Verify architecture doc contains embedded diagram
 	assert.Contains(t, wiki.Architecture, "```mermaid")
 	assert.Contains(t, wiki.Architecture, archDSL)
+}
+
+// ---------- Mock LLM Tests ----------
+
+type mockProvider struct {
+	response string
+	err      error
+}
+
+func (m *mockProvider) Complete(ctx context.Context, prompt string) (string, error) {
+	return m.response, m.err
+}
+
+func (m *mockProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	return nil, nil
+}
+
+func TestGenerateWikiWithLLM(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "models/user.py", Classes: []analyzer.ClassInfo{{Name: "User"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	mock := &mockProvider{response: "This is an AI-enhanced project overview."}
+	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "ai-project", "graph TD\n", "classDiagram\n")
+
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+
+	// Should contain LLM enhancement
+	assert.Contains(t, wiki.Overview, "AI-enhanced project overview")
+	// Should also contain static content
+	assert.Contains(t, wiki.Overview, "ai-project")
+	assert.Contains(t, wiki.Overview, "models/user")
+}
+
+func TestGenerateWikiWithLLMFallback(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "models/user.py", Classes: []analyzer.ClassInfo{{Name: "User"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// LLM returns error — should fall back to static generation
+	mock := &mockProvider{err: errors.New("llm unavailable")}
+	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "fallback-project", "graph TD\n", "classDiagram\n")
+
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+
+	// Should still contain static content, no panic
+	assert.Contains(t, wiki.Overview, "fallback-project")
+	assert.Contains(t, wiki.Overview, "models/user")
+	// Should NOT contain enhanced header format since LLM failed
+	assert.False(t, strings.Contains(wiki.Overview, "---"))
+}
+
+func TestGenerateOverviewMarkdownSingleFile(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "app.py",
+			Classes: []analyzer.ClassInfo{
+				{Name: "App", Methods: []analyzer.FunctionInfo{{Name: "run", Params: []string{"self"}}}},
+			},
+			Functions: []analyzer.FunctionInfo{{Name: "main", Params: []string{}, ReturnType: "int"}},
+		},
+	}
+	graph := grapher.BuildGraph(files)
+
+	md, err := GenerateOverviewMarkdown(graph, "single-file-app")
+	require.NoError(t, err)
+
+	assert.Contains(t, md, "# single-file-app")
+	assert.Contains(t, md, "**Modules**")
+	assert.Contains(t, md, "**Classes**")
+	assert.Contains(t, md, "**Functions**")
+	assert.Contains(t, md, "app")
+}
+
+func TestGenerateWikiEmptyRepo(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{})
+	wiki, err := GenerateWiki(graph, "empty", "graph TD\n", "classDiagram\n")
+
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+
+	assert.Contains(t, wiki.Overview, "empty")
+	assert.Contains(t, wiki.Overview, "No modules found")
+	assert.Contains(t, wiki.APIReference, "No API symbols found")
+	assert.Contains(t, wiki.Architecture, "Module Overview")
 }

@@ -154,6 +154,88 @@ func (g *Graph) DependentsOf(moduleName string) []string {
 	return deps
 }
 
+// Cycle represents a circular dependency path.
+type Cycle struct {
+	Nodes []string
+}
+
+// DetectCycles finds all simple cycles in the dependency graph using DFS.
+func (g *Graph) DetectCycles() []Cycle {
+	adj := make(map[string][]string)
+	for _, e := range g.Edges {
+		adj[e.From] = append(adj[e.From], e.To)
+	}
+
+	var cycles []Cycle
+	visited := make(map[string]bool)
+
+	var dfs func(node string, path []string, pathSet map[string]bool)
+	dfs = func(node string, path []string, pathSet map[string]bool) {
+		visited[node] = true
+		path = append(path, node)
+		pathSet[node] = true
+
+		for _, next := range adj[node] {
+			if pathSet[next] {
+				// Found a cycle: extract cycle portion from path
+				cycleStart := 0
+				for i, n := range path {
+					if n == next {
+						cycleStart = i
+						break
+					}
+				}
+				cycle := append([]string(nil), path[cycleStart:]...)
+				cycle = append(cycle, next) // close the loop
+				cycles = append(cycles, Cycle{Nodes: cycle})
+				continue
+			}
+			dfs(next, path, pathSet)
+		}
+
+		pathSet[node] = false
+	}
+
+	for _, n := range g.Nodes {
+		if !visited[n.Name] {
+			dfs(n.Name, nil, make(map[string]bool))
+		}
+	}
+
+	// Deduplicate cycles that are rotations of each other
+	return deduplicateCycles(cycles)
+}
+
+func deduplicateCycles(cycles []Cycle) []Cycle {
+	seen := make(map[string]bool)
+	var result []Cycle
+	for _, c := range cycles {
+		key := cycleKey(c.Nodes)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+func cycleKey(nodes []string) string {
+	if len(nodes) == 0 {
+		return ""
+	}
+	// Find lexicographically smallest rotation
+	s := strings.Join(nodes, ">")
+	min := s
+	n := len(s)
+	for i := 1; i < n; i++ {
+		rot := s[i:] + s[:i]
+		if rot < min {
+			min = rot
+		}
+	}
+	return min
+}
+
 // moduleNameFromFilename converts a filename to a module name (without extension).
 func moduleNameFromFilename(filename string) string {
 	// Remove extension

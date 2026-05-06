@@ -58,11 +58,25 @@ func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 		}
 	}
 
+	// Detect cycles for annotation
+	cycles := graph.DetectCycles()
+	cycleEdges := make(map[string]bool)
+	for _, c := range cycles {
+		for i := 0; i < len(c.Nodes)-1; i++ {
+			key := c.Nodes[i] + "->" + c.Nodes[i+1]
+			cycleEdges[key] = true
+		}
+	}
+
 	// Write edges
 	for _, e := range graph.Edges {
 		fromID := mermaidEscape(e.From)
 		toID := mermaidEscape(e.To)
-		b.WriteString(fmt.Sprintf("    %s --> %s\n", fromID, toID))
+		if cycleEdges[e.From+"->"+e.To] {
+			b.WriteString(fmt.Sprintf("    %s -.-> %s\n", fromID, toID))
+		} else {
+			b.WriteString(fmt.Sprintf("    %s --> %s\n", fromID, toID))
+		}
 	}
 
 	return b.String(), nil

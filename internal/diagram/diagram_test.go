@@ -208,3 +208,77 @@ func TestMermaidEscape(t *testing.T) {
 	assert.Equal(t, "foo_bar", mermaidEscape("foo/bar"))
 	assert.Equal(t, "foo__bar", mermaidEscape("foo--bar"))
 }
+
+func TestGenerateArchitectureDiagramCircularDeps(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Imports:  []analyzer.ImportInfo{{Module: ".order", Name: "Order", IsRelative: true}},
+		},
+		{
+			Filename: "models/order.py",
+			Imports:  []analyzer.ImportInfo{{Module: ".user", Name: "User", IsRelative: true}},
+		},
+	}
+
+	graph := grapher.BuildGraph(files)
+	dsl, err := GenerateArchitectureDiagram(graph)
+	require.NoError(t, err)
+
+	// Circular dependency edges should use dotted style
+	assert.Contains(t, dsl, "models_user -.-> models_order")
+	assert.Contains(t, dsl, "models_order -.-> models_user")
+}
+
+func TestGenerateArchitectureDiagramStability(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "models/user.py", Imports: []analyzer.ImportInfo{{Module: ".base", Name: "BaseModel", IsRelative: true}}},
+		{Filename: "models/base.py"},
+		{Filename: "services/api.py", Imports: []analyzer.ImportInfo{{Module: "..models.user", Name: "User", IsRelative: true}}},
+	}
+
+	graph := grapher.BuildGraph(files)
+
+	// Generate multiple times and verify identical output
+	var outputs []string
+	for i := 0; i < 5; i++ {
+		dsl, err := GenerateArchitectureDiagram(graph)
+		require.NoError(t, err)
+		outputs = append(outputs, dsl)
+	}
+
+	for i := 1; i < len(outputs); i++ {
+		assert.Equal(t, outputs[0], outputs[i], "architecture diagram should be deterministic")
+	}
+
+	// Same for class diagram
+	var classOutputs []string
+	for i := 0; i < 5; i++ {
+		dsl, err := GenerateClassDiagram(graph)
+		require.NoError(t, err)
+		classOutputs = append(classOutputs, dsl)
+	}
+
+	for i := 1; i < len(classOutputs); i++ {
+		assert.Equal(t, classOutputs[0], classOutputs[i], "class diagram should be deterministic")
+	}
+}
+
+func TestGenerateClassDiagramEmptyClass(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "models/placeholder.py",
+			Classes: []analyzer.ClassInfo{
+				{Name: "EmptyClass", Methods: []analyzer.FunctionInfo{}},
+			},
+		},
+	}
+
+	graph := grapher.BuildGraph(files)
+	dsl, err := GenerateClassDiagram(graph)
+	require.NoError(t, err)
+
+	// Should contain empty class definition
+	assert.Contains(t, dsl, "class EmptyClass {")
+	assert.Contains(t, dsl, "}")
+}

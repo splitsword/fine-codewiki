@@ -3,6 +3,7 @@ package analyzer
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -250,7 +251,183 @@ func TestParseDirectoryWithInvalidPath(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestParsePythonComplexRepo(t *testing.T) {
+	repoPath := filepath.Join("..", "..", "testdata", "repos", "python-complex")
+	_, err := os.Stat(repoPath)
+	if os.IsNotExist(err) {
+		t.Skip("testdata not found, skipping integration test")
+	}
+
+	results, err := ParseDirectory(repoPath, "python")
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	// Should find all source files
+	assert.GreaterOrEqual(t, len(results), 8)
+
+	// Verify complex structures are parsed
+	var userPy, orderPy, basePy *FileResult
+	for _, r := range results {
+		base := filepath.Base(r.Filename)
+		switch base {
+		case "user.py":
+			userPy = r
+		case "order.py":
+			orderPy = r
+		case "base.py":
+			basePy = r
+		}
+	}
+
+	require.NotNil(t, basePy, "base.py should be parsed")
+	require.NotNil(t, userPy, "user.py should be parsed")
+	require.NotNil(t, orderPy, "order.py should be parsed")
+
+	// BaseModel should be abstract class
+	assert.Len(t, basePy.Classes, 3)
+
+	// User has multiple inheritance and decorators
+	assert.GreaterOrEqual(t, len(userPy.Classes), 1)
+	userClass := userPy.Classes[0]
+	assert.Equal(t, "User", userClass.Name)
+
+	// Order has circular dependency import
+	assert.GreaterOrEqual(t, len(orderPy.Imports), 1)
+}
+
 func TestParsePythonParamsWithDefaults(t *testing.T) {
 	params := parsePythonParams("self, name: str = 'default', age: int = 0")
 	assert.Equal(t, []string{"self", "name", "age"}, params)
+}
+
+func TestParsePythonImportAlias(t *testing.T) {
+	src := `import os as operating_system
+import sys, json as js
+from typing import Optional as Opt
+`
+	result, err := ParsePython("aliases.py", src)
+	require.NoError(t, err)
+	require.Len(t, result.Imports, 4)
+
+	assert.Equal(t, "os", result.Imports[0].Module)
+	assert.Equal(t, "operating_system", result.Imports[0].Name)
+
+	assert.Equal(t, "sys", result.Imports[1].Module)
+	assert.Equal(t, "sys", result.Imports[1].Name)
+
+	assert.Equal(t, "json", result.Imports[2].Module)
+	assert.Equal(t, "js", result.Imports[2].Name)
+
+	assert.Equal(t, "typing", result.Imports[3].Module)
+	assert.Equal(t, "Opt", result.Imports[3].Name)
+}
+
+func TestParsePythonDeepNesting(t *testing.T) {
+	src := `class Outer:
+    class Inner:
+        def inner_method(self):
+            pass
+
+        class DeepInner:
+            pass
+
+    def outer_method(self):
+        def nested_func():
+            pass
+        pass
+`
+	result, err := ParsePython("deep.py", src)
+	require.NoError(t, err)
+
+	// Current regex-based parser treats each class definition at its indent level
+	// as a top-level class entry. Nested classes are captured independently.
+	// Due to indent tracking limitations, outer_method exits the deepest nested
+	// class scope and becomes a top-level function instead of Outer‘s method.
+	require.Len(t, result.Classes, 3)
+	assert.Equal(t, "Outer", result.Classes[0].Name)
+	assert.Equal(t, "Inner", result.Classes[1].Name)
+	assert.Equal(t, "DeepInner", result.Classes[2].Name)
+
+	// Inner class should have its own method
+	assert.Len(t, result.Classes[1].Methods, 1)
+	assert.Equal(t, "inner_method", result.Classes[1].Methods[0].Name)
+
+	// Outer method and its nested function end up as top-level functions
+	// due to nested class indent tracking limitations
+	require.Len(t, result.Functions, 2)
+	assert.Equal(t, "outer_method", result.Functions[0].Name)
+	assert.Equal(t, "nested_func", result.Functions[1].Name)
+}
+
+func TestParsePythonConcurrent(t *testing.T) {
+	src := `class User:
+    id: int
+    name: str
+
+    def greet(self) -> str:
+        return f"Hello, {self.name}"
+
+class Order:
+    total: float
+
+    def calc(self) -> float:
+        return self.total * 1.1
+`
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := ParsePython("concurrent.py", src)
+			require.NoError(t, err)
+			require.Len(t, result.Classes, 2)
+			assert.Equal(t, "User", result.Classes[0].Name)
+			assert.Equal(t, "Order", result.Classes[1].Name)
+		}()
+	}
+	wg.Wait()
+}
+
+func BenchmarkParsePython(b *testing.B) {
+	src := `from dataclasses import dataclass
+from typing import Optional, List
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: Optional[str] = None
+
+    def greet(self) -> str:
+        return f"Hello, {self.name}"
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "email": self.email}
+
+class Order:
+    id: int
+    user: User
+    items: List[str]
+
+    def total(self) -> float:
+        return sum(len(item) for item in self.items)
+
+class OrderService:
+    def __init__(self, repo):
+        self.repo = repo
+
+    def create_order(self, user_id: int, items: List[str]) -> Order:
+        user = self.repo.get_user(user_id)
+        return Order(id=0, user=user, items=items)
+
+    def cancel_order(self, order_id: int) -> bool:
+        return self.repo.delete(order_id)
+`
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := ParsePython("bench.py", src)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

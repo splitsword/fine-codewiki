@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/splitsword/fine-codewiki/internal/diagram"
 	"github.com/splitsword/fine-codewiki/internal/docgen"
 	"github.com/splitsword/fine-codewiki/internal/grapher"
+	"github.com/splitsword/fine-codewiki/internal/llm"
 )
 
 // Config holds CLI configuration.
@@ -72,7 +74,19 @@ func RunGenerate(cfg *Config) error {
 	}
 
 	fmt.Println("Generating documentation...")
-	wiki, err := docgen.GenerateWiki(graph, cfg.ProjectName, archDSL, classDSL)
+
+	// Attempt to load LLM config for optional enhancement
+	var provider llm.Provider
+	llmCfg, _ := llm.LoadConfig("")
+	if llmCfg != nil {
+		p, err := llm.NewProvider(llmCfg)
+		if err == nil {
+			provider = p
+			fmt.Println("LLM enhancement enabled")
+		}
+	}
+
+	wiki, err := docgen.GenerateWikiEnhanced(context.Background(), provider, graph, cfg.ProjectName, archDSL, classDSL)
 	if err != nil {
 		return fmt.Errorf("generate wiki: %w", err)
 	}

@@ -1,6 +1,7 @@
 package grapher
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/splitsword/fine-codewiki/internal/analyzer"
@@ -244,4 +245,77 @@ func TestDependentsOf(t *testing.T) {
 
 	assert.Len(t, deps, 1)
 	assert.Equal(t, "services/user_service", deps[0])
+}
+
+func TestBuildGraphWithCircularDependencies(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Imports: []analyzer.ImportInfo{
+				{Module: ".order", Name: "Order", IsRelative: true},
+			},
+		},
+		{
+			Filename: "models/order.py",
+			Imports: []analyzer.ImportInfo{
+				{Module: ".user", Name: "User", IsRelative: true},
+			},
+		},
+	}
+
+	graph := BuildGraph(files)
+	require.NotNil(t, graph)
+
+	// Both nodes should exist
+	assert.Len(t, graph.Nodes, 2)
+	// Both edges should exist (circular dependency preserved)
+	assert.Len(t, graph.Edges, 2)
+	assert.True(t, hasEdge(graph.Edges, "models/user", "models/order"))
+	assert.True(t, hasEdge(graph.Edges, "models/order", "models/user"))
+
+	// Detect cycles
+	cycles := graph.DetectCycles()
+	assert.NotEmpty(t, cycles, "should detect circular dependency")
+}
+
+func TestDetectCyclesNoCycles(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "main.py",
+			Imports: []analyzer.ImportInfo{{Module: "models.user", Name: "User"}},
+		},
+		{Filename: "models/user.py"},
+	}
+
+	graph := BuildGraph(files)
+	cycles := graph.DetectCycles()
+	assert.Empty(t, cycles)
+}
+
+func TestBuildGraphLargeGraph(t *testing.T) {
+	var files []*analyzer.FileResult
+	// Create 100 nodes in a chain: module_0 -> module_1 -> ... -> module_99
+	for i := 0; i < 100; i++ {
+		f := &analyzer.FileResult{
+			Filename: fmt.Sprintf("modules/module_%d.py", i),
+		}
+		if i < 99 {
+			f.Imports = []analyzer.ImportInfo{
+				{Module: fmt.Sprintf("..modules.module_%d", i+1), Name: fmt.Sprintf("Mod%d", i+1), IsRelative: true},
+			}
+		}
+		files = append(files, f)
+	}
+
+	graph := BuildGraph(files)
+	require.NotNil(t, graph)
+	assert.Len(t, graph.Nodes, 100)
+	assert.Len(t, graph.Edges, 99)
+
+	// Verify chain integrity
+	for i := 0; i < 99; i++ {
+		from := fmt.Sprintf("modules/module_%d", i)
+		to := fmt.Sprintf("modules/module_%d", i+1)
+		assert.True(t, hasEdge(graph.Edges, from, to), "expected edge %s -> %s", from, to)
+	}
 }

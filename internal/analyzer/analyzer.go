@@ -43,7 +43,7 @@ type FileResult struct {
 // ---------- Python Parser ----------
 
 var (
-	pyImportRegex    = regexp.MustCompile(`^import\s+([\w.]+(?:\s*,\s*[\w.]+)*)`)
+	pyImportRegex    = regexp.MustCompile(`^import\s+(.+)`)
 	pyFromImportRegex = regexp.MustCompile(`^from\s+([\w.]+)\s+import\s+\(([^)]+)\)|^from\s+([\w.]+)\s+import\s+(.+)`)
 	pyClassRegex     = regexp.MustCompile(`^class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:`)
 	pyFuncRegex      = regexp.MustCompile(`^def\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*(\S+))?\s*:`)
@@ -159,14 +159,20 @@ func parsePythonImport(line string) []ImportInfo {
 		return results
 	}
 
-	// import X
+	// import X [as Y]
 	if m := pyImportRegex.FindStringSubmatch(line); m != nil {
-		for _, mod := range splitAndTrim(m[1]) {
-			mod = strings.TrimSpace(mod)
-			if mod == "" {
+		for _, part := range splitAndTrim(m[1]) {
+			part = strings.TrimSpace(part)
+			if part == "" {
 				continue
 			}
-			results = append(results, ImportInfo{Module: mod, Name: mod})
+			if idx := strings.Index(part, " as "); idx > 0 {
+				mod := strings.TrimSpace(part[:idx])
+				name := strings.TrimSpace(part[idx+4:])
+				results = append(results, ImportInfo{Module: mod, Name: name})
+			} else {
+				results = append(results, ImportInfo{Module: part, Name: part})
+			}
 		}
 		return results
 	}

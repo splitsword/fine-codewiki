@@ -1,6 +1,7 @@
 package docgen
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/splitsword/fine-codewiki/internal/grapher"
+	"github.com/splitsword/fine-codewiki/internal/llm"
 )
 
 // Wiki holds all generated documentation artifacts.
@@ -22,9 +24,24 @@ type Wiki struct {
 
 // GenerateWiki produces a complete Wiki from analysis results and diagrams.
 func GenerateWiki(graph *grapher.Graph, projectName, archDSL, classDSL string) (*Wiki, error) {
+	return GenerateWikiEnhanced(context.Background(), nil, graph, projectName, archDSL, classDSL)
+}
+
+// GenerateWikiEnhanced produces a Wiki with optional LLM enhancement.
+// If provider is nil, falls back to static generation.
+func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *grapher.Graph, projectName, archDSL, classDSL string) (*Wiki, error) {
 	overview, err := GenerateOverviewMarkdown(graph, projectName)
 	if err != nil {
 		return nil, fmt.Errorf("generate overview: %w", err)
+	}
+
+	// LLM enhancement for overview
+	if provider != nil {
+		prompt := buildOverviewPrompt(graph, projectName)
+		enhanced, err := provider.Complete(ctx, prompt)
+		if err == nil && enhanced != "" {
+			overview = fmt.Sprintf("# %s\n\n%s\n\n---\n\n%s", projectName, enhanced, overview)
+		}
 	}
 
 	apiRef, err := GenerateAPIReferenceMarkdown(graph)
@@ -37,6 +54,15 @@ func GenerateWiki(graph *grapher.Graph, projectName, archDSL, classDSL string) (
 		return nil, fmt.Errorf("generate architecture doc: %w", err)
 	}
 
+	// LLM enhancement for architecture
+	if provider != nil {
+		prompt := buildArchitecturePrompt(graph)
+		enhanced, err := provider.Complete(ctx, prompt)
+		if err == nil && enhanced != "" {
+			arch = fmt.Sprintf("# Architecture\n\n%s\n\n---\n\n%s", enhanced, arch)
+		}
+	}
+
 	return &Wiki{
 		ProjectName:         projectName,
 		Overview:            overview,
@@ -45,6 +71,41 @@ func GenerateWiki(graph *grapher.Graph, projectName, archDSL, classDSL string) (
 		ClassDiagram:        classDSL,
 		ArchitectureDiagram: archDSL,
 	}, nil
+}
+
+func buildOverviewPrompt(graph *grapher.Graph, projectName string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Analyze the following codebase and write a concise project overview in 2-3 paragraphs.\n\n")
+	fmt.Fprintf(&b, "Project: %s\n", projectName)
+	fmt.Fprintf(&b, "Modules: %d\n", len(graph.Nodes))
+	fmt.Fprintf(&b, "Dependencies: %d\n\n", len(graph.Edges))
+	fmt.Fprintf(&b, "Module list:\n")
+	for _, n := range graph.Nodes {
+		line := "- " + n.Name
+		if len(n.Classes) > 0 {
+			line += fmt.Sprintf(" (%d classes)", len(n.Classes))
+		}
+		if len(n.Functions) > 0 {
+			line += fmt.Sprintf(" (%d functions)", len(n.Functions))
+		}
+		fmt.Fprintln(&b, line)
+	}
+	return b.String()
+}
+
+func buildArchitecturePrompt(graph *grapher.Graph) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Analyze the following module dependency structure and describe the system architecture, design patterns, and layer relationships in 2-3 paragraphs.\n\n")
+	fmt.Fprintf(&b, "Modules and their dependencies:\n")
+	for _, n := range graph.Nodes {
+		deps := graph.DependenciesOf(n.Name)
+		if len(deps) > 0 {
+			fmt.Fprintf(&b, "- %s depends on: %s\n", n.Name, strings.Join(deps, ", "))
+		} else {
+			fmt.Fprintf(&b, "- %s (no internal dependencies)\n", n.Name)
+		}
+	}
+	return b.String()
 }
 
 // GenerateOverviewMarkdown creates a project overview Markdown document.
