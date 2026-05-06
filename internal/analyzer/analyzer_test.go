@@ -1,0 +1,156 @@
+package analyzer
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestParsePythonFile(t *testing.T) {
+	src := `from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class User:
+    id: int
+    name: str
+
+    def greet(self) -> str:
+        return f"Hello, {self.name}"
+
+def create_user(name: str) -> User:
+    return User(id=0, name=name)
+`
+	result, err := ParsePython("user.py", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "user.py", result.Filename)
+	assert.Len(t, result.Classes, 1)
+
+	cls := result.Classes[0]
+	assert.Equal(t, "User", cls.Name)
+	assert.Equal(t, []string{"dataclass"}, cls.Decorators)
+	assert.Len(t, cls.Methods, 1)
+
+	method := cls.Methods[0]
+	assert.Equal(t, "greet", method.Name)
+	assert.Equal(t, []string{"self"}, method.Params)
+	assert.Equal(t, "str", method.ReturnType)
+
+	assert.Len(t, result.Functions, 1)
+	fn := result.Functions[0]
+	assert.Equal(t, "create_user", fn.Name)
+	assert.Equal(t, []string{"name"}, fn.Params)
+	assert.Equal(t, "User", fn.ReturnType)
+
+	assert.Len(t, result.Imports, 2)
+	assert.Equal(t, "dataclasses", result.Imports[0].Module)
+	assert.Equal(t, "dataclass", result.Imports[0].Name)
+	assert.Equal(t, "typing", result.Imports[1].Module)
+	assert.Equal(t, "Optional", result.Imports[1].Name)
+}
+
+func TestParsePythonFileWithRelativeImports(t *testing.T) {
+	src := `from .base import BaseModel
+from ..utils.crypto import hash_password
+from services.user_service import UserService
+`
+	result, err := ParsePython("models/user.py", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Imports, 3)
+
+	assert.Equal(t, ".base", result.Imports[0].Module)
+	assert.Equal(t, "BaseModel", result.Imports[0].Name)
+	assert.True(t, result.Imports[0].IsRelative)
+
+	assert.Equal(t, "..utils.crypto", result.Imports[1].Module)
+	assert.Equal(t, "hash_password", result.Imports[1].Name)
+	assert.True(t, result.Imports[1].IsRelative)
+
+	assert.Equal(t, "services.user_service", result.Imports[2].Module)
+	assert.Equal(t, "UserService", result.Imports[2].Name)
+	assert.False(t, result.Imports[2].IsRelative)
+}
+
+func TestParsePythonEmptyFile(t *testing.T) {
+	result, err := ParsePython("empty.py", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Empty(t, result.Classes)
+	assert.Empty(t, result.Functions)
+	assert.Empty(t, result.Imports)
+}
+
+func TestParsePythonWithSyntaxErrors(t *testing.T) {
+	src := `class User
+    id: int
+`
+	result, err := ParsePython("broken.py", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.Classes)
+}
+
+func TestParseDirectory(t *testing.T) {
+	repoPath := filepath.Join("..", "..", "testdata", "repos", "python-basic")
+	_, err := os.Stat(repoPath)
+	if os.IsNotExist(err) {
+		t.Skip("testdata not found, skipping integration test")
+	}
+
+	results, err := ParseDirectory(repoPath, "python")
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+
+	assert.Len(t, results, 7)
+
+	var userPy *FileResult
+	for _, r := range results {
+		if filepath.Base(r.Filename) == "user.py" {
+			userPy = r
+			break
+		}
+	}
+	require.NotNil(t, userPy, "user.py should be parsed")
+	assert.Equal(t, "User", userPy.Classes[0].Name)
+	assert.Len(t, userPy.Classes[0].Methods, 3)
+}
+
+func TestParseJavaScriptFile(t *testing.T) {
+	src := `import React from 'react';
+import { User } from '../types/user';
+
+interface UserCardProps {
+  user: User;
+}
+
+export const UserCard: React.FC<UserCardProps> = ({ user }) => {
+  return <div>{user.name}</div>;
+};
+
+function formatName(name: string): string {
+  return name.toUpperCase();
+}
+`
+	result, err := ParseJavaScript("UserCard.tsx", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "UserCard.tsx", result.Filename)
+	assert.Len(t, result.Imports, 2)
+	assert.Equal(t, "react", result.Imports[0].Module)
+	assert.Equal(t, "React", result.Imports[0].Name)
+
+	assert.Len(t, result.Classes, 0)
+	assert.Len(t, result.Functions, 1)
+	assert.Equal(t, "formatName", result.Functions[0].Name)
+	assert.Equal(t, []string{"name"}, result.Functions[0].Params)
+	assert.Equal(t, "string", result.Functions[0].ReturnType)
+}

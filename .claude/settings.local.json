@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:zread.ai)",
+      "WebFetch(domain:codewiki.google)",
+      "WebSearch",
+      "Bash(defuddle parse *)",
+      "Bash(npm install *)",
+      "Bash(curl *)",
+      "Bash(grep -oP '>[^<]{20,}<')",
+      "Bash(grep -oP '>[^<]{15,}<')",
+      "Bash(grep -v '^$')",
+      "Bash(grep -v '^\\\\s*$')",
+      "Bash(python3 -c \"import sys,json,base64; d=json.load\\(sys.stdin\\); print\\(base64.b64decode\\(d['content']\\).decode\\(\\)\\)\")",
+      "Bash(node -e \"const chunks=[];process.stdin.on\\('data',c=>chunks.push\\(c\\)\\);process.stdin.on\\('end',\\(\\)=>{const d=JSON.parse\\(Buffer.concat\\(chunks\\)\\);console.log\\(Buffer.from\\(d.content,'base64'\\).toString\\('utf8'\\)\\)}\\)\")",
+      "Bash(node -e \"const chunks=[];process.stdin.on\\('data',c=>chunks.push\\(c\\)\\);process.stdin.on\\('end',\\(\\)=>{const h=Buffer.concat\\(chunks\\).toString\\('utf8'\\);const matches=h.match\\(/>\\(.{15,60}\\)</g\\);if\\(matches\\){const texts=[...new Set\\(matches.map\\(m=>m.replace\\(/^>/,''\\).replace\\(/<$/,''\\).trim\\(\\)\\).filter\\(t=>t.length>15&&!/[{};]/.test\\(t\\)&&!/^\\\\s*$/.test\\(t\\)\\)\\)];console.log\\(texts.slice\\(0,100\\).join\\('\\\\n'\\)\\)}}\\)\")",
+      "Bash(Get-ChildItem *)",
+      "Bash(go mod *)",
+      "Bash(where go *)",
+      "Bash(Get-Command go *)",
+      "Bash(node -e \"const d=[];process.stdin.on\\('data',c=>d.push\\(c\\)\\);process.stdin.on\\('end',\\(\\)=>{const j=JSON.parse\\(Buffer.concat\\(d\\)\\);const v=j.find\\(x=>x.stable\\);const f=v.files.find\\(x=>x.os==='windows'&&x.arch==='amd64'&&x.kind==='installer'\\);console.log\\(v.version\\);console.log\\(f.filename\\);console.log\\(f.download_url\\)}\\)\")",
+      "Bash(node -e \"const d=[];process.stdin.on\\('data',c=>d.push\\(c\\)\\);process.stdin.on\\('end',\\(\\)=>{const j=JSON.parse\\(Buffer.concat\\(d\\)\\);const v=j.find\\(x=>x.stable\\);const f=v.files.find\\(x=>x.os==='windows'&&x.arch==='amd64'&&x.kind==='archive'\\);console.log\\(v.version\\);console.log\\(f.filename\\);console.log\\('https://go.dev/dl/'+f.filename\\)}\\)\")",
+      "Bash(cd /tmp)",
+      "Bash(unzip -q go.zip)",
+      "Bash(mv /tmp/go /c/Users/86255/.local/go)",
+      "Bash(echo 'export PATH=\"/c/Users/86255/.local/go/bin:$PATH\"')",
+      "Bash(export PATH=\"/c/Users/86255/.local/go/bin:$PATH\")",
+      "Bash(go version *)",
+      "Bash(go get *)",
+      "Bash(go test *)",
+      "Bash(gcc --version)",
+      "Bash(pacman --version)",
+      "Bash(choco --version)",
+      "Bash(unzip -q mingw.zip)",
+      "Bash(mv mingw64 *)",
+      "Bash(/c/Users/86255/.local/mingw64/bin/gcc.exe --version)",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git add *)"
+    ]
+  }
+}
