@@ -233,6 +233,7 @@ func ParseJavaScript(filename, source string) (*FileResult, error) {
 		// Import
 		if m := jsImportRegex.FindStringSubmatch(stripped); m != nil {
 			module := m[4]
+			isRelative := strings.HasPrefix(module, ".")
 			var name string
 			if m[1] != "" {
 				// Named imports: { User, Admin }
@@ -243,16 +244,17 @@ func ParseJavaScript(filename, source string) (*FileResult, error) {
 						n = strings.TrimSpace(n[idx+4:])
 					}
 					result.Imports = append(result.Imports, ImportInfo{
-						Module: module,
-						Name:   strings.TrimSpace(n),
+						Module:     module,
+						Name:       strings.TrimSpace(n),
+						IsRelative: isRelative,
 					})
 				}
 			} else if m[2] != "" {
 				name = m[2]
-				result.Imports = append(result.Imports, ImportInfo{Module: module, Name: name})
+				result.Imports = append(result.Imports, ImportInfo{Module: module, Name: name, IsRelative: isRelative})
 			} else if m[3] != "" {
 				name = strings.TrimSpace(strings.TrimPrefix(m[3], "* as"))
-				result.Imports = append(result.Imports, ImportInfo{Module: module, Name: name})
+				result.Imports = append(result.Imports, ImportInfo{Module: module, Name: name, IsRelative: isRelative})
 			}
 			continue
 		}
