@@ -38,6 +38,24 @@ func RunGenerate(cfg *Config) error {
 	}
 	fmt.Printf("Found %d source files\n", len(files))
 
+	// Normalize filenames: strip source directory prefix so module names are relative to project root
+	absSource, err := filepath.Abs(cfg.SourceDir)
+	if err != nil {
+		absSource = cfg.SourceDir
+	}
+	for _, f := range files {
+		absFile, err := filepath.Abs(f.Filename)
+		if err == nil {
+			f.Filename = absFile
+		}
+		if strings.HasPrefix(f.Filename, absSource) {
+			rel := strings.TrimPrefix(f.Filename, absSource)
+			rel = strings.TrimPrefix(rel, string(filepath.Separator))
+			rel = strings.TrimPrefix(rel, "/")
+			f.Filename = rel
+		}
+	}
+
 	fmt.Println("Building dependency graph...")
 	graph := grapher.BuildGraph(files)
 	fmt.Printf("Graph: %d nodes, %d edges\n", len(graph.Nodes), len(graph.Edges))
@@ -96,15 +114,21 @@ func newWikiHandler(root string) http.Handler {
 }
 
 func (h *wikiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := filepath.Clean(r.URL.Path)
-	if path == "/" {
-		path = "/index.html"
+	path := filepath.FromSlash(r.URL.Path)
+	if path == "/" || path == "\\" {
+		path = "index.html"
+	} else {
+		path = strings.TrimPrefix(path, "/")
+		path = strings.TrimPrefix(path, "\\")
 	}
 
 	fullPath := filepath.Join(h.root, path)
+	fullPath = filepath.Clean(fullPath)
 
 	// Security: prevent directory traversal
-	if !strings.HasPrefix(fullPath, h.root) {
+	absRoot, _ := filepath.Abs(h.root)
+	absPath, _ := filepath.Abs(fullPath)
+	if !strings.HasPrefix(absPath, absRoot) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
