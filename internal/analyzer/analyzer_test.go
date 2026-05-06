@@ -154,3 +154,103 @@ function formatName(name: string): string {
 	assert.Equal(t, []string{"name"}, result.Functions[0].Params)
 	assert.Equal(t, "string", result.Functions[0].ReturnType)
 }
+
+func TestParseJavaScriptWithClassAndMethods(t *testing.T) {
+	src := `import { API } from './api';
+
+class UserService extends BaseService {
+  constructor(api: API) {
+    this.api = api;
+  }
+
+  async getUser(id: number): Promise<User> {
+    return this.api.get("/users/" + id);
+  }
+
+  private formatUser(data: any): User {
+    return { ...data };
+  }
+}
+
+export default UserService;
+`
+	result, err := ParseJavaScript("UserService.ts", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Classes, 1)
+	cls := result.Classes[0]
+	assert.Equal(t, "UserService", cls.Name)
+	assert.Equal(t, []string{"BaseService"}, cls.Bases)
+	assert.Len(t, cls.Methods, 3)
+
+	methodNames := make([]string, len(cls.Methods))
+	for i, m := range cls.Methods {
+		methodNames[i] = m.Name
+	}
+	assert.Contains(t, methodNames, "constructor")
+	assert.Contains(t, methodNames, "getUser")
+	assert.Contains(t, methodNames, "formatUser")
+}
+
+func TestParseJavaScriptNamedImports(t *testing.T) {
+	src := `import { User, Admin, Guest } from '../types/user';
+import * as utils from './utils';
+`
+	result, err := ParseJavaScript("api.ts", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Imports, 4)
+	assert.Equal(t, "User", result.Imports[0].Name)
+	assert.Equal(t, "Admin", result.Imports[1].Name)
+	assert.Equal(t, "Guest", result.Imports[2].Name)
+	assert.Equal(t, "utils", result.Imports[3].Name)
+}
+
+func TestParseJavaScriptArrowFunction(t *testing.T) {
+	src := `const sum = (a: number, b: number): number => a + b;
+`
+	result, err := ParseJavaScript("math.ts", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Functions, 1)
+	assert.Equal(t, "sum", result.Functions[0].Name)
+}
+
+func TestParseJSParamsWithDestructuring(t *testing.T) {
+	params := parseJSParams("{ user, config }")
+	assert.Equal(t, []string{"user", "config"}, params)
+
+	params = parseJSParams("a, { b, c }")
+	assert.Equal(t, []string{"a", "b", "c"}, params)
+}
+
+func TestScanLines(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "test.txt")
+	require.NoError(t, os.WriteFile(tmpFile, []byte("line1\nline2\nline3\n"), 0644))
+
+	lines, err := ScanLines(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"line1", "line2", "line3"}, lines)
+}
+
+func TestScanLinesEmptyFile(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "empty.txt")
+	require.NoError(t, os.WriteFile(tmpFile, []byte{}, 0644))
+
+	lines, err := ScanLines(tmpFile)
+	require.NoError(t, err)
+	assert.Empty(t, lines)
+}
+
+func TestParseDirectoryWithInvalidPath(t *testing.T) {
+	_, err := ParseDirectory("/nonexistent/path/that/does/not/exist", "python")
+	require.Error(t, err)
+}
+
+func TestParsePythonParamsWithDefaults(t *testing.T) {
+	params := parsePythonParams("self, name: str = 'default', age: int = 0")
+	assert.Equal(t, []string{"self", "name", "age"}, params)
+}

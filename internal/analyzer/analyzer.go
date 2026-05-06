@@ -204,7 +204,7 @@ var (
 	jsFuncRegex   = regexp.MustCompile(`^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)(?:\s*:\s*(\S+))?`)
 	jsArrowRegex  = regexp.MustCompile(`^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*[:=].*=>`)
 	jsClassRegex  = regexp.MustCompile(`^class\s+(\w+)\s*(?:extends\s+(\w+))?\s*\{`)
-	jsMethodRegex = regexp.MustCompile(`^(?:async\s+)?(\w+)\s*\(([^)]*)\)(?:\s*:\s*(\S+))?\s*\{`)
+	jsMethodRegex = regexp.MustCompile(`^(?:(?:async|public|private|protected|static)\s+)*(\w+)\s*\(([^)]*)\)(?:\s*:\s*(\S+))?\s*\{`)
 )
 
 // ParseJavaScript parses a JavaScript/TypeScript source file.
@@ -318,14 +318,48 @@ func parseJSParams(paramsStr string) []string {
 	if paramsStr == "" {
 		return params
 	}
-	for _, p := range strings.Split(paramsStr, ",") {
+	paramsStr = strings.TrimSpace(paramsStr)
+	// Handle single destructuring block: { a, b }
+	if strings.HasPrefix(paramsStr, "{") && strings.HasSuffix(paramsStr, "}") {
+		inner := strings.TrimSpace(strings.Trim(paramsStr, "{}"))
+		for _, name := range strings.Split(inner, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				params = append(params, name)
+			}
+		}
+		return params
+	}
+
+	// Split by comma, but merge destructuring blocks that span multiple parts
+	parts := strings.Split(paramsStr, ",")
+	var merged []string
+	for i := 0; i < len(parts); i++ {
+		p := parts[i]
+		if strings.Contains(p, "{") && !strings.Contains(p, "}") {
+			// Start of a multi-part destructuring block
+			block := p
+			for j := i + 1; j < len(parts); j++ {
+				block += "," + parts[j]
+				if strings.Contains(parts[j], "}") {
+					i = j
+					break
+				}
+			}
+			merged = append(merged, block)
+		} else {
+			merged = append(merged, p)
+		}
+	}
+
+	for _, p := range merged {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
 		}
 		// Handle destructuring: { user }
 		if strings.HasPrefix(p, "{") && strings.HasSuffix(p, "}") {
-			inner := strings.Trim(p, "{}")
+			inner := strings.TrimSpace(strings.Trim(p, "{}"))
 			for _, name := range strings.Split(inner, ",") {
 				name = strings.TrimSpace(name)
 				if name != "" {
