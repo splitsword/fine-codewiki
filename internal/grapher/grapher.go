@@ -65,7 +65,21 @@ func BuildGraph(files []*analyzer.FileResult) *Graph {
 			}
 			// Only create edges to internal modules
 			if !internalModules[targetModule] {
-				continue
+				// Fallback: absolute import may be relative to the importing file's directory
+				// e.g. src/central.py imports "orchestrator" -> src/orchestrator
+				if !imp.IsRelative {
+					dir := filepath.Dir(f.Filename)
+					dir = strings.ReplaceAll(dir, "\\", "/")
+					candidate := dir + "/" + targetModule
+					candidate = strings.TrimPrefix(candidate, "./")
+					if internalModules[candidate] {
+						targetModule = candidate
+					} else {
+						continue
+					}
+				} else {
+					continue
+				}
 			}
 			// Avoid duplicate edges
 			if !hasEdge(graph.Edges, fromModule, targetModule) {
