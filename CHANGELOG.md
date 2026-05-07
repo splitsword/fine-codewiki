@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-08 — fix(docgen): add LLM error logging to diagnose enhancement failures (9939cc0)
+
 - 2026-05-07 — fix(docgen): skip meaningless community groups in auto description (14f817e)
 
 - 2026-05-07 — fix(docgen): restore project description in overview.md (623ab2a)

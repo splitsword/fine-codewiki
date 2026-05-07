@@ -40,7 +40,13 @@ func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	if provider != nil {
 		prompt := buildOverviewPrompt(graph, projectName)
 		enhanced, err := provider.Complete(ctx, prompt)
-		if err == nil && enhanced != "" && !isChecklistLike(enhanced, graph) {
+		if err != nil {
+			fmt.Printf("警告：LLM 生成项目概述失败 (%v)\n", err)
+		} else if enhanced == "" {
+			fmt.Println("警告：LLM 返回了空的项目概述")
+		} else if isChecklistLike(enhanced, graph) {
+			fmt.Println("警告：LLM 返回的内容像是模块清单，已回退到静态描述")
+		} else {
 			overview = fmt.Sprintf("# %s\n\n%s\n\n---\n\n%s", projectName, enhanced, overview)
 		}
 	}
@@ -59,7 +65,9 @@ func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	if provider != nil {
 		prompt := buildArchitecturePrompt(graph)
 		enhanced, err := provider.Complete(ctx, prompt)
-		if err == nil && enhanced != "" {
+		if err != nil {
+			fmt.Printf("警告：LLM 生成架构描述失败 (%v)\n", err)
+		} else if enhanced != "" {
 			arch = fmt.Sprintf("# Architecture\n\n%s\n\n---\n\n%s", enhanced, arch)
 		}
 	}
