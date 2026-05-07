@@ -95,8 +95,13 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName string) string {
 	fmt.Fprintf(&b, "项目：%s\n", projectName)
 	fmt.Fprintf(&b, "模块数：%d\n", len(graph.Nodes))
 	fmt.Fprintf(&b, "依赖数：%d\n\n", len(graph.Edges))
+	maxModulesInPrompt := 20
 	fmt.Fprintf(&b, "模块列表（供参考，不要原样复述）：\n")
-	for _, n := range graph.Nodes {
+	for i, n := range graph.Nodes {
+		if i >= maxModulesInPrompt {
+			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(graph.Nodes)-maxModulesInPrompt)
+			break
+		}
 		line := "- " + n.Name
 		if len(n.Classes) > 0 {
 			line += fmt.Sprintf("（%d 个类）", len(n.Classes))
@@ -255,7 +260,12 @@ func buildArchitecturePrompt(graph *grapher.Graph) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "分析以下模块依赖结构，用 2-3 段文字描述系统架构、设计模式及层级关系。\n\n")
 	fmt.Fprintf(&b, "模块及其依赖：\n")
-	for _, n := range graph.Nodes {
+	maxModules := 20
+	for i, n := range graph.Nodes {
+		if i >= maxModules {
+			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(graph.Nodes)-maxModules)
+			break
+		}
 		deps := graph.DependenciesOf(n.Name)
 		if len(deps) > 0 {
 			fmt.Fprintf(&b, "- %s 依赖：%s\n", n.Name, strings.Join(deps, ", "))
