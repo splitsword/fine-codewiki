@@ -24,27 +24,38 @@ type Provider interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
-// Config holds LLM provider configuration.
+// Config holds LLM provider configuration for a single model.
 type Config struct {
-	Provider  string `yaml:"provider"`  // "openai" or "ollama"
-	APIKey    string `yaml:"api_key"`
-	BaseURL   string `yaml:"base_url"`
-	Model     string `yaml:"model"`
-	MaxRetries int   `yaml:"max_retries"`
-	Timeout   int    `yaml:"timeout"` // seconds
+	Provider   string `yaml:"provider"` // "openai" or "ollama"
+	APIKey     string `yaml:"api_key"`
+	BaseURL    string `yaml:"base_url"`
+	Model      string `yaml:"model"`
+	MaxRetries int    `yaml:"max_retries"`
+	Timeout    int    `yaml:"timeout"` // seconds
 }
 
-// LoadConfig reads configuration from a YAML file.
-// If the file does not exist, returns default config.
-// Environment variables CODEWIKI_API_KEY and CODEWIKI_MODEL override file values.
-func LoadConfig(path string) (*Config, error) {
-	cfg := &Config{
+// AppConfig holds separate LLM configurations for generation and embedding.
+type AppConfig struct {
+	Generation Config `yaml:"generation"`
+	Embedding  Config `yaml:"embedding"`
+}
+
+// defaultConfig returns a default single-model config.
+func defaultConfig() Config {
+	return Config{
 		Provider:   "ollama",
 		BaseURL:    "http://localhost:11434",
 		Model:      "qwen:14b",
 		MaxRetries: 3,
 		Timeout:    60,
 	}
+}
+
+// LoadConfig reads configuration from a YAML file.
+// If the file does not exist, returns default config.
+// Environment variables CODEWIKI_API_KEY and CODEWIKI_MODEL override file values.
+func LoadConfig(path string) (*Config, error) {
+	cfg := defaultConfig()
 
 	if path == "" {
 		path = DefaultConfigPath()
@@ -52,7 +63,7 @@ func LoadConfig(path string) (*Config, error) {
 
 	data, err := os.ReadFile(path)
 	if err == nil {
-		if err := yaml.Unmarshal(data, cfg); err != nil {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return nil, fmt.Errorf("parse config: %w", err)
 		}
 	}
@@ -68,7 +79,77 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.BaseURL = v
 	}
 
-	return cfg, nil
+	return &cfg, nil
+}
+
+// LoadAppConfig reads the dual-model configuration from a YAML file.
+// Supports both new format (generation + embedding blocks) and old format
+// (single flat config, which is copied to both generation and embedding).
+// Environment variables CODEWIKI_GEN_* / CODEWIKI_EMB_* override file values,
+// with fallback to CODEWIKI_API_KEY / CODEWIKI_MODEL / CODEWIKI_BASE_URL.
+func LoadAppConfig(path string) (*AppConfig, error) {
+	appCfg := &AppConfig{
+		Generation: defaultConfig(),
+		Embedding:  defaultConfig(),
+	}
+
+	if path == "" {
+		path = DefaultConfigPath()
+	}
+
+	data, err := os.ReadFile(path)
+	if err == nil {
+		// Check if file contains new format markers
+		isNewFormat := strings.Contains(string(data), "generation:") || strings.Contains(string(data), "embedding:")
+		if isNewFormat {
+			if err := yaml.Unmarshal(data, appCfg); err != nil {
+				return nil, fmt.Errorf("parse config: %w", err)
+			}
+		} else {
+			oldCfg := defaultConfig()
+			if err := yaml.Unmarshal(data, &oldCfg); err != nil {
+				return nil, fmt.Errorf("parse config: %w", err)
+			}
+			appCfg.Generation = oldCfg
+			appCfg.Embedding = oldCfg
+		}
+	}
+
+	// Environment overrides for generation
+	if v := os.Getenv("CODEWIKI_GEN_API_KEY"); v != "" {
+		appCfg.Generation.APIKey = v
+	} else if v := os.Getenv("CODEWIKI_API_KEY"); v != "" {
+		appCfg.Generation.APIKey = v
+	}
+	if v := os.Getenv("CODEWIKI_GEN_MODEL"); v != "" {
+		appCfg.Generation.Model = v
+	} else if v := os.Getenv("CODEWIKI_MODEL"); v != "" {
+		appCfg.Generation.Model = v
+	}
+	if v := os.Getenv("CODEWIKI_GEN_BASE_URL"); v != "" {
+		appCfg.Generation.BaseURL = v
+	} else if v := os.Getenv("CODEWIKI_BASE_URL"); v != "" {
+		appCfg.Generation.BaseURL = v
+	}
+
+	// Environment overrides for embedding
+	if v := os.Getenv("CODEWIKI_EMB_API_KEY"); v != "" {
+		appCfg.Embedding.APIKey = v
+	} else if v := os.Getenv("CODEWIKI_API_KEY"); v != "" {
+		appCfg.Embedding.APIKey = v
+	}
+	if v := os.Getenv("CODEWIKI_EMB_MODEL"); v != "" {
+		appCfg.Embedding.Model = v
+	} else if v := os.Getenv("CODEWIKI_MODEL"); v != "" {
+		appCfg.Embedding.Model = v
+	}
+	if v := os.Getenv("CODEWIKI_EMB_BASE_URL"); v != "" {
+		appCfg.Embedding.BaseURL = v
+	} else if v := os.Getenv("CODEWIKI_BASE_URL"); v != "" {
+		appCfg.Embedding.BaseURL = v
+	}
+
+	return appCfg, nil
 }
 
 // DefaultConfigPath returns the default configuration file path.
@@ -95,6 +176,21 @@ func SaveConfig(cfg *Config, path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
+// SaveAppConfig writes the dual-model configuration to a YAML file.
+func SaveAppConfig(cfg *AppConfig, path string) error {
+	if path == "" {
+		path = DefaultConfigPath()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
 // NewProvider creates a Provider based on configuration.
 func NewProvider(cfg *Config) (Provider, error) {
 	switch strings.ToLower(cfg.Provider) {
@@ -105,6 +201,16 @@ func NewProvider(cfg *Config) (Provider, error) {
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", cfg.Provider)
 	}
+}
+
+// NewGenerationProvider creates a Provider for document generation tasks.
+func NewGenerationProvider(cfg *AppConfig) (Provider, error) {
+	return NewProvider(&cfg.Generation)
+}
+
+// NewEmbeddingProvider creates a Provider for embedding / RAG tasks.
+func NewEmbeddingProvider(cfg *AppConfig) (Provider, error) {
+	return NewProvider(&cfg.Embedding)
 }
 
 // ---------- OpenAI Provider ----------

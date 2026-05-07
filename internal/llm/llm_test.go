@@ -449,3 +449,132 @@ func TestOllamaProviderError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Ollama error 500")
 }
+
+// ---------- AppConfig Tests ----------
+
+func TestLoadAppConfigNewFormat(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	content := `
+generation:
+  provider: openai
+  api_key: sk-gen
+  base_url: https://api.openai.com/v1
+  model: gpt-4o
+  max_retries: 3
+  timeout: 60
+embedding:
+  provider: ollama
+  api_key: ""
+  base_url: http://localhost:11434
+  model: nomic-embed-text
+  max_retries: 3
+  timeout: 60
+`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(content), 0644))
+
+	cfg, err := LoadAppConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", cfg.Generation.Provider)
+	assert.Equal(t, "sk-gen", cfg.Generation.APIKey)
+	assert.Equal(t, "gpt-4o", cfg.Generation.Model)
+	assert.Equal(t, "ollama", cfg.Embedding.Provider)
+	assert.Equal(t, "nomic-embed-text", cfg.Embedding.Model)
+}
+
+func TestLoadAppConfigBackwardCompat(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	content := `
+provider: openai
+api_key: sk-old
+base_url: https://api.openai.com/v1
+model: gpt-4o
+max_retries: 5
+timeout: 30
+`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(content), 0644))
+
+	cfg, err := LoadAppConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", cfg.Generation.Provider)
+	assert.Equal(t, "sk-old", cfg.Generation.APIKey)
+	assert.Equal(t, "gpt-4o", cfg.Generation.Model)
+	assert.Equal(t, 5, cfg.Generation.MaxRetries)
+	assert.Equal(t, 30, cfg.Generation.Timeout)
+	// Embedding should be a copy of generation
+	assert.Equal(t, cfg.Generation, cfg.Embedding)
+}
+
+func TestLoadAppConfigEnvOverrideSeparate(t *testing.T) {
+	os.Setenv("CODEWIKI_GEN_MODEL", "gpt-4o")
+	os.Setenv("CODEWIKI_EMB_MODEL", "nomic-embed-text")
+	defer func() {
+		os.Unsetenv("CODEWIKI_GEN_MODEL")
+		os.Unsetenv("CODEWIKI_EMB_MODEL")
+	}()
+
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("provider: ollama\nmodel: qwen:14b\n"), 0644))
+
+	cfg, err := LoadAppConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-4o", cfg.Generation.Model)
+	assert.Equal(t, "nomic-embed-text", cfg.Embedding.Model)
+}
+
+func TestLoadAppConfigEnvFallback(t *testing.T) {
+	os.Setenv("CODEWIKI_API_KEY", "fallback-key")
+	defer os.Unsetenv("CODEWIKI_API_KEY")
+
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("provider: ollama\n"), 0644))
+
+	cfg, err := LoadAppConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "fallback-key", cfg.Generation.APIKey)
+	assert.Equal(t, "fallback-key", cfg.Embedding.APIKey)
+}
+
+func TestSaveAppConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+
+	cfg := &AppConfig{
+		Generation: Config{Provider: "openai", APIKey: "sk-gen", Model: "gpt-4o"},
+		Embedding:  Config{Provider: "ollama", Model: "nomic-embed-text"},
+	}
+
+	err := SaveAppConfig(cfg, cfgPath)
+	require.NoError(t, err)
+
+	loaded, err := LoadAppConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", loaded.Generation.Provider)
+	assert.Equal(t, "sk-gen", loaded.Generation.APIKey)
+	assert.Equal(t, "gpt-4o", loaded.Generation.Model)
+	assert.Equal(t, "ollama", loaded.Embedding.Provider)
+	assert.Equal(t, "nomic-embed-text", loaded.Embedding.Model)
+}
+
+func TestNewGenerationProvider(t *testing.T) {
+	appCfg := &AppConfig{
+		Generation: Config{Provider: "openai", APIKey: "k", BaseURL: "https://api.openai.com/v1", Model: "gpt-4o"},
+	}
+	p, err := NewGenerationProvider(appCfg)
+	require.NoError(t, err)
+	_, ok := p.(*OpenAIProvider)
+	assert.True(t, ok)
+}
+
+func TestNewEmbeddingProvider(t *testing.T) {
+	appCfg := &AppConfig{
+		Embedding: Config{Provider: "ollama", BaseURL: "http://localhost:11434", Model: "nomic-embed-text"},
+	}
+	p, err := NewEmbeddingProvider(appCfg)
+	require.NoError(t, err)
+	_, ok := p.(*OllamaProvider)
+	assert.True(t, ok)
+}

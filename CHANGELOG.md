@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-07 — feat(llm): split config into generation and embedding providers (80d5511)
+
 - 2026-05-07 — feat: localize all wiki output and CLI to Simplified Chinese (4485ff0)
 
 - 2026-05-07 — docs: update changelog with sequencer fix (d9379fc)

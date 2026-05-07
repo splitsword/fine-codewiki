@@ -237,27 +237,29 @@ func TestRunConfigInteractive(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
 
-	// Simulate user input: provider=openai, api_key=sk-test, base_url=https://api.openai.com/v1, model=gpt-4o
-	input := strings.NewReader("openai\nsk-test\nhttps://api.openai.com/v1\ngpt-4o\n")
+	// Simulate user input: provider=openai, api_key=sk-test, base_url=https://api.openai.com/v1, model=gpt-4o, use_same=y
+	input := strings.NewReader("openai\nsk-test\nhttps://api.openai.com/v1\ngpt-4o\ny\n")
 
 	cfg := &Config{ConfigPath: cfgPath}
 	err := runConfigInteractive(cfg, input)
 	require.NoError(t, err)
 
 	// Verify saved config
-	saved, err := llm.LoadConfig(cfgPath)
+	saved, err := llm.LoadAppConfig(cfgPath)
 	require.NoError(t, err)
-	assert.Equal(t, "openai", saved.Provider)
-	assert.Equal(t, "sk-test", saved.APIKey)
-	assert.Equal(t, "https://api.openai.com/v1", saved.BaseURL)
-	assert.Equal(t, "gpt-4o", saved.Model)
+	assert.Equal(t, "openai", saved.Generation.Provider)
+	assert.Equal(t, "sk-test", saved.Generation.APIKey)
+	assert.Equal(t, "https://api.openai.com/v1", saved.Generation.BaseURL)
+	assert.Equal(t, "gpt-4o", saved.Generation.Model)
+	// Embedding should be a copy of generation
+	assert.Equal(t, saved.Generation, saved.Embedding)
 }
 
 func TestRunConfigInteractiveDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
 
-	// Write an existing config
+	// Write an existing config (old format, backward compat)
 	existing := &llm.Config{
 		Provider: "ollama",
 		BaseURL:  "http://localhost:11434",
@@ -265,36 +267,36 @@ func TestRunConfigInteractiveDefaults(t *testing.T) {
 	}
 	require.NoError(t, llm.SaveConfig(existing, cfgPath))
 
-	// Simulate user pressing Enter for all prompts (accepting defaults)
-	input := strings.NewReader("\n\n\n\n")
+	// Simulate user pressing Enter for all prompts (accepting defaults) + use_same=y
+	input := strings.NewReader("\n\n\n\ny\n")
 
 	cfg := &Config{ConfigPath: cfgPath}
 	err := runConfigInteractive(cfg, input)
 	require.NoError(t, err)
 
-	saved, err := llm.LoadConfig(cfgPath)
+	saved, err := llm.LoadAppConfig(cfgPath)
 	require.NoError(t, err)
-	assert.Equal(t, "ollama", saved.Provider)
-	assert.Equal(t, "http://localhost:11434", saved.BaseURL)
-	assert.Equal(t, "qwen:14b", saved.Model)
+	assert.Equal(t, "ollama", saved.Generation.Provider)
+	assert.Equal(t, "http://localhost:11434", saved.Generation.BaseURL)
+	assert.Equal(t, "qwen:14b", saved.Generation.Model)
 }
 
 func TestRunConfigInteractiveOllamaNoKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
 
-	// Simulate user selecting ollama (no API key prompt)
-	input := strings.NewReader("ollama\nhttp://localhost:11434\nqwen:32b\n")
+	// Simulate user selecting ollama (no API key prompt) + use_same=y
+	input := strings.NewReader("ollama\nhttp://localhost:11434\nqwen:32b\ny\n")
 
 	cfg := &Config{ConfigPath: cfgPath}
 	err := runConfigInteractive(cfg, input)
 	require.NoError(t, err)
 
-	saved, err := llm.LoadConfig(cfgPath)
+	saved, err := llm.LoadAppConfig(cfgPath)
 	require.NoError(t, err)
-	assert.Equal(t, "ollama", saved.Provider)
-	assert.Equal(t, "", saved.APIKey)
-	assert.Equal(t, "qwen:32b", saved.Model)
+	assert.Equal(t, "ollama", saved.Generation.Provider)
+	assert.Equal(t, "", saved.Generation.APIKey)
+	assert.Equal(t, "qwen:32b", saved.Generation.Model)
 }
 
 func TestMaskKey(t *testing.T) {
@@ -413,18 +415,18 @@ func TestRunConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
 
-	// Simulate user input: provider=ollama, base_url=http://localhost:11434, model=qwen
-	input := strings.NewReader("ollama\nhttp://localhost:11434\nqwen\n")
+	// Simulate user input: provider=ollama, base_url=http://localhost:11434, model=qwen, use_same=y
+	input := strings.NewReader("ollama\nhttp://localhost:11434\nqwen\ny\n")
 
 	cfg := &Config{ConfigPath: cfgPath}
 	err := runConfigInteractive(cfg, input)
 	require.NoError(t, err)
 
-	saved, err := llm.LoadConfig(cfgPath)
+	saved, err := llm.LoadAppConfig(cfgPath)
 	require.NoError(t, err)
-	assert.Equal(t, "ollama", saved.Provider)
-	assert.Equal(t, "http://localhost:11434", saved.BaseURL)
-	assert.Equal(t, "qwen", saved.Model)
+	assert.Equal(t, "ollama", saved.Generation.Provider)
+	assert.Equal(t, "http://localhost:11434", saved.Generation.BaseURL)
+	assert.Equal(t, "qwen", saved.Generation.Model)
 }
 
 func TestMarkdownToHTMLCombined(t *testing.T) {

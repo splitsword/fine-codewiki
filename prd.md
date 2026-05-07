@@ -976,19 +976,33 @@ codewiki update                 # 自动更新到最新版本
 
 配置文件 `~/.codewiki/config.yaml`：
 ```yaml
-llm:
-  mode: api              # api | local
-  api:
-    provider: openai     # openai | anthropic | gemini | zhipu | custom
-    base_url: https://api.openai.com/v1
-    api_key: ${OPENAI_API_KEY}
-    model: gpt-4o
-  local:
-    provider: ollama
-    base_url: http://localhost:11434
-    model: qwen3:32b     # 轻量任务
-    heavy_model: qwen3:235b  # 重型任务（可选）
+# 文档生成模型（用于生成 Wiki 文档、图表描述）
+generation:
+  provider: openai
+  api_key: ${OPENAI_API_KEY}
+  base_url: https://api.openai.com/v1
+  model: gpt-4o
+  max_retries: 3
+  timeout: 60
 
+# RAG 向量模型（用于代码检索与问答）
+embedding:
+  provider: openai
+  api_key: ${OPENAI_API_KEY}
+  base_url: https://api.openai.com/v1
+  model: text-embedding-3-small
+  max_retries: 3
+  timeout: 60
+
+# 向后兼容：旧版单块配置仍可用，会自动同时应用到 generation 和 embedding
+```
+
+> **配置说明**：
+> - `generation`：负责文档生成、图表描述等创意任务，建议使用强模型（如 GPT-4o、Claude 3.5 Sonnet）。
+> - `embedding`：负责代码向量化和 RAG 检索，建议使用专用嵌入模型（如 text-embedding-3-small、nomic-embed-text）。
+> - 环境变量支持分离覆盖：`CODEWIKI_GEN_API_KEY` / `CODEWIKI_GEN_MODEL` / `CODEWIKI_GEN_BASE_URL` 和 `CODEWIKI_EMB_API_KEY` / `CODEWIKI_EMB_MODEL` / `CODEWIKI_EMB_BASE_URL`，旧变量 `CODEWIKI_API_KEY` / `CODEWIKI_MODEL` / `CODEWIKI_BASE_URL` 仍可作为两者的 fallback。
+
+```yaml
 ui:
   language: zh             # zh | en | auto
 

@@ -102,9 +102,9 @@ func RunGenerate(cfg *Config) error {
 
 	// Attempt to load LLM config for optional enhancement
 	var provider llm.Provider
-	llmCfg, _ := llm.LoadConfig("")
-	if llmCfg != nil {
-		p, err := llm.NewProvider(llmCfg)
+	appCfg, _ := llm.LoadAppConfig("")
+	if appCfg != nil {
+		p, err := llm.NewGenerationProvider(appCfg)
 		if err == nil {
 			provider = p
 			fmt.Println("LLM 增强已启用")
@@ -707,12 +707,12 @@ func RunAsk(cfg *Config) error {
 	if configPath == "" {
 		configPath = llm.DefaultConfigPath()
 	}
-	llmCfg, err := llm.LoadConfig(configPath)
-	if err != nil || llmCfg == nil {
+	appCfg, err := llm.LoadAppConfig(configPath)
+	if err != nil || appCfg == nil {
 		return fmt.Errorf("未找到 LLM 配置；运行 'codewiki config' 或设置 CODEWIKI_API_KEY")
 	}
 
-	provider, err := llm.NewProvider(llmCfg)
+	provider, err := llm.NewEmbeddingProvider(appCfg)
 	if err != nil {
 		return fmt.Errorf("create LLM provider: %w", err)
 	}
@@ -861,14 +861,23 @@ func runConfigInteractive(cfg *Config, input io.Reader) error {
 	scanner := bufio.NewScanner(input)
 
 	// Load existing config as defaults
-	existing, _ := llm.LoadConfig(cfg.ConfigPath)
-	if existing == nil {
-		existing = &llm.Config{
-			Provider:   "ollama",
-			BaseURL:    "http://localhost:11434",
-			Model:      "qwen:14b",
-			MaxRetries: 3,
-			Timeout:    60,
+	appExisting, _ := llm.LoadAppConfig(cfg.ConfigPath)
+	if appExisting == nil {
+		appExisting = &llm.AppConfig{
+			Generation: llm.Config{
+				Provider:   "ollama",
+				BaseURL:    "http://localhost:11434",
+				Model:      "qwen:14b",
+				MaxRetries: 3,
+				Timeout:    60,
+			},
+			Embedding: llm.Config{
+				Provider:   "ollama",
+				BaseURL:    "http://localhost:11434",
+				Model:      "nomic-embed-text",
+				MaxRetries: 3,
+				Timeout:    60,
+			},
 		}
 	}
 
@@ -876,45 +885,97 @@ func runConfigInteractive(cfg *Config, input io.Reader) error {
 	fmt.Println("----------------------")
 	fmt.Println()
 
-	// Provider
-	fmt.Printf("提供商（openai/ollama）[%s]：", existing.Provider)
-	provider := readLine(scanner)
-	if provider == "" {
-		provider = existing.Provider
+	// --- Generation config ---
+	fmt.Println("【文档生成模型】（用于生成 Wiki 文档、图表描述）")
+	gen := appExisting.Generation
+	fmt.Printf("提供商（openai/ollama）[%s]：", gen.Provider)
+	genProvider := readLine(scanner)
+	if genProvider == "" {
+		genProvider = gen.Provider
 	}
-	provider = strings.ToLower(provider)
+	genProvider = strings.ToLower(genProvider)
 
-	// API Key (only for openai)
-	var apiKey string
-	if provider == "openai" {
-		fmt.Printf("API 密钥 [%s]：", maskKey(existing.APIKey))
-		apiKey = readLine(scanner)
-		if apiKey == "" {
-			apiKey = existing.APIKey
+	var genAPIKey string
+	if genProvider == "openai" {
+		fmt.Printf("API 密钥 [%s]：", maskKey(gen.APIKey))
+		genAPIKey = readLine(scanner)
+		if genAPIKey == "" {
+			genAPIKey = gen.APIKey
 		}
 	}
 
-	// Base URL
-	fmt.Printf("基础 URL [%s]：", existing.BaseURL)
-	baseURL := readLine(scanner)
-	if baseURL == "" {
-		baseURL = existing.BaseURL
+	fmt.Printf("基础 URL [%s]：", gen.BaseURL)
+	genBaseURL := readLine(scanner)
+	if genBaseURL == "" {
+		genBaseURL = gen.BaseURL
 	}
 
-	// Model
-	fmt.Printf("模型 [%s]：", existing.Model)
-	model := readLine(scanner)
-	if model == "" {
-		model = existing.Model
+	fmt.Printf("模型 [%s]：", gen.Model)
+	genModel := readLine(scanner)
+	if genModel == "" {
+		genModel = gen.Model
 	}
 
-	newCfg := &llm.Config{
-		Provider:   provider,
-		APIKey:     apiKey,
-		BaseURL:    baseURL,
-		Model:      model,
-		MaxRetries: existing.MaxRetries,
-		Timeout:    existing.Timeout,
+	genCfg := llm.Config{
+		Provider:   genProvider,
+		APIKey:     genAPIKey,
+		BaseURL:    genBaseURL,
+		Model:      genModel,
+		MaxRetries: gen.MaxRetries,
+		Timeout:    gen.Timeout,
+	}
+
+	// --- Embedding config ---
+	fmt.Println()
+	fmt.Println("【RAG 向量模型】（用于代码检索与问答）")
+	fmt.Printf("使用与文档生成模型相同的配置？（y/n）[y]：")
+	useSame := readLine(scanner)
+	var embCfg llm.Config
+	if useSame == "" || strings.ToLower(useSame) == "y" || strings.ToLower(useSame) == "yes" {
+		embCfg = genCfg
+	} else {
+		emb := appExisting.Embedding
+		fmt.Printf("提供商（openai/ollama）[%s]：", emb.Provider)
+		embProvider := readLine(scanner)
+		if embProvider == "" {
+			embProvider = emb.Provider
+		}
+		embProvider = strings.ToLower(embProvider)
+
+		var embAPIKey string
+		if embProvider == "openai" {
+			fmt.Printf("API 密钥 [%s]：", maskKey(emb.APIKey))
+			embAPIKey = readLine(scanner)
+			if embAPIKey == "" {
+				embAPIKey = emb.APIKey
+			}
+		}
+
+		fmt.Printf("基础 URL [%s]：", emb.BaseURL)
+		embBaseURL := readLine(scanner)
+		if embBaseURL == "" {
+			embBaseURL = emb.BaseURL
+		}
+
+		fmt.Printf("模型 [%s]：", emb.Model)
+		embModel := readLine(scanner)
+		if embModel == "" {
+			embModel = emb.Model
+		}
+
+		embCfg = llm.Config{
+			Provider:   embProvider,
+			APIKey:     embAPIKey,
+			BaseURL:    embBaseURL,
+			Model:      embModel,
+			MaxRetries: emb.MaxRetries,
+			Timeout:    emb.Timeout,
+		}
+	}
+
+	newCfg := &llm.AppConfig{
+		Generation: genCfg,
+		Embedding:  embCfg,
 	}
 
 	path := cfg.ConfigPath
@@ -922,13 +983,15 @@ func runConfigInteractive(cfg *Config, input io.Reader) error {
 		path = llm.DefaultConfigPath()
 	}
 
-	if err := llm.SaveConfig(newCfg, path); err != nil {
+	if err := llm.SaveAppConfig(newCfg, path); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
 	fmt.Printf("\n配置已保存到 %s\n", path)
 	fmt.Println("你可以通过环境变量覆盖设置：")
-	fmt.Println("  CODEWIKI_API_KEY, CODEWIKI_MODEL, CODEWIKI_BASE_URL")
+	fmt.Println("  文档生成：CODEWIKI_GEN_API_KEY, CODEWIKI_GEN_MODEL, CODEWIKI_GEN_BASE_URL")
+	fmt.Println("  RAG 向量：CODEWIKI_EMB_API_KEY, CODEWIKI_EMB_MODEL, CODEWIKI_EMB_BASE_URL")
+	fmt.Println("  统一覆盖：CODEWIKI_API_KEY, CODEWIKI_MODEL, CODEWIKI_BASE_URL")
 	return nil
 }
 
