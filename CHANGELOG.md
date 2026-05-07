@@ -6,9 +6,18 @@
 
 ## [Unreleased]
 
+- 2026-05-07 — docs: update changelog with sequencer fix (d9379fc)
+
 - 2026-05-07 — fix(sequencer): resolve empty sequence diagram due to class scope reset, regex cross-contamination, and self-loop source detection (98177ea)
 
 - 2026-05-07 — chore: add post-commit hook to auto-update docs (02ab102)
+
+### 修复
+- **时序图空输出修复**：修复 `sequencer` 模块中导致时序图为空的三个交互 bug
+  - Python 空行错误重置类作用域，导致方法名丢失类前缀
+  - 跨语言正则污染（Java 正则匹配 Python 代码）产生虚假函数定义
+  - 自循环边（如 `main()` 模块级调用）破坏入度计算，导致无法找到起始节点
+  - 新增 `python-basic` 集成测试，确保端到端序列图生成正常
 
 ### 文档
 - 新增 README.md 与 CHANGELOG.md
