@@ -503,8 +503,15 @@ func GenerateArchitectureMarkdown(graph *grapher.Graph, archDSL string) (string,
 
 	// Module overview table
 	b.WriteString("## 模块概览\n\n")
-	b.WriteString("| 模块 | 类型 | 依赖 | 被依赖 |\n")
-	b.WriteString("|------|------|------|--------|\n")
+	// Module overview table with roles
+	roles := graph.InferModuleRoles()
+	roleMap := make(map[string]string)
+	for _, r := range roles {
+		roleMap[r.Name] = r.Role
+	}
+
+	b.WriteString("| 模块 | 角色 | 类型 | 依赖 | 被依赖 |\n")
+	b.WriteString("|------|------|------|------|--------|\n")
 
 	for _, n := range graph.Nodes {
 		nodeType := "模块"
@@ -526,7 +533,12 @@ func GenerateArchitectureMarkdown(graph *grapher.Graph, archDSL string) (string,
 			depStr = "`" + strings.Join(dependents, "`，`") + "`"
 		}
 
-		b.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s |\n", n.Name, nodeType, depsStr, depStr))
+		role := roleMap[n.Name]
+		if role == "" {
+			role = "—"
+		}
+
+		b.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s | %s |\n", n.Name, role, nodeType, depsStr, depStr))
 	}
 	b.WriteString("\n")
 

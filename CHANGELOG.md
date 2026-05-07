@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-08 — feat(docgen): add module role column to architecture markdown (a975a54)
+
 - 2026-05-08 — feat(grapher): add PageRank-based module role inference (f4ff10b)
 
 - 2026-05-08 — update PRD_COVERAGE.md: add M3 success criteria, test plan, and engineering infra items (e246c7c)

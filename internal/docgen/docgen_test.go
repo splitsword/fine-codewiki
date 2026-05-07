@@ -140,6 +140,7 @@ func TestGenerateArchitectureMarkdown(t *testing.T) {
 
 	assert.Contains(t, md, "# 架构")
 	assert.Contains(t, md, "## 模块概览")
+	assert.Contains(t, md, "| 模块 | 角色 | 类型 | 依赖 | 被依赖 |")
 	assert.Contains(t, md, "## 依赖图")
 	assert.Contains(t, md, "```mermaid")
 	assert.Contains(t, md, archDSL)
