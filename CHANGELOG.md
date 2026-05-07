@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-08 — docs(prd): expand M3 with engineering gaps from M1-M2 audit (4e000aa)
+
 - 2026-05-08 — docs: add PRD coverage tracking document (84c9df8)
 
 - 2026-05-08 — chore(docgen): print timeout hint when LLM request exceeds deadline (f197e7d)
