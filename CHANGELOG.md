@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-07 — docs(prd): update M2 completion and M3 doc-depth enhancement (246b581)
+
 - 2026-05-07 — feat(llm): split config into generation and embedding providers (80d5511)
 
 - 2026-05-07 — feat: localize all wiki output and CLI to Simplified Chinese (4485ff0)
