@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-07 — chore: add post-commit hook to auto-update docs (02ab102)
+
 ### 文档
 - 新增 README.md 与 CHANGELOG.md
 
