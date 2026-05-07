@@ -379,3 +379,63 @@ func splitLines(s string) []string {
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
+
+func TestBuildCallGraphPythonBasic(t *testing.T) {
+	repoPath := filepath.Join("..", "..", "testdata", "repos", "python-basic")
+	files := []*analyzer.FileResult{
+		{Filename: "main.py", Functions: []analyzer.FunctionInfo{{Name: "main"}}},
+		{
+			Filename: "models/user.py",
+			Classes: []analyzer.ClassInfo{
+				{
+					Name: "User",
+					Methods: []analyzer.FunctionInfo{
+						{Name: "create"},
+						{Name: "authenticate"},
+						{Name: "deactivate"},
+					},
+				},
+			},
+		},
+		{
+			Filename: "services/user_service.py",
+			Classes: []analyzer.ClassInfo{
+				{
+					Name: "UserService",
+					Methods: []analyzer.FunctionInfo{
+						{Name: "register"},
+						{Name: "authenticate"},
+						{Name: "list_users"},
+					},
+				},
+			},
+		},
+		{
+			Filename: "repositories/user_repository.py",
+			Classes: []analyzer.ClassInfo{
+				{
+					Name: "UserRepository",
+					Methods: []analyzer.FunctionInfo{
+						{Name: "save"},
+						{Name: "find_by_id"},
+						{Name: "find_by_username"},
+						{Name: "find_all"},
+					},
+				},
+			},
+		},
+		{Filename: "utils/crypto.py", Functions: []analyzer.FunctionInfo{{Name: "hash_password"}, {Name: "verify_password"}}},
+		{Filename: "utils/logger.py", Functions: []analyzer.FunctionInfo{{Name: "get_logger"}}},
+	}
+
+	edges, err := BuildCallGraph(repoPath, files)
+	require.NoError(t, err)
+	require.NotEmpty(t, edges, "should discover inter-function calls in python-basic repo")
+
+	seqs := FindSequences(edges, 2)
+	require.NotEmpty(t, seqs, "should extract at least one sequence path")
+	for _, s := range seqs {
+		require.True(t, len(s.Messages) >= 2, "each sequence should have at least 2 messages")
+		require.True(t, len(s.Participants) >= 2, "each sequence should cross multiple modules")
+	}
+}

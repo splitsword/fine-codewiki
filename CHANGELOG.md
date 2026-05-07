@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-07 — fix(sequencer): resolve empty sequence diagram due to class scope reset, regex cross-contamination, and self-loop source detection (98177ea)
+
 - 2026-05-07 — chore: add post-commit hook to auto-update docs (02ab102)
 
 ### 文档

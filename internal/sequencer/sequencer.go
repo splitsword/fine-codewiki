@@ -101,8 +101,14 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 			}
 
 			// Find caller for this line
-			caller := findNearestPrecedingFunc(funcDefs, i)
-			if caller == "" {
+			callerDef := findNearestPrecedingFunc(funcDefs, i)
+			if callerDef.Name == "" {
+				continue
+			}
+			// If call line indent is not deeper than the function def indent,
+			// the call is at module/class level, not inside the function body.
+			callIndent := len(line) - len(strings.TrimLeft(line, " \t"))
+			if callIndent <= callerDef.Indent {
 				continue
 			}
 
@@ -121,10 +127,10 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 				}
 
 				// Pick the best matching target
-				target := pickTarget(refs, caller, mod)
+				target := pickTarget(refs, callerDef.Name, mod)
 
 				edge := CallEdge{
-					From: FunctionRef{Module: mod, Name: caller},
+					From: FunctionRef{Module: mod, Name: callerDef.Name},
 					To:   target,
 				}
 				key := edge.From.String() + "->" + edge.To.String()
@@ -140,14 +146,16 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 }
 
 // findFunctionDefs locates function definition lines in source.
-func findFunctionDefs(f *analyzer.FileResult, lines []string) []struct {
-	Name string
-	Line int
-} {
-	var defs []struct {
-		Name string
-		Line int
-	}
+type funcDef struct {
+	Name   string
+	Line   int
+	Indent int
+}
+
+func findFunctionDefs(f *analyzer.FileResult, lines []string) []funcDef {
+	var defs []funcDef
+
+	ext := strings.ToLower(filepath.Ext(f.Filename))
 
 	pyFunc := regexp.MustCompile(`^def\s+(\w+)\s*\(`)
 	pyClass := regexp.MustCompile(`^class\s+(\w+)`)
@@ -165,94 +173,75 @@ func findFunctionDefs(f *analyzer.FileResult, lines []string) []struct {
 		stripped := strings.TrimSpace(line)
 		indent := len(line) - len(strings.TrimLeft(line, " \t"))
 
-		if currentClass != "" && indent <= classIndent {
-			currentClass = ""
-		}
-
-		if m := pyClass.FindStringSubmatch(stripped); m != nil {
-			currentClass = m[1]
-			classIndent = indent
-			continue
-		}
-
-		if m := javaClass.FindStringSubmatch(stripped); m != nil {
-			currentClass = m[1]
-			classIndent = indent
-			continue
-		}
-
-		if m := pyFunc.FindStringSubmatch(stripped); m != nil {
-			name := m[1]
-			if currentClass != "" && indent > classIndent {
-				name = currentClass + "." + name
+		// Only non-empty, non-comment lines affect class scope exit
+		if stripped != "" && !strings.HasPrefix(stripped, "#") && !strings.HasPrefix(stripped, "//") {
+			if currentClass != "" && indent <= classIndent {
+				currentClass = ""
 			}
-			defs = append(defs, struct {
-				Name string
-				Line int
-			}{Name: name, Line: i})
-			continue
 		}
 
-		if m := jsFunc.FindStringSubmatch(stripped); m != nil {
-			defs = append(defs, struct {
-				Name string
-				Line int
-			}{Name: m[1], Line: i})
-			continue
-		}
-
-		if m := jsMethod.FindStringSubmatch(stripped); m != nil {
-			name := m[1]
-			if currentClass != "" {
-				name = currentClass + "." + name
+		switch ext {
+		case ".py":
+			if m := pyClass.FindStringSubmatch(stripped); m != nil {
+				currentClass = m[1]
+				classIndent = indent
+				continue
 			}
-			defs = append(defs, struct {
-				Name string
-				Line int
-			}{Name: name, Line: i})
-			continue
-		}
-
-		if m := jsArrow.FindStringSubmatch(stripped); m != nil {
-			defs = append(defs, struct {
-				Name string
-				Line int
-			}{Name: m[1], Line: i})
-			continue
-		}
-
-		if m := goFunc.FindStringSubmatch(stripped); m != nil {
-			defs = append(defs, struct {
-				Name string
-				Line int
-			}{Name: m[1], Line: i})
-			continue
-		}
-
-		if m := javaMethod.FindStringSubmatch(stripped); m != nil {
-			name := m[1]
-			if currentClass != "" {
-				name = currentClass + "." + name
+			if m := pyFunc.FindStringSubmatch(stripped); m != nil {
+				name := m[1]
+				if currentClass != "" && indent > classIndent {
+					name = currentClass + "." + name
+				}
+				defs = append(defs, funcDef{Name: name, Line: i, Indent: indent})
+				continue
 			}
-			defs = append(defs, struct {
-				Name string
-				Line int
-			}{Name: name, Line: i})
-			continue
+		case ".go":
+			if m := goFunc.FindStringSubmatch(stripped); m != nil {
+				defs = append(defs, funcDef{Name: m[1], Line: i, Indent: indent})
+				continue
+			}
+		case ".java":
+			if m := javaClass.FindStringSubmatch(stripped); m != nil {
+				currentClass = m[1]
+				classIndent = indent
+				continue
+			}
+			if m := javaMethod.FindStringSubmatch(stripped); m != nil {
+				name := m[1]
+				if currentClass != "" {
+					name = currentClass + "." + name
+				}
+				defs = append(defs, funcDef{Name: name, Line: i, Indent: indent})
+				continue
+			}
+		case ".js", ".ts", ".tsx":
+			if m := jsFunc.FindStringSubmatch(stripped); m != nil {
+				defs = append(defs, funcDef{Name: m[1], Line: i, Indent: indent})
+				continue
+			}
+			if m := jsMethod.FindStringSubmatch(stripped); m != nil {
+				name := m[1]
+				if currentClass != "" {
+					name = currentClass + "." + name
+				}
+				defs = append(defs, funcDef{Name: name, Line: i, Indent: indent})
+				continue
+			}
+			if m := jsArrow.FindStringSubmatch(stripped); m != nil {
+				defs = append(defs, funcDef{Name: m[1], Line: i, Indent: indent})
+				continue
+			}
 		}
 	}
 
 	return defs
 }
 
-func findNearestPrecedingFunc(defs []struct {
-	Name string
-	Line int
-}, callLine int) string {
-	var caller string
+func findNearestPrecedingFunc(defs []funcDef, callLine int) funcDef {
+	var caller funcDef
 	for _, d := range defs {
 		if d.Line <= callLine {
-			caller = d.Name
+			caller = d
 		} else {
 			break
 		}
@@ -332,9 +321,14 @@ func FindSequences(edges []CallEdge, minEdges int) []Sequence {
 	var sequences []Sequence
 	seen := make(map[string]bool)
 
-	// Count in-degrees to identify source nodes (no incoming edges)
+	// Count in-degrees to identify source nodes (no incoming edges).
+	// Self-loops are ignored because they shouldn't block a node from being
+	// treated as a sequence source (e.g. main() called at module level).
 	inDegree := make(map[string]int)
 	for _, e := range edges {
+		if e.From.String() == e.To.String() {
+			continue
+		}
 		inDegree[e.To.String()]++
 	}
 
