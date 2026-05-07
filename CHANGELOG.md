@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-08 — update PRD_COVERAGE.md: add M3 success criteria, test plan, and engineering infra items (e246c7c)
+
 - 2026-05-08 — docs(prd): expand M3 with engineering gaps from M1-M2 audit (4e000aa)
 
 - 2026-05-08 — docs: add PRD coverage tracking document (84c9df8)
