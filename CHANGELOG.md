@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-08 — feat(benchmark): add performance benchmark suite (1ce3c47)
+
 - 2026-05-08 — feat(docgen): add module role column to architecture markdown (a975a54)
 
 - 2026-05-08 — feat(grapher): add PageRank-based module role inference (f4ff10b)
