@@ -25,12 +25,12 @@ type Wiki struct {
 
 // GenerateWiki produces a complete Wiki from analysis results and diagrams.
 func GenerateWiki(graph *grapher.Graph, projectName, archDSL, classDSL, seqDSL string) (*Wiki, error) {
-	return GenerateWikiEnhanced(context.Background(), nil, graph, projectName, archDSL, classDSL, seqDSL)
+	return GenerateWikiEnhanced(context.Background(), nil, graph, "", projectName, archDSL, classDSL, seqDSL)
 }
 
 // GenerateWikiEnhanced produces a Wiki with optional LLM enhancement.
 // If provider is nil, falls back to static generation.
-func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *grapher.Graph, projectName, archDSL, classDSL, seqDSL string) (*Wiki, error) {
+func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *grapher.Graph, sourceDir, projectName, archDSL, classDSL, seqDSL string) (*Wiki, error) {
 	overview, err := GenerateOverviewMarkdown(graph, projectName)
 	if err != nil {
 		return nil, fmt.Errorf("generate overview: %w", err)
@@ -38,7 +38,8 @@ func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 	// LLM enhancement for overview
 	if provider != nil {
-		prompt := buildOverviewPrompt(graph, projectName)
+		readme := loadProjectReadme(sourceDir)
+		prompt := buildOverviewPrompt(graph, projectName, readme)
 		enhanced, err := provider.Complete(ctx, prompt)
 		if err != nil {
 			fmt.Printf("警告：LLM 生成项目概述失败 (%v)\n", err)
@@ -83,7 +84,77 @@ func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	}, nil
 }
 
-func buildOverviewPrompt(graph *grapher.Graph, projectName string) string {
+// loadProjectReadme attempts to read README.md or similar from the project root.
+func loadProjectReadme(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	names := []string{"README.md", "readme.md", "Readme.md", "README_zh.md", "README_CN.md", "README.txt"}
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err == nil {
+			// Truncate to avoid overly long prompts
+			text := string(data)
+			if len(text) > 4000 {
+				text = text[:4000] + "\n...（README 内容已截断）"
+			}
+			return text
+		}
+	}
+	return ""
+}
+
+// isBuildArtifact returns true for paths that are typically build outputs.
+func isBuildArtifact(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.Contains(lower, "/dist/") ||
+		strings.Contains(lower, "/build/") ||
+		strings.Contains(lower, "/.git/") ||
+		strings.Contains(lower, "/node_modules/") ||
+		strings.Contains(lower, "/vendor/") ||
+		strings.HasSuffix(lower, ".d.ts")
+}
+
+// sortNodesByImportance orders modules by relevance for the LLM prompt:
+// core modules (most depended upon) > entry points > others.
+func sortNodesByImportance(nodes []*grapher.Node, graph *grapher.Graph, entries []*grapher.Node) []*grapher.Node {
+	entrySet := make(map[string]bool)
+	for _, e := range entries {
+		entrySet[e.Name] = true
+	}
+
+	type scoredNode struct {
+		node  *grapher.Node
+		score int
+	}
+	scored := make([]scoredNode, 0, len(nodes))
+	for _, n := range nodes {
+		if isBuildArtifact(n.Name) {
+			continue
+		}
+		score := len(graph.DependentsOf(n.Name)) * 10
+		if entrySet[n.Name] {
+			score += 50
+		}
+		if len(n.Classes) > 0 || len(n.Functions) > 0 {
+			score += 5
+		}
+		scored = append(scored, scoredNode{n, score})
+	}
+
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
+	})
+
+	result := make([]*grapher.Node, 0, len(scored))
+	for _, s := range scored {
+		result = append(result, s.node)
+	}
+	return result
+}
+
+func buildOverviewPrompt(graph *grapher.Graph, projectName, readme string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "你是一个资深软件架构师。请基于以下代码库信息，撰写一段项目概述（2-3 段）。\n\n")
 	fmt.Fprintf(&b, "要求：\n")
@@ -92,14 +163,22 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName string) string {
 	fmt.Fprintf(&b, "3. 说明关键模块的职责分工和协作方式\n")
 	fmt.Fprintf(&b, "4. 不要只是罗列模块名称和文件清单，要体现对代码逻辑的理解\n")
 	fmt.Fprintf(&b, "5. 使用简体中文\n\n")
+
+	if readme != "" {
+		fmt.Fprintf(&b, "【项目 README】\n%s\n\n", readme)
+	}
+
 	fmt.Fprintf(&b, "项目：%s\n", projectName)
 	fmt.Fprintf(&b, "模块数：%d\n", len(graph.Nodes))
 	fmt.Fprintf(&b, "依赖数：%d\n\n", len(graph.Edges))
+
+	entries := graph.EntryPoints()
+	important := sortNodesByImportance(graph.Nodes, graph, entries)
 	maxModulesInPrompt := 20
-	fmt.Fprintf(&b, "模块列表（供参考，不要原样复述）：\n")
-	for i, n := range graph.Nodes {
+	fmt.Fprintf(&b, "核心模块列表（按重要性排序，供参考，不要原样复述）：\n")
+	for i, n := range important {
 		if i >= maxModulesInPrompt {
-			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(graph.Nodes)-maxModulesInPrompt)
+			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(important)-maxModulesInPrompt)
 			break
 		}
 		line := "- " + n.Name

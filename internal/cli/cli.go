@@ -115,7 +115,7 @@ func RunGenerate(cfg *Config) error {
 		}
 	}
 
-	wiki, err := docgen.GenerateWikiEnhanced(context.Background(), provider, graph, cfg.ProjectName, archDSL, classDSL, seqDSL)
+	wiki, err := docgen.GenerateWikiEnhanced(context.Background(), provider, graph, cfg.SourceDir, cfg.ProjectName, archDSL, classDSL, seqDSL)
 	if err != nil {
 		return fmt.Errorf("generate wiki: %w", err)
 	}

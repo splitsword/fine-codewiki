@@ -212,7 +212,7 @@ func TestGenerateWikiWithLLM(t *testing.T) {
 	graph := grapher.BuildGraph(files)
 
 	mock := &mockProvider{response: "This is an AI-enhanced project overview."}
-	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "ai-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n")
+	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "", "ai-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n")
 
 	require.NoError(t, err)
 	require.NotNil(t, wiki)
@@ -232,7 +232,7 @@ func TestGenerateWikiWithLLMFallback(t *testing.T) {
 
 	// LLM returns error — should fall back to static generation
 	mock := &mockProvider{err: errors.New("llm unavailable")}
-	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "fallback-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n")
+	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "", "fallback-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n")
 
 	require.NoError(t, err)
 	require.NotNil(t, wiki)
