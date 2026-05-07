@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-07 — fix(docgen): skip meaningless community groups in auto description (14f817e)
+
 - 2026-05-07 — fix(docgen): restore project description in overview.md (623ab2a)
 
 - 2026-05-07 — docs(prd): update M2 completion and M3 doc-depth enhancement (246b581)

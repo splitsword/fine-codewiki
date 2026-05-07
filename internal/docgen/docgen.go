@@ -211,18 +211,31 @@ func buildAutoDescription(graph *grapher.Graph, projectName string, classCount, 
 
 	// Community detection for functional grouping
 	communities := graph.DetectCommunities()
-	if len(communities) > 1 {
-		fmt.Fprintf(&b, "按功能划分，项目大致可分为 %d 个模块组：", len(communities))
-		var names []string
-		for name := range communities {
-			names = append(names, name)
+	// Only show communities if they actually group modules meaningfully
+	var meaningfulCommunities []struct {
+		name  string
+		count int
+	}
+	for name, nodes := range communities {
+		if len(nodes) >= 2 {
+			meaningfulCommunities = append(meaningfulCommunities, struct {
+				name  string
+				count int
+			}{name, len(nodes)})
 		}
-		sort.Strings(names)
-		for i, name := range names {
+	}
+	// Only output if we have at least 2 meaningful communities and they cover
+	// a reasonable portion of the project (avoid 200 communities of 1 module)
+	if len(meaningfulCommunities) >= 2 && len(meaningfulCommunities) <= len(graph.Nodes)/3 {
+		fmt.Fprintf(&b, "按功能划分，项目大致可分为 %d 个模块组：", len(meaningfulCommunities))
+		sort.Slice(meaningfulCommunities, func(i, j int) bool {
+			return meaningfulCommunities[i].name < meaningfulCommunities[j].name
+		})
+		for i, c := range meaningfulCommunities {
 			if i > 0 {
 				b.WriteString("、")
 			}
-			fmt.Fprintf(&b, "%s（%d 个模块）", name, len(communities[name]))
+			fmt.Fprintf(&b, "%s（%d 个模块）", c.name, c.count)
 		}
 		b.WriteString("。")
 	}
