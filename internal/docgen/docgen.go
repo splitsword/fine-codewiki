@@ -43,6 +43,9 @@ func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		enhanced, err := provider.Complete(ctx, prompt)
 		if err != nil {
 			fmt.Printf("警告：LLM 生成项目概述失败 (%v)\n", err)
+			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
+				fmt.Println("提示：请求超时，请在 ~/.codewiki/config.yaml 中增加 timeout 值（例如 timeout: 300）")
+			}
 		} else if enhanced == "" {
 			fmt.Println("警告：LLM 返回了空的项目概述")
 		} else if isChecklistLike(enhanced, graph) {

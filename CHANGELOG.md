@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-08 — chore(docgen): print timeout hint when LLM request exceeds deadline (f197e7d)
+
 - 2026-05-08 — feat(docgen): prioritize README and core modules in LLM prompt (f1730d0)
 
 - 2026-05-08 — fix(docgen): truncate prompt module lists to avoid API timeout (3bd8719)
