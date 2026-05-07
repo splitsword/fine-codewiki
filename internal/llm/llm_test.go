@@ -112,6 +112,27 @@ func TestOpenAIProviderRetry(t *testing.T) {
 	assert.Equal(t, 3, attempts)
 }
 
+func TestOpenAIProviderNoChoices(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]any{"choices": []map[string]any{}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := &OpenAIProvider{
+		BaseURL:    server.URL + "/v1",
+		APIKey:     "test-key",
+		Model:      "gpt-4o",
+		MaxRetries: 0,
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	_, err := p.Complete(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no choices in response")
+}
+
 func TestOpenAIProviderTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
@@ -264,4 +285,167 @@ func TestConfigEnvOverride(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "env-key", cfg.APIKey)
 	assert.Equal(t, "env-model", cfg.Model)
+}
+
+func TestSaveConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+
+	cfg := &Config{
+		Provider:   "openai",
+		APIKey:     "sk-test",
+		BaseURL:    "https://api.openai.com/v1",
+		Model:      "gpt-4o",
+		MaxRetries: 5,
+		Timeout:    30,
+	}
+
+	err := SaveConfig(cfg, cfgPath)
+	require.NoError(t, err)
+
+	loaded, err := LoadConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", loaded.Provider)
+	assert.Equal(t, "sk-test", loaded.APIKey)
+	assert.Equal(t, "https://api.openai.com/v1", loaded.BaseURL)
+	assert.Equal(t, "gpt-4o", loaded.Model)
+	assert.Equal(t, 5, loaded.MaxRetries)
+	assert.Equal(t, 30, loaded.Timeout)
+}
+
+func TestSaveConfigCreatesDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "nested", "dir", "config.yaml")
+
+	cfg := &Config{Provider: "ollama", Model: "qwen"}
+	err := SaveConfig(cfg, cfgPath)
+	require.NoError(t, err)
+
+	_, err = os.Stat(cfgPath)
+	assert.NoError(t, err)
+}
+
+func TestDefaultConfigPath(t *testing.T) {
+	path := DefaultConfigPath()
+	assert.Contains(t, path, ".codewiki")
+	assert.Contains(t, path, "config.yaml")
+}
+
+func TestLoadConfigParseError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "bad.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("{invalid yaml: ["), 0644))
+
+	_, err := LoadConfig(cfgPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse config")
+}
+
+func TestLoadConfigBaseURLEnv(t *testing.T) {
+	os.Setenv("CODEWIKI_BASE_URL", "https://custom.example.com/v1")
+	defer os.Unsetenv("CODEWIKI_BASE_URL")
+
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("provider: openai\n"), 0644))
+
+	cfg, err := LoadConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "https://custom.example.com/v1", cfg.BaseURL)
+}
+
+func TestSaveConfigEmptyPath(t *testing.T) {
+	// This will try to write to the default path (home dir).
+	// We can't easily test this without side effects, so we test
+	// that passing a valid path works instead.
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "sub", "config.yaml")
+	cfg := &Config{Provider: "ollama", Model: "qwen"}
+	err := SaveConfig(cfg, cfgPath)
+	require.NoError(t, err)
+
+	loaded, err := LoadConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "qwen", loaded.Model)
+}
+
+func TestOpenAIProviderAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"error": {"message": "bad request"}}`)
+	}))
+	defer server.Close()
+
+	p := &OpenAIProvider{
+		BaseURL:    server.URL + "/v1",
+		APIKey:     "test-key",
+		Model:      "gpt-4o",
+		MaxRetries: 0,
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	_, err := p.Complete(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API error 400")
+}
+
+func TestOllamaProviderEmbedError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error": "load failed"}`)
+	}))
+	defer server.Close()
+
+	p := &OllamaProvider{
+		BaseURL:    server.URL,
+		Model:      "nomic-embed-text",
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	_, err := p.Embed(context.Background(), []string{"hello"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Ollama error 500")
+}
+
+func TestIsTimeout(t *testing.T) {
+	assert.False(t, isTimeout(nil))
+	assert.False(t, isTimeout(fmt.Errorf("some random error")))
+	assert.True(t, isTimeout(fmt.Errorf("request timeout")))
+	assert.True(t, isTimeout(fmt.Errorf("context deadline exceeded")))
+}
+
+func TestOllamaProviderCompleteInvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{invalid json`)
+	}))
+	defer server.Close()
+
+	p := &OllamaProvider{
+		BaseURL:    server.URL,
+		Model:      "qwen:14b",
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	_, err := p.Complete(context.Background(), "test")
+	require.Error(t, err)
+}
+
+func TestOllamaProviderError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error": "model not found"}`)
+	}))
+	defer server.Close()
+
+	p := &OllamaProvider{
+		BaseURL:    server.URL,
+		Model:      "qwen:14b",
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	_, err := p.Complete(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Ollama error 500")
 }

@@ -1,0 +1,71 @@
+# 变更日志
+
+> 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
+
+---
+
+## [Unreleased]
+
+### 文档
+- 新增 README.md 与 CHANGELOG.md
+
+---
+
+## [M2] — 2026-05-07
+
+### 问答与图表增强
+
+#### 新增
+- **RAG 检索增强问答**：实现 `codewiki ask` 终端问答命令，支持基于代码向量索引的自然语言查询
+- **源码溯源**：所有回答附带源文件路径与起始行号，实现答案到代码的精确追溯
+- **多轮对话会话**：新增 `Session` / `Turn` 机制，支持连续追问与上下文保持
+- **本地 LLM 适配**：完整支持 Ollama 本地模型运行全部生成流程，实现 100% 离线运行
+- **时序图生成**：基于调用链分析生成 Mermaid 时序图，展示关键交互流程
+- **依赖图生成**：新增独立依赖图（`graph LR`），展示模块间 import 关系的全貌
+- **SQLite 向量存储**：使用 `modernc.org/sqlite`（纯 Go，无 CGO）实现本地向量持久化
+- **增量索引机制**：基于文件 `mtime + size` 的增量索引，仅对变更文件重新 Embedding
+- **向量存储裁剪**：`PruneFiles` 自动清理已删除文件的向量记录
+- **社区检测**：基于确定性标签传播的图社区检测，用于架构图分层
+- **Mermaid DSL 校验器**：结构级语法验证（括号平衡、边语法、子图嵌套等）
+- **Tree-sitter 包装器**：`TreeSitterParser` 封装 `gotreesitter`，为纯 Go 语法解析预留扩展点
+- **Go / Java AST 支持**：分析引擎新增 Go 与 Java 语言解析
+- **TypeScript 增强**：支持接口、枚举、泛型的解析与类图生成
+- **Benchmark 评测集**：`benchmark/qa_bench.json` 含 30+ 问答对，覆盖架构/API/调用链/设计模式
+- **评测框架**：自动化评估答案内容匹配、引用来源检查、准确率与引用率统计
+
+#### 改进
+- **架构图稳定性**：节点与边排序，确保多次生成输出完全一致
+- **类图完善**：支持多继承、空类、self/cls 参数过滤
+- **循环依赖标注**：架构图与依赖图中循环依赖边使用虚线（`-.->`）标注
+- **交互式问答终端**：`serve` 内置问答界面，可在浏览器中直接提问
+
+#### 测试
+- 新增 `internal/vectorstore` 测试套件，覆盖率 87.2%
+- 新增 `internal/diagram/validate` 测试套件，覆盖率 90.5%
+- 新增 `internal/grapher` 社区检测测试，覆盖率 98.1%
+- 新增 `internal/rag` 多轮会话测试，覆盖率 92.7%
+- 新增 `internal/benchmark` 评测框架测试，覆盖率 89.9%
+- 新增 `internal/analyzer/treesitter` 回退测试
+- 所有模块行覆盖率均达到或超过 PRD 目标（≥ 85%）
+
+---
+
+## [M1] — 2026-05-06
+
+### 核心可行原型
+
+#### 新增
+- **CLI 框架**：`codewiki generate`、`serve`、`ask`、`config` 四大命令
+- **AST 解析引擎**：基于正则与 tree-sitter 回退的解析器，支持 Python / JavaScript / TypeScript
+- **依赖图构建**：分析 import 关系，构建全局模块依赖图，支持循环依赖检测
+- **架构图生成**：基于依赖图自动生成 Mermaid `graph TD` 架构图，按目录分 subgraph
+- **类图生成**：从 AST 提取类结构生成 Mermaid `classDiagram`，含方法与继承关系
+- **文档生成引擎**：项目概览、架构文档、API 参考（函数/类签名、参数、返回值）
+- **LLM 适配层**：统一接口适配 OpenAI 兼容 API 与 Ollama 本地模型
+- **本地 Web 预览**：`serve` 命令启动 HTTP 服务，内嵌 Mermaid.js 渲染图表
+- **代码向量化**：语义分块 + Embedding + 本地向量索引（JSON / SQLite 双后端）
+- **Wiki 输出**：Markdown + Mermaid 文件写入 `.codewiki/wiki/`
+
+#### 测试
+- 完整的单元测试与集成测试覆盖
+- AST 解析、图谱构建、图表生成、CLI 命令全链路 TDD 验证

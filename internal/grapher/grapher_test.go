@@ -292,6 +292,66 @@ func TestDetectCyclesNoCycles(t *testing.T) {
 	assert.Empty(t, cycles)
 }
 
+func TestDetectCommunities(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Imports:  []analyzer.ImportInfo{{Module: ".order", Name: "Order", IsRelative: true}},
+		},
+		{
+			Filename: "models/order.py",
+			Imports:  []analyzer.ImportInfo{{Module: ".user", Name: "User", IsRelative: true}},
+		},
+		{
+			Filename: "services/api.py",
+			Imports: []analyzer.ImportInfo{
+				{Module: "..models.user", Name: "User", IsRelative: true},
+				{Module: "..models.order", Name: "Order", IsRelative: true},
+			},
+		},
+		{
+			Filename:  "utils/logger.py",
+			Functions: []analyzer.FunctionInfo{{Name: "get_logger"}},
+		},
+	}
+
+	graph := BuildGraph(files)
+	communities := graph.DetectCommunities()
+
+	// models/user, models/order, and services/api are tightly connected
+	// utils/logger is isolated
+	assert.GreaterOrEqual(t, len(communities), 2, "should find at least 2 communities")
+
+	// Find isolated node community
+	var isolatedCommunity *Cycle
+	_ = isolatedCommunity
+	foundLogger := false
+	for _, nodes := range communities {
+		for _, n := range nodes {
+			if n.Name == "utils/logger" {
+				foundLogger = true
+				assert.Len(t, nodes, 1, "isolated node should be in its own community")
+			}
+		}
+	}
+	assert.True(t, foundLogger, "logger should be in its own community")
+}
+
+func TestDetectCommunitiesDisconnected(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "a.py", Imports: []analyzer.ImportInfo{{Module: ".b", Name: "B", IsRelative: true}}},
+		{Filename: "b.py", Imports: []analyzer.ImportInfo{{Module: ".a", Name: "A", IsRelative: true}}},
+		{Filename: "c.py", Imports: []analyzer.ImportInfo{{Module: ".d", Name: "D", IsRelative: true}}},
+		{Filename: "d.py", Imports: []analyzer.ImportInfo{{Module: ".c", Name: "C", IsRelative: true}}},
+	}
+
+	graph := BuildGraph(files)
+	communities := graph.DetectCommunities()
+
+	// Should find 2 separate communities (a-b and c-d)
+	assert.Equal(t, 2, len(communities))
+}
+
 func TestBuildGraphLargeGraph(t *testing.T) {
 	var files []*analyzer.FileResult
 	// Create 100 nodes in a chain: module_0 -> module_1 -> ... -> module_99

@@ -2,4 +2,12 @@ coverage.out
 *_coverage.out
 *.exe
 .codewiki/
+.claude/
 *.exe~
+coverage
+all_coverage
+bench_coverage
+diag_coverage
+gr_coverage
+rag_coverage
+vs_coverage

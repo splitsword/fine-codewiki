@@ -20,16 +20,17 @@ type Wiki struct {
 	Architecture        string
 	ClassDiagram        string
 	ArchitectureDiagram string
+	SequenceDiagram     string
 }
 
 // GenerateWiki produces a complete Wiki from analysis results and diagrams.
-func GenerateWiki(graph *grapher.Graph, projectName, archDSL, classDSL string) (*Wiki, error) {
-	return GenerateWikiEnhanced(context.Background(), nil, graph, projectName, archDSL, classDSL)
+func GenerateWiki(graph *grapher.Graph, projectName, archDSL, classDSL, seqDSL string) (*Wiki, error) {
+	return GenerateWikiEnhanced(context.Background(), nil, graph, projectName, archDSL, classDSL, seqDSL)
 }
 
 // GenerateWikiEnhanced produces a Wiki with optional LLM enhancement.
 // If provider is nil, falls back to static generation.
-func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *grapher.Graph, projectName, archDSL, classDSL string) (*Wiki, error) {
+func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *grapher.Graph, projectName, archDSL, classDSL, seqDSL string) (*Wiki, error) {
 	overview, err := GenerateOverviewMarkdown(graph, projectName)
 	if err != nil {
 		return nil, fmt.Errorf("generate overview: %w", err)
@@ -70,6 +71,7 @@ func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		Architecture:        arch,
 		ClassDiagram:        classDSL,
 		ArchitectureDiagram: archDSL,
+		SequenceDiagram:     seqDSL,
 	}, nil
 }
 
@@ -283,11 +285,12 @@ func WriteWikiFiles(outputDir string, wiki *Wiki) error {
 	}
 
 	files := map[string]string{
-		"overview.md":      wiki.Overview,
-		"api-reference.md": wiki.APIReference,
-		"architecture.md":  wiki.Architecture,
+		"overview.md":         wiki.Overview,
+		"api-reference.md":    wiki.APIReference,
+		"architecture.md":     wiki.Architecture,
 		"class-diagram.mmd":   wiki.ClassDiagram,
 		"architecture.mmd":    wiki.ArchitectureDiagram,
+		"sequence-diagram.mmd": wiki.SequenceDiagram,
 	}
 
 	for name, content := range files {

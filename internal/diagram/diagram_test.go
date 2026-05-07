@@ -282,3 +282,87 @@ func TestGenerateClassDiagramEmptyClass(t *testing.T) {
 	assert.Contains(t, dsl, "class EmptyClass {")
 	assert.Contains(t, dsl, "}")
 }
+
+func TestGenerateDependencyDiagram(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Imports:  []analyzer.ImportInfo{{Module: ".base", Name: "BaseModel", IsRelative: true}},
+		},
+		{Filename: "models/base.py"},
+		{
+			Filename: "services/api.py",
+			Imports: []analyzer.ImportInfo{
+				{Module: "..models.user", Name: "User", IsRelative: true},
+				{Module: "..models.base", Name: "BaseModel", IsRelative: true},
+			},
+		},
+	}
+
+	graph := grapher.BuildGraph(files)
+	dsl, err := GenerateDependencyDiagram(graph)
+	require.NoError(t, err)
+	require.NotEmpty(t, dsl)
+
+	// Must be valid Mermaid graph LR
+	assert.True(t, strings.HasPrefix(dsl, "graph LR"), "should start with 'graph LR'")
+
+	// Should contain node declarations
+	assert.Contains(t, dsl, "models_user[models/user]")
+	assert.Contains(t, dsl, "models_base[models/base]")
+	assert.Contains(t, dsl, "services_api[services/api]")
+
+	// Should contain edges
+	assert.Contains(t, dsl, "models_user --> models_base")
+	assert.Contains(t, dsl, "services_api --> models_user")
+	assert.Contains(t, dsl, "services_api --> models_base")
+}
+
+func TestGenerateDependencyDiagramEmpty(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{})
+	dsl, err := GenerateDependencyDiagram(graph)
+	require.NoError(t, err)
+	assert.Equal(t, "graph LR\n", dsl)
+}
+
+func TestGenerateDependencyDiagramCircularDeps(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Imports:  []analyzer.ImportInfo{{Module: ".order", Name: "Order", IsRelative: true}},
+		},
+		{
+			Filename: "models/order.py",
+			Imports:  []analyzer.ImportInfo{{Module: ".user", Name: "User", IsRelative: true}},
+		},
+	}
+
+	graph := grapher.BuildGraph(files)
+	dsl, err := GenerateDependencyDiagram(graph)
+	require.NoError(t, err)
+
+	// Circular dependency edges should use dotted style
+	assert.Contains(t, dsl, "models_user -.-> models_order")
+	assert.Contains(t, dsl, "models_order -.-> models_user")
+}
+
+func TestGenerateDependencyDiagramStability(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "models/user.py", Imports: []analyzer.ImportInfo{{Module: ".base", Name: "BaseModel", IsRelative: true}}},
+		{Filename: "models/base.py"},
+		{Filename: "services/api.py", Imports: []analyzer.ImportInfo{{Module: "..models.user", Name: "User", IsRelative: true}}},
+	}
+
+	graph := grapher.BuildGraph(files)
+
+	var outputs []string
+	for i := 0; i < 5; i++ {
+		dsl, err := GenerateDependencyDiagram(graph)
+		require.NoError(t, err)
+		outputs = append(outputs, dsl)
+	}
+
+	for i := 1; i < len(outputs); i++ {
+		assert.Equal(t, outputs[0], outputs[i], "dependency diagram should be deterministic")
+	}
+}

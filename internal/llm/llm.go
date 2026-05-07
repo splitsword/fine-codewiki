@@ -47,7 +47,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	if path == "" {
-		path = defaultConfigPath()
+		path = DefaultConfigPath()
 	}
 
 	data, err := os.ReadFile(path)
@@ -71,12 +71,28 @@ func LoadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
-func defaultConfigPath() string {
+// DefaultConfigPath returns the default configuration file path.
+func DefaultConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ".codewiki/config.yaml"
 	}
 	return filepath.Join(home, ".codewiki", "config.yaml")
+}
+
+// SaveConfig writes configuration to a YAML file.
+func SaveConfig(cfg *Config, path string) error {
+	if path == "" {
+		path = DefaultConfigPath()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 // NewProvider creates a Provider based on configuration.

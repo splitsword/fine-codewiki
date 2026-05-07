@@ -155,6 +155,63 @@ func GenerateClassDiagram(graph *grapher.Graph) (string, error) {
 	return b.String(), nil
 }
 
+// GenerateDependencyDiagram generates a standalone dependency diagram (graph LR)
+// showing the full import dependency graph without subgraphs.
+func GenerateDependencyDiagram(graph *grapher.Graph) (string, error) {
+	var b strings.Builder
+	b.WriteString("graph LR\n")
+
+	if len(graph.Nodes) == 0 {
+		return b.String(), nil
+	}
+
+	// Sort nodes for deterministic output
+	sortedNodes := make([]*grapher.Node, len(graph.Nodes))
+	copy(sortedNodes, graph.Nodes)
+	sort.Slice(sortedNodes, func(i, j int) bool {
+		return sortedNodes[i].Name < sortedNodes[j].Name
+	})
+
+	// Write node declarations
+	for _, n := range sortedNodes {
+		nodeID := mermaidEscape(n.Name)
+		b.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID, n.Name))
+	}
+
+	// Detect cycles for annotation
+	cycles := graph.DetectCycles()
+	cycleEdges := make(map[string]bool)
+	for _, c := range cycles {
+		for i := 0; i < len(c.Nodes)-1; i++ {
+			key := c.Nodes[i] + "->" + c.Nodes[i+1]
+			cycleEdges[key] = true
+		}
+	}
+
+	// Sort edges for deterministic output
+	sortedEdges := make([]grapher.Edge, len(graph.Edges))
+	copy(sortedEdges, graph.Edges)
+	sort.Slice(sortedEdges, func(i, j int) bool {
+		if sortedEdges[i].From == sortedEdges[j].From {
+			return sortedEdges[i].To < sortedEdges[j].To
+		}
+		return sortedEdges[i].From < sortedEdges[j].From
+	})
+
+	// Write edges
+	for _, e := range sortedEdges {
+		fromID := mermaidEscape(e.From)
+		toID := mermaidEscape(e.To)
+		if cycleEdges[e.From+"->"+e.To] {
+			b.WriteString(fmt.Sprintf("    %s -.-> %s\n", fromID, toID))
+		} else {
+			b.WriteString(fmt.Sprintf("    %s --> %s\n", fromID, toID))
+		}
+	}
+
+	return b.String(), nil
+}
+
 // mermaidEscape sanitizes a string for use as a Mermaid node/class identifier.
 func mermaidEscape(s string) string {
 	// Replace characters that break Mermaid identifiers

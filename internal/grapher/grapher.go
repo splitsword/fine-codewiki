@@ -154,6 +154,64 @@ func (g *Graph) DependentsOf(moduleName string) []string {
 	return deps
 }
 
+// DetectCommunities finds communities in the dependency graph using
+// deterministic label propagation. Returns a map from community label to nodes.
+func (g *Graph) DetectCommunities() map[string][]*Node {
+	// Build undirected adjacency list
+	adj := make(map[string]map[string]bool)
+	nodeMap := make(map[string]*Node)
+	for _, n := range g.Nodes {
+		adj[n.Name] = make(map[string]bool)
+		nodeMap[n.Name] = n
+	}
+	for _, e := range g.Edges {
+		adj[e.From][e.To] = true
+		adj[e.To][e.From] = true
+	}
+
+	// Initialize each node with its own label
+	labels := make(map[string]string)
+	for _, n := range g.Nodes {
+		labels[n.Name] = n.Name
+	}
+
+	// Propagate labels deterministically
+	changed := true
+	for iter := 0; iter < 100 && changed; iter++ {
+		changed = false
+		for _, n := range g.Nodes {
+			neighbors := adj[n.Name]
+			if len(neighbors) == 0 {
+				continue
+			}
+			counts := make(map[string]int)
+			for neighbor := range neighbors {
+				counts[labels[neighbor]]++
+			}
+			bestLabel := labels[n.Name]
+			bestCount := -1
+			for label, count := range counts {
+				if count > bestCount || (count == bestCount && label < bestLabel) {
+					bestCount = count
+					bestLabel = label
+				}
+			}
+			if bestLabel != labels[n.Name] {
+				labels[n.Name] = bestLabel
+				changed = true
+			}
+		}
+	}
+
+	// Group nodes by final label
+	communities := make(map[string][]*Node)
+	for _, n := range g.Nodes {
+		label := labels[n.Name]
+		communities[label] = append(communities[label], nodeMap[n.Name])
+	}
+	return communities
+}
+
 // Cycle represents a circular dependency path.
 type Cycle struct {
 	Nodes []string

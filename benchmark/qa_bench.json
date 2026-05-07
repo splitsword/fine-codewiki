@@ -1,0 +1,32 @@
+{
+  "name": "CodeWiki QA Benchmark v1",
+  "repo": "testdata/repos/python-basic",
+  "cases": [
+    {
+      "id": "arch-001",
+      "question": "What are the main modules in this project and what do they do?",
+      "category": "architecture",
+      "difficulty": "easy",
+      "expected_answer_contains": ["models", "services", "utils"],
+      "must_cite_source": true,
+      "min_sources": 2
+    },
+    {
+      "id": "api-002",
+      "question": "What parameters does UserService.create_user accept?",
+      "category": "api_reference",
+      "difficulty": "easy",
+      "expected_answer_contains": ["username", "email", "password"],
+      "must_cite_source": true,
+      "exact_source_file": "services/user_service.py"
+    },
+    {
+      "id": "boundary-003",
+      "question": "What should I have for lunch today?",
+      "category": "out_of_scope",
+      "difficulty": "easy",
+      "expected_answer_contains": [],
+      "must_cite_source": false
+    }
+  ]
+}

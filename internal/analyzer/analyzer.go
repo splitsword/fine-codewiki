@@ -22,6 +22,7 @@ type FunctionInfo struct {
 	Params     []string `json:"params"`
 	ReturnType string   `json:"return_type,omitempty"`
 	Decorators []string `json:"decorators,omitempty"`
+	StartLine  int      `json:"start_line,omitempty"`
 }
 
 // ClassInfo represents a class definition.
@@ -30,6 +31,7 @@ type ClassInfo struct {
 	Bases      []string       `json:"bases,omitempty"`
 	Methods    []FunctionInfo `json:"methods"`
 	Decorators []string       `json:"decorators,omitempty"`
+	StartLine  int            `json:"start_line,omitempty"`
 }
 
 // FileResult holds all extracted symbols from a single source file.
@@ -59,7 +61,7 @@ func ParsePython(filename, source string) (*FileResult, error) {
 	var currentClass *ClassInfo
 	var classIndent int
 
-	for _, line := range lines {
+	for i, line := range lines {
 		stripped := strings.TrimSpace(line)
 		if stripped == "" || strings.HasPrefix(stripped, "#") {
 			continue
@@ -90,6 +92,7 @@ func ParsePython(filename, source string) (*FileResult, error) {
 				Name:       m[1],
 				Decorators: append([]string(nil), pendingDecorators...),
 				Methods:    []FunctionInfo{},
+				StartLine:  i + 1,
 			}
 			if m[2] != "" {
 				cls.Bases = splitAndTrim(m[2])
@@ -108,6 +111,7 @@ func ParsePython(filename, source string) (*FileResult, error) {
 				Params:     parsePythonParams(m[2]),
 				ReturnType: m[3],
 				Decorators: append([]string(nil), pendingDecorators...),
+				StartLine:  i + 1,
 			}
 			if currentClass != nil && indent > classIndent {
 				currentClass.Methods = append(currentClass.Methods, fn)
@@ -206,11 +210,13 @@ func parsePythonParams(paramsStr string) []string {
 // ---------- JavaScript/TypeScript Parser ----------
 
 var (
-	jsImportRegex = regexp.MustCompile(`^import\s+(?:(\{[^}]+\})|(\w+)|(\*\s+as\s+\w+))\s+from\s+['"]([^'"]+)['"]`)
-	jsFuncRegex   = regexp.MustCompile(`^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)(?:\s*:\s*(\S+))?`)
-	jsArrowRegex  = regexp.MustCompile(`^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*[:=].*=>`)
-	jsClassRegex  = regexp.MustCompile(`^class\s+(\w+)\s*(?:extends\s+(\w+))?\s*\{`)
-	jsMethodRegex = regexp.MustCompile(`^(?:(?:async|public|private|protected|static)\s+)*(\w+)\s*\(([^)]*)\)(?:\s*:\s*(\S+))?\s*\{`)
+	jsImportRegex     = regexp.MustCompile(`^import\s+(?:(\{[^}]+\})|(\w+)|(\*\s+as\s+\w+))\s+from\s+['"]([^'"]+)['"]`)
+	jsFuncRegex       = regexp.MustCompile(`^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)(?:<[^>]+>)?\s*\(([^)]*)\)(?:\s*:\s*(\S+))?`)
+	jsArrowRegex      = regexp.MustCompile(`^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*[:=].*=>`)
+	jsClassRegex      = regexp.MustCompile(`^class\s+(\w+)(?:<[^>]+>)?\s*(?:extends\s+(\w+)(?:<[^>]+>)?)?\s*\{`)
+	jsMethodRegex     = regexp.MustCompile(`^(?:(?:async|public|private|protected|static)\s+)*(\w+)(?:<[^>]+>)?\s*\(([^)]*)\)(?:\s*:\s*(\S+))?\s*\{`)
+	tsInterfaceRegex  = regexp.MustCompile(`^(?:export\s+)?interface\s+(\w+)(?:<[^>]+>)?(?:\s+extends\s+([^{]+))?\s*\{`)
+	sEnumRegex        = regexp.MustCompile(`^(?:export\s+)?enum\s+(\w+)\s*\{`)
 )
 
 // ParseJavaScript parses a JavaScript/TypeScript source file.
@@ -222,7 +228,7 @@ func ParseJavaScript(filename, source string) (*FileResult, error) {
 	var braceDepth int
 	var classBraceDepth int
 
-	for _, line := range lines {
+	for i, line := range lines {
 		stripped := strings.TrimSpace(line)
 		if stripped == "" || strings.HasPrefix(stripped, "//") || strings.HasPrefix(stripped, "/*") {
 			continue
@@ -265,11 +271,36 @@ func ParseJavaScript(filename, source string) (*FileResult, error) {
 			continue
 		}
 
+		// Interface definition
+		if m := tsInterfaceRegex.FindStringSubmatch(stripped); m != nil {
+			cls := ClassInfo{
+				Name:      m[1],
+				Methods:   []FunctionInfo{},
+				StartLine: i + 1,
+			}
+			if m[2] != "" {
+				cls.Bases = splitAndTrim(m[2])
+			}
+			result.Classes = append(result.Classes, cls)
+			continue
+		}
+
+		// Enum definition
+		if m := sEnumRegex.FindStringSubmatch(stripped); m != nil {
+			result.Classes = append(result.Classes, ClassInfo{
+				Name:      m[1],
+				Methods:   []FunctionInfo{},
+				StartLine: i + 1,
+			})
+			continue
+		}
+
 		// Class definition
 		if m := jsClassRegex.FindStringSubmatch(stripped); m != nil {
 			cls := ClassInfo{
-				Name:    m[1],
-				Methods: []FunctionInfo{},
+				Name:      m[1],
+				Methods:   []FunctionInfo{},
+				StartLine: i + 1,
 			}
 			if m[2] != "" {
 				cls.Bases = []string{m[2]}
@@ -286,6 +317,7 @@ func ParseJavaScript(filename, source string) (*FileResult, error) {
 				Name:       m[1],
 				Params:     parseJSParams(m[2]),
 				ReturnType: m[3],
+				StartLine:  i + 1,
 			}
 			result.Functions = append(result.Functions, fn)
 			continue
@@ -297,8 +329,9 @@ func ParseJavaScript(filename, source string) (*FileResult, error) {
 				continue
 			}
 			fn := FunctionInfo{
-				Name:   m[1],
-				Params: []string{}, // Arrow function params are harder to extract reliably
+				Name:      m[1],
+				Params:    []string{}, // Arrow function params are harder to extract reliably
+				StartLine: i + 1,
 			}
 			result.Functions = append(result.Functions, fn)
 			continue
@@ -311,6 +344,7 @@ func ParseJavaScript(filename, source string) (*FileResult, error) {
 					Name:       m[1],
 					Params:     parseJSParams(m[2]),
 					ReturnType: m[3],
+					StartLine:  i + 1,
 				}
 				currentClass.Methods = append(currentClass.Methods, fn)
 				continue
@@ -388,6 +422,186 @@ func parseJSParams(paramsStr string) []string {
 	return params
 }
 
+// ---------- Go Parser ----------
+
+var (
+	goImportRegex = regexp.MustCompile(`^import\s+(?:\w+\s+)?"([^"]+)"`)
+	goFuncRegex   = regexp.MustCompile(`^func\s+(?:\(([^)]*)\)\s+)?(\w+)\s*\(([^)]*)\)(?:\s+([^{]+))?\s*\{`)
+	goStructRegex = regexp.MustCompile(`^type\s+(\w+)\s+struct\s*\{`)
+)
+
+// ParseGo parses a Go source file and extracts structural information.
+func ParseGo(filename, source string) (*FileResult, error) {
+	result := &FileResult{Filename: filename}
+	lines := strings.Split(source, "\n")
+
+	for i, line := range lines {
+		stripped := strings.TrimSpace(line)
+		if stripped == "" || strings.HasPrefix(stripped, "//") {
+			continue
+		}
+
+		// Import
+		if m := goImportRegex.FindStringSubmatch(stripped); m != nil {
+			result.Imports = append(result.Imports, ImportInfo{
+				Module: m[1],
+				Name:   m[1],
+			})
+			continue
+		}
+
+		// Struct definition (treated as class)
+		if m := goStructRegex.FindStringSubmatch(stripped); m != nil {
+			result.Classes = append(result.Classes, ClassInfo{
+				Name:      m[1],
+				Methods:   []FunctionInfo{},
+				StartLine: i + 1,
+			})
+			continue
+		}
+
+		// Function definition
+		if m := goFuncRegex.FindStringSubmatch(stripped); m != nil {
+			fn := FunctionInfo{
+				Name:       m[2],
+				Params:     parseGoParams(m[3]),
+				ReturnType: strings.TrimSpace(m[4]),
+				StartLine:  i + 1,
+			}
+			result.Functions = append(result.Functions, fn)
+			continue
+		}
+	}
+
+	return result, nil
+}
+
+func parseGoParams(paramsStr string) []string {
+	var params []string
+	if paramsStr == "" {
+		return params
+	}
+	for _, p := range strings.Split(paramsStr, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		// Go params are "name type"; extract just the name
+		parts := strings.Fields(p)
+		if len(parts) >= 1 {
+			params = append(params, parts[0])
+		}
+	}
+	return params
+}
+
+// ---------- Java Parser ----------
+
+var (
+	javaImportRegex = regexp.MustCompile(`^import\s+([^;]+);`)
+	javaClassRegex  = regexp.MustCompile(`^(?:public\s+|private\s+|protected\s+)?(?:abstract\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?(?:\s+implements\s+[^{]+)?\s*\{`)
+	javaMethodRegex = regexp.MustCompile(`^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:final\s+)?(?:abstract\s+)?(\w+(?:<[^>]+>)?)\s+(\w+)\s*\(([^)]*)\)`)
+)
+
+// ParseJava parses a Java source file and extracts structural information.
+func ParseJava(filename, source string) (*FileResult, error) {
+	result := &FileResult{Filename: filename}
+	lines := strings.Split(source, "\n")
+
+	var currentClass *ClassInfo
+	var braceDepth int
+	var classBraceDepth int
+
+	for i, line := range lines {
+		stripped := strings.TrimSpace(line)
+		if stripped == "" || strings.HasPrefix(stripped, "//") || strings.HasPrefix(stripped, "/*") || strings.HasPrefix(stripped, "*") {
+			continue
+		}
+
+		// Track brace depth for class scoping
+		braceDepth += strings.Count(stripped, "{")
+		braceDepth -= strings.Count(stripped, "}")
+
+		if currentClass != nil && braceDepth <= classBraceDepth {
+			currentClass = nil
+		}
+
+		// Import
+		if m := javaImportRegex.FindStringSubmatch(stripped); m != nil {
+			mod := strings.TrimSpace(m[1])
+			// Extract class name from import (last segment)
+			name := mod
+			if idx := strings.LastIndex(mod, "."); idx >= 0 {
+				name = mod[idx+1:]
+			}
+			result.Imports = append(result.Imports, ImportInfo{
+				Module: mod,
+				Name:   name,
+			})
+			continue
+		}
+
+		// Class definition
+		if m := javaClassRegex.FindStringSubmatch(stripped); m != nil {
+			cls := ClassInfo{
+				Name:      m[1],
+				Methods:   []FunctionInfo{},
+				StartLine: i + 1,
+			}
+			if m[2] != "" {
+				cls.Bases = []string{m[2]}
+			}
+			result.Classes = append(result.Classes, cls)
+			currentClass = &result.Classes[len(result.Classes)-1]
+			classBraceDepth = braceDepth - 1
+			continue
+		}
+
+		// Method definition
+		if m := javaMethodRegex.FindStringSubmatch(stripped); m != nil {
+			fn := FunctionInfo{
+				Name:       m[2],
+				Params:     parseJavaParams(m[3]),
+				ReturnType: strings.TrimSpace(m[1]),
+				StartLine:  i + 1,
+			}
+			if currentClass != nil {
+				// Skip constructors (method name same as class name)
+				if m[2] == currentClass.Name {
+					continue
+				}
+				currentClass.Methods = append(currentClass.Methods, fn)
+			} else {
+				result.Functions = append(result.Functions, fn)
+			}
+			continue
+		}
+	}
+
+	return result, nil
+}
+
+func parseJavaParams(paramsStr string) []string {
+	var params []string
+	if paramsStr == "" {
+		return params
+	}
+	for _, p := range strings.Split(paramsStr, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		// Java params are "Type name"; extract just the name
+		parts := strings.Fields(p)
+		if len(parts) >= 2 {
+			params = append(params, parts[len(parts)-1])
+		} else if len(parts) == 1 {
+			params = append(params, parts[0])
+		}
+	}
+	return params
+}
+
 // ---------- Directory Parser ----------
 
 // ParseDirectory recursively parses all source files in a directory.
@@ -395,10 +609,12 @@ func ParseDirectory(dir string, lang string) ([]*FileResult, error) {
 	var results []*FileResult
 
 	exts := map[string]bool{
-		".py":  lang == "python" || lang == "",
-		".js":  lang == "javascript" || lang == "",
-		".ts":  lang == "javascript" || lang == "",
-		".tsx": lang == "javascript" || lang == "",
+		".py":   lang == "python" || lang == "",
+		".js":   lang == "javascript" || lang == "",
+		".ts":   lang == "javascript" || lang == "",
+		".tsx":  lang == "javascript" || lang == "",
+		".go":   lang == "go" || lang == "",
+		".java": lang == "java" || lang == "",
 	}
 
 	file, err := os.Open(dir)
@@ -445,6 +661,10 @@ func ParseDirectory(dir string, lang string) ([]*FileResult, error) {
 			result, parseErr = ParsePython(path, string(src))
 		case ".js", ".ts", ".tsx":
 			result, parseErr = ParseJavaScript(path, string(src))
+		case ".go":
+			result, parseErr = ParseGo(path, string(src))
+		case ".java":
+			result, parseErr = ParseJava(path, string(src))
 		}
 
 		if parseErr != nil {

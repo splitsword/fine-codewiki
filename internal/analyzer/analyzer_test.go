@@ -149,7 +149,8 @@ function formatName(name: string): string {
 	assert.Equal(t, "react", result.Imports[0].Module)
 	assert.Equal(t, "React", result.Imports[0].Name)
 
-	assert.Len(t, result.Classes, 0)
+	assert.Len(t, result.Classes, 1)
+	assert.Equal(t, "UserCardProps", result.Classes[0].Name)
 	assert.Len(t, result.Functions, 1)
 	assert.Equal(t, "formatName", result.Functions[0].Name)
 	assert.Equal(t, []string{"name"}, result.Functions[0].Params)
@@ -218,6 +219,77 @@ func TestParseJavaScriptArrowFunction(t *testing.T) {
 
 	assert.Len(t, result.Functions, 1)
 	assert.Equal(t, "sum", result.Functions[0].Name)
+}
+
+func TestParseTypeScriptInterface(t *testing.T) {
+	src := `export interface User {
+  id: number;
+  name: string;
+}
+
+interface Admin extends User {
+  permissions: string[];
+}
+`
+	result, err := ParseJavaScript("types.ts", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Classes, 2)
+	assert.Equal(t, "User", result.Classes[0].Name)
+	assert.Equal(t, "Admin", result.Classes[1].Name)
+	assert.Equal(t, []string{"User"}, result.Classes[1].Bases)
+}
+
+func TestParseTypeScriptEnum(t *testing.T) {
+	src := `enum Status {
+  Active = 'active',
+  Inactive = 'inactive',
+}
+
+export enum Role {
+  Admin,
+  User,
+}
+`
+	result, err := ParseJavaScript("enums.ts", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Classes, 2)
+	assert.Equal(t, "Status", result.Classes[0].Name)
+	assert.Equal(t, "Role", result.Classes[1].Name)
+}
+
+func TestParseTypeScriptGenerics(t *testing.T) {
+	src := `class Container<T> {
+  private value: T;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+
+  getValue(): T {
+    return this.value;
+  }
+}
+
+function identity<U>(arg: U): U {
+  return arg;
+}
+`
+	result, err := ParseJavaScript("generics.ts", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Classes, 1)
+	assert.Equal(t, "Container", result.Classes[0].Name)
+	assert.Len(t, result.Classes[0].Methods, 2)
+
+	assert.Len(t, result.Functions, 1)
+	assert.Equal(t, "identity", result.Functions[0].Name)
+	assert.Equal(t, []string{"arg"}, result.Functions[0].Params)
+	assert.Equal(t, "U", result.Functions[0].ReturnType)
 }
 
 func TestParseJSParamsWithDestructuring(t *testing.T) {
@@ -386,6 +458,183 @@ class Order:
 		}()
 	}
 	wg.Wait()
+}
+
+func TestParseGoFile(t *testing.T) {
+	src := `package main
+
+import "fmt"
+import "net/http"
+
+type User struct {
+    ID   int
+    Name string
+}
+
+func NewUser(name string) *User {
+    return &User{Name: name}
+}
+
+func (u *User) Greet() string {
+    return "Hello, " + u.Name
+}
+
+func main() {
+    u := NewUser("Alice")
+    fmt.Println(u.Greet())
+}
+`
+	result, err := ParseGo("user.go", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "user.go", result.Filename)
+	assert.Len(t, result.Imports, 2)
+	assert.Equal(t, "fmt", result.Imports[0].Module)
+	assert.Equal(t, "net/http", result.Imports[1].Module)
+
+	assert.Len(t, result.Classes, 1)
+	cls := result.Classes[0]
+	assert.Equal(t, "User", cls.Name)
+
+	assert.Len(t, result.Functions, 3)
+	fnNames := make([]string, len(result.Functions))
+	for i, f := range result.Functions {
+		fnNames[i] = f.Name
+	}
+	assert.Contains(t, fnNames, "NewUser")
+	assert.Contains(t, fnNames, "Greet")
+	assert.Contains(t, fnNames, "main")
+
+	// Check params and return types
+	var newUserFn *FunctionInfo
+	for _, f := range result.Functions {
+		if f.Name == "NewUser" {
+			newUserFn = &f
+			break
+		}
+	}
+	require.NotNil(t, newUserFn)
+	assert.Equal(t, []string{"name"}, newUserFn.Params)
+	assert.Equal(t, "*User", newUserFn.ReturnType)
+}
+
+func TestParseGoEmptyFile(t *testing.T) {
+	result, err := ParseGo("empty.go", "")
+	require.NoError(t, err)
+	assert.Empty(t, result.Classes)
+	assert.Empty(t, result.Functions)
+	assert.Empty(t, result.Imports)
+}
+
+func TestParseJavaFile(t *testing.T) {
+	src := `package com.example;
+
+import java.util.List;
+import java.util.Optional;
+
+public class UserService {
+    private final UserRepository repository;
+
+    public UserService(UserRepository repository) {
+        this.repository = repository;
+    }
+
+    public User getUser(int id) {
+        return repository.findById(id);
+    }
+
+    public List<User> listUsers() {
+        return repository.findAll();
+    }
+
+    private Optional<User> findById(int id) {
+        return Optional.ofNullable(repository.findById(id));
+    }
+}
+
+class UserRepository {
+    public User findById(int id) {
+        return new User();
+    }
+
+    public List<User> findAll() {
+        return List.of();
+    }
+}
+`
+	result, err := ParseJava("UserService.java", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "UserService.java", result.Filename)
+	assert.Len(t, result.Imports, 2)
+	assert.Equal(t, "java.util.List", result.Imports[0].Module)
+	assert.Equal(t, "java.util.Optional", result.Imports[1].Module)
+
+	assert.Len(t, result.Classes, 2)
+	assert.Equal(t, "UserService", result.Classes[0].Name)
+	assert.Equal(t, "UserRepository", result.Classes[1].Name)
+
+	// UserService should have 3 methods (constructor not matched by regex)
+	assert.Len(t, result.Classes[0].Methods, 3)
+	methodNames := make([]string, len(result.Classes[0].Methods))
+	for i, m := range result.Classes[0].Methods {
+		methodNames[i] = m.Name
+	}
+	assert.Contains(t, methodNames, "getUser")
+	assert.Contains(t, methodNames, "listUsers")
+	assert.Contains(t, methodNames, "findById")
+}
+
+func TestParseJavaWithInheritance(t *testing.T) {
+	src := `import java.util.List;
+
+public class AdminUser extends User implements Serializable {
+    private List<String> permissions;
+
+    public List<String> getPermissions() {
+        return permissions;
+    }
+}
+`
+	result, err := ParseJava("AdminUser.java", src)
+	require.NoError(t, err)
+	require.Len(t, result.Classes, 1)
+	assert.Equal(t, "AdminUser", result.Classes[0].Name)
+	assert.Equal(t, []string{"User"}, result.Classes[0].Bases)
+	assert.Len(t, result.Classes[0].Methods, 1)
+	assert.Equal(t, "getPermissions", result.Classes[0].Methods[0].Name)
+}
+
+func TestParseJavaEmptyFile(t *testing.T) {
+	result, err := ParseJava("empty.java", "")
+	require.NoError(t, err)
+	assert.Empty(t, result.Classes)
+	assert.Empty(t, result.Functions)
+	assert.Empty(t, result.Imports)
+}
+
+func TestParseGoParams(t *testing.T) {
+	params := parseGoParams("name string, age int")
+	assert.Equal(t, []string{"name", "age"}, params)
+
+	params = parseGoParams("ctx context.Context, req *Request")
+	assert.Equal(t, []string{"ctx", "req"}, params)
+
+	params = parseGoParams("")
+	assert.Empty(t, params)
+}
+
+func TestParseJavaParams(t *testing.T) {
+	params := parseJavaParams("String name, int age")
+	assert.Equal(t, []string{"name", "age"}, params)
+
+	params = parseJavaParams("List<String> users")
+	assert.Equal(t, []string{"users"}, params)
+
+	params = parseJavaParams("")
+	assert.Empty(t, params)
 }
 
 func BenchmarkParsePython(b *testing.B) {
