@@ -102,10 +102,14 @@ func RunGenerate(cfg *Config) error {
 
 	// Attempt to load LLM config for optional enhancement
 	var provider llm.Provider
-	appCfg, _ := llm.LoadAppConfig("")
-	if appCfg != nil {
+	appCfg, err := llm.LoadAppConfig("")
+	if err != nil {
+		fmt.Printf("警告：加载 LLM 配置失败 (%v)，将使用静态生成\n", err)
+	} else {
 		p, err := llm.NewGenerationProvider(appCfg)
-		if err == nil {
+		if err != nil {
+			fmt.Printf("警告：创建文档生成 Provider 失败 (%v)，将使用静态生成\n", err)
+		} else {
 			provider = p
 			fmt.Println("LLM 增强已启用")
 		}

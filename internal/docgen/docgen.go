@@ -40,7 +40,7 @@ func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	if provider != nil {
 		prompt := buildOverviewPrompt(graph, projectName)
 		enhanced, err := provider.Complete(ctx, prompt)
-		if err == nil && enhanced != "" {
+		if err == nil && enhanced != "" && !isChecklistLike(enhanced, graph) {
 			overview = fmt.Sprintf("# %s\n\n%s\n\n---\n\n%s", projectName, enhanced, overview)
 		}
 	}
@@ -77,11 +77,17 @@ func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 func buildOverviewPrompt(graph *grapher.Graph, projectName string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "分析以下代码库，用 2-3 段简洁的文字撰写项目概述。\n\n")
+	fmt.Fprintf(&b, "你是一个资深软件架构师。请基于以下代码库信息，撰写一段项目概述（2-3 段）。\n\n")
+	fmt.Fprintf(&b, "要求：\n")
+	fmt.Fprintf(&b, "1. 描述这个项目的核心目标、主要功能和适用场景\n")
+	fmt.Fprintf(&b, "2. 概括整体架构风格（如 MVC、微服务、单体、工具库等）\n")
+	fmt.Fprintf(&b, "3. 说明关键模块的职责分工和协作方式\n")
+	fmt.Fprintf(&b, "4. 不要只是罗列模块名称和文件清单，要体现对代码逻辑的理解\n")
+	fmt.Fprintf(&b, "5. 使用简体中文\n\n")
 	fmt.Fprintf(&b, "项目：%s\n", projectName)
 	fmt.Fprintf(&b, "模块数：%d\n", len(graph.Nodes))
 	fmt.Fprintf(&b, "依赖数：%d\n\n", len(graph.Edges))
-	fmt.Fprintf(&b, "模块列表：\n")
+	fmt.Fprintf(&b, "模块列表（供参考，不要原样复述）：\n")
 	for _, n := range graph.Nodes {
 		line := "- " + n.Name
 		if len(n.Classes) > 0 {
@@ -92,6 +98,135 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName string) string {
 		}
 		fmt.Fprintln(&b, line)
 	}
+	return b.String()
+}
+
+// isChecklistLike checks if the LLM output is just a repetition of module names
+// rather than a real descriptive overview.
+func isChecklistLike(text string, graph *grapher.Graph) bool {
+	if len(text) < 20 {
+		return true // too short to be a real description
+	}
+
+	// Count how many module names appear in the text
+	moduleHits := 0
+	for _, n := range graph.Nodes {
+		if strings.Contains(text, n.Name) {
+			moduleHits++
+		}
+	}
+
+	// If more than 70% of module names are mentioned, it's likely a checklist
+	if len(graph.Nodes) > 0 && float64(moduleHits)/float64(len(graph.Nodes)) > 0.7 {
+		return true
+	}
+
+	// Count list markers (bullet points or numbered lists)
+	listMarkerCount := strings.Count(text, "\n-") + strings.Count(text, "\n*") + strings.Count(text, "\n1.")
+	lines := strings.Split(text, "\n")
+	nonEmptyLines := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmptyLines++
+		}
+	}
+	if nonEmptyLines > 0 && float64(listMarkerCount)/float64(nonEmptyLines) > 0.5 {
+		return true
+	}
+
+	return false
+}
+
+// buildAutoDescription generates a static project description based on graph analysis.
+func buildAutoDescription(graph *grapher.Graph, projectName string, classCount, funcCount int) string {
+	var b strings.Builder
+
+	// Basic scale description
+	if len(graph.Nodes) == 1 {
+		fmt.Fprintf(&b, "%s 是一个单模块项目", projectName)
+	} else if len(graph.Nodes) <= 5 {
+		fmt.Fprintf(&b, "%s 是一个小型项目，包含 %d 个模块", projectName, len(graph.Nodes))
+	} else if len(graph.Nodes) <= 15 {
+		fmt.Fprintf(&b, "%s 是一个中型项目，包含 %d 个模块", projectName, len(graph.Nodes))
+	} else {
+		fmt.Fprintf(&b, "%s 是一个大型项目，包含 %d 个模块", projectName, len(graph.Nodes))
+	}
+
+	if classCount > 0 {
+		fmt.Fprintf(&b, "、%d 个类", classCount)
+	}
+	if funcCount > 0 {
+		fmt.Fprintf(&b, "、%d 个函数/方法", funcCount)
+	}
+	b.WriteString("。")
+
+	// Identify core modules (most depended upon)
+	var coreModules []string
+	maxDependents := 0
+	for _, n := range graph.Nodes {
+		dependents := len(graph.DependentsOf(n.Name))
+		if dependents > maxDependents {
+			maxDependents = dependents
+			coreModules = []string{n.Name}
+		} else if dependents == maxDependents && dependents > 0 {
+			coreModules = append(coreModules, n.Name)
+		}
+	}
+	if len(coreModules) > 0 && maxDependents >= 2 {
+		b.WriteString("核心模块包括 ")
+		for i, m := range coreModules {
+			if i > 0 {
+				b.WriteString("、")
+			}
+			fmt.Fprintf(&b, "`%s`", m)
+		}
+		fmt.Fprintf(&b, "，被项目中 %d 个其他模块所依赖。", maxDependents)
+	}
+
+	// Entry points hint
+	entries := graph.EntryPoints()
+	if len(entries) > 0 {
+		b.WriteString("项目入口点为 ")
+		for i, e := range entries {
+			if i > 0 {
+				b.WriteString("、")
+			}
+			fmt.Fprintf(&b, "`%s`", e.Name)
+		}
+		b.WriteString("。")
+	}
+
+	// Detect cycles
+	cycles := graph.DetectCycles()
+	if len(cycles) > 0 {
+		b.WriteString("注意：项目中存在循环依赖，主要发生在 ")
+		for i, c := range cycles {
+			if i > 0 {
+				b.WriteString("、")
+			}
+			fmt.Fprintf(&b, "`%s`", strings.Join(c.Nodes, "` → `"))
+		}
+		b.WriteString("。")
+	}
+
+	// Community detection for functional grouping
+	communities := graph.DetectCommunities()
+	if len(communities) > 1 {
+		fmt.Fprintf(&b, "按功能划分，项目大致可分为 %d 个模块组：", len(communities))
+		var names []string
+		for name := range communities {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for i, name := range names {
+			if i > 0 {
+				b.WriteString("、")
+			}
+			fmt.Fprintf(&b, "%s（%d 个模块）", name, len(communities[name]))
+		}
+		b.WriteString("。")
+	}
+
 	return b.String()
 }
 
@@ -129,6 +264,11 @@ func GenerateOverviewMarkdown(graph *grapher.Graph, projectName string) (string,
 			funcCount += len(c.Methods)
 		}
 	}
+
+	// Auto-generated project description based on graph analysis
+	b.WriteString("## 项目简介\n\n")
+	b.WriteString(buildAutoDescription(graph, projectName, classCount, funcCount))
+	b.WriteString("\n\n")
 
 	b.WriteString("## 项目统计\n\n")
 	b.WriteString(fmt.Sprintf("- **模块**：%d\n", len(graph.Nodes)))
