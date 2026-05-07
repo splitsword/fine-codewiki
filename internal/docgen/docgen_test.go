@@ -43,6 +43,33 @@ func TestGenerateOverviewMarkdown(t *testing.T) {
 	assert.Contains(t, md, "utils/logger")
 }
 
+func TestGenerateOverviewMarkdownWithRoles(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "main.py", Functions: []analyzer.FunctionInfo{{Name: "main"}}, Imports: []analyzer.ImportInfo{
+			{Module: "services.api", Name: "Api"},
+		}},
+		{Filename: "services/api.py", Classes: []analyzer.ClassInfo{{Name: "Api"}}, Imports: []analyzer.ImportInfo{
+			{Module: "models.user", Name: "User"},
+			{Module: "utils.logger", Name: "get_logger"},
+		}},
+		{Filename: "models/user.py", Classes: []analyzer.ClassInfo{{Name: "User"}}},
+		{Filename: "utils/logger.py", Functions: []analyzer.FunctionInfo{{Name: "get_logger"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	md, err := GenerateOverviewMarkdown(graph, "role-test")
+	require.NoError(t, err)
+	require.NotEmpty(t, md)
+
+	// Should contain role-based descriptions
+	assert.Contains(t, md, "核心领域")
+	assert.Contains(t, md, "入口层")
+	assert.Contains(t, md, "工具库")
+	assert.Contains(t, md, "`models/user`")
+	assert.Contains(t, md, "`main`")
+	assert.Contains(t, md, "`utils/logger`")
+}
+
 func TestGenerateOverviewMarkdownEmptyProject(t *testing.T) {
 	graph := grapher.BuildGraph([]*analyzer.FileResult{})
 	md, err := GenerateOverviewMarkdown(graph, "empty-project")

@@ -255,40 +255,50 @@ func buildAutoDescription(graph *grapher.Graph, projectName string, classCount, 
 	}
 	b.WriteString("。")
 
-	// Identify core modules (most depended upon)
-	var coreModules []string
-	maxDependents := 0
-	for _, n := range graph.Nodes {
-		dependents := len(graph.DependentsOf(n.Name))
-		if dependents > maxDependents {
-			maxDependents = dependents
-			coreModules = []string{n.Name}
-		} else if dependents == maxDependents && dependents > 0 {
-			coreModules = append(coreModules, n.Name)
+	// Use PageRank-based role inference for richer module description
+	roles := graph.InferModuleRoles()
+	if len(roles) > 0 {
+		// Group by role
+		roleGroups := make(map[string][]string)
+		for _, r := range roles {
+			roleGroups[r.Role] = append(roleGroups[r.Role], r.Name)
 		}
-	}
-	if len(coreModules) > 0 && maxDependents >= 2 {
-		b.WriteString("核心模块包括 ")
-		for i, m := range coreModules {
-			if i > 0 {
-				b.WriteString("、")
-			}
-			fmt.Fprintf(&b, "`%s`", m)
-		}
-		fmt.Fprintf(&b, "，被项目中 %d 个其他模块所依赖。", maxDependents)
-	}
 
-	// Entry points hint
-	entries := graph.EntryPoints()
-	if len(entries) > 0 {
-		b.WriteString("项目入口点为 ")
-		for i, e := range entries {
-			if i > 0 {
-				b.WriteString("、")
+		// Describe core domain first
+		if coreList := roleGroups["核心领域"]; len(coreList) > 0 {
+			b.WriteString("核心领域模块包括 ")
+			for i, m := range coreList {
+				if i > 0 {
+					b.WriteString("、")
+				}
+				fmt.Fprintf(&b, "`%s`", m)
 			}
-			fmt.Fprintf(&b, "`%s`", e.Name)
+			fmt.Fprintf(&b, "，被项目中多个其他模块所依赖，构成系统的业务核心。")
 		}
-		b.WriteString("。")
+
+		// Describe entry points
+		if entryList := roleGroups["入口层"]; len(entryList) > 0 {
+			b.WriteString("项目入口点为 ")
+			for i, m := range entryList {
+				if i > 0 {
+					b.WriteString("、")
+				}
+				fmt.Fprintf(&b, "`%s`", m)
+			}
+			b.WriteString("。")
+		}
+
+		// Describe utilities
+		if utilList := roleGroups["工具库"]; len(utilList) > 0 {
+			b.WriteString("通用工具模块包括 ")
+			for i, m := range utilList {
+				if i > 0 {
+					b.WriteString("、")
+				}
+				fmt.Fprintf(&b, "`%s`", m)
+			}
+			b.WriteString("，为各业务模块提供基础能力支撑。")
+		}
 	}
 
 	// Detect cycles

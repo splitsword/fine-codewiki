@@ -352,6 +352,101 @@ func TestDetectCommunitiesDisconnected(t *testing.T) {
 	assert.Equal(t, 2, len(communities))
 }
 
+func TestPageRank(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "main.py", Imports: []analyzer.ImportInfo{
+			{Module: "services.api", Name: "Api"},
+			{Module: "services.user", Name: "UserService"},
+		}},
+		{Filename: "services/api.py", Imports: []analyzer.ImportInfo{
+			{Module: "models.user", Name: "User"},
+			{Module: "utils.logger", Name: "get_logger"},
+		}},
+		{Filename: "services/user.py", Imports: []analyzer.ImportInfo{
+			{Module: "models.user", Name: "User"},
+			{Module: "utils.logger", Name: "get_logger"},
+		}},
+		{Filename: "models/user.py"},
+		{Filename: "utils/logger.py"},
+	}
+
+	graph := BuildGraph(files)
+	scores := graph.PageRank()
+
+	require.Len(t, scores, 5)
+
+	// models/user is depended upon by both services/api and services/user
+	// It should have the highest PageRank
+	assert.Greater(t, scores["models/user"], scores["main"], "core model should outrank entry point")
+	assert.Greater(t, scores["models/user"], scores["utils/logger"], "core model should outrank utility")
+
+	// utils/logger has no dependents, should have lower score
+	assert.Greater(t, scores["main"], scores["utils/logger"], "entry point should outrank isolated utility")
+}
+
+func TestPageRankEmptyGraph(t *testing.T) {
+	graph := BuildGraph([]*analyzer.FileResult{})
+	scores := graph.PageRank()
+	assert.Empty(t, scores)
+}
+
+func TestPageRankSingleNode(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "app.py"},
+	}
+	graph := BuildGraph(files)
+	scores := graph.PageRank()
+	assert.Len(t, scores, 1)
+	assert.Contains(t, scores, "app")
+	assert.Greater(t, scores["app"], 0.0)
+}
+
+func TestInferModuleRoles(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "main.py", Imports: []analyzer.ImportInfo{
+			{Module: "services.api", Name: "Api"},
+		}},
+		{Filename: "services/api.py", Imports: []analyzer.ImportInfo{
+			{Module: "models.user", Name: "User"},
+			{Module: "utils.logger", Name: "get_logger"},
+		}},
+		{Filename: "models/user.py"},
+		{Filename: "utils/logger.py"},
+	}
+
+	graph := BuildGraph(files)
+	roles := graph.InferModuleRoles()
+
+	require.Len(t, roles, 4)
+
+	roleMap := make(map[string]string)
+	for _, r := range roles {
+		roleMap[r.Name] = r.Role
+	}
+
+	// main has no dependents but depends on others -> entry point
+	assert.Equal(t, "入口层", roleMap["main"])
+
+	// models/user is depended upon by services/api -> core domain
+	assert.Equal(t, "核心领域", roleMap["models/user"])
+
+	// utils/logger is used but has no dependents -> utility
+	assert.Equal(t, "工具库", roleMap["utils/logger"])
+}
+
+func TestInferModuleRolesDisconnected(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "a.py"},
+		{Filename: "b.py"},
+	}
+	graph := BuildGraph(files)
+	roles := graph.InferModuleRoles()
+	require.Len(t, roles, 2)
+	for _, r := range roles {
+		assert.Equal(t, "独立模块", r.Role, "%s should be isolated", r.Name)
+	}
+}
+
 func TestBuildGraphLargeGraph(t *testing.T) {
 	var files []*analyzer.FileResult
 	// Create 100 nodes in a chain: module_0 -> module_1 -> ... -> module_99

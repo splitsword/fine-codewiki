@@ -2,6 +2,7 @@ package grapher
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/splitsword/fine-codewiki/internal/analyzer"
@@ -342,6 +343,134 @@ func resolveRelativeImport(fromFile, module string) string {
 	// Normalize
 	dir = strings.ReplaceAll(dir, "\\", "/")
 	return dir
+}
+
+// PageRank computes PageRank scores for all nodes in the dependency graph.
+// Returns a map from node name to its PageRank score (higher = more central).
+func (g *Graph) PageRank() map[string]float64 {
+	scores := make(map[string]float64)
+	if len(g.Nodes) == 0 {
+		return scores
+	}
+
+	// Build adjacency: out-edges and in-edges
+	outEdges := make(map[string][]string)
+	inEdges := make(map[string][]string)
+	nodeSet := make(map[string]bool)
+	for _, n := range g.Nodes {
+		nodeSet[n.Name] = true
+		scores[n.Name] = 1.0 / float64(len(g.Nodes))
+	}
+	for _, e := range g.Edges {
+		outEdges[e.From] = append(outEdges[e.From], e.To)
+		inEdges[e.To] = append(inEdges[e.To], e.From)
+	}
+
+	const damping = 0.85
+	const epsilon = 1e-6
+	numNodes := float64(len(g.Nodes))
+
+	for iter := 0; iter < 100; iter++ {
+		newScores := make(map[string]float64)
+		var diff float64
+
+		for _, n := range g.Nodes {
+			var sum float64
+			for _, from := range inEdges[n.Name] {
+				outCount := len(outEdges[from])
+				if outCount > 0 {
+					sum += scores[from] / float64(outCount)
+				}
+			}
+			newScores[n.Name] = (1-damping)/numNodes + damping*sum
+			diff += abs(newScores[n.Name] - scores[n.Name])
+		}
+
+		scores = newScores
+		if diff < epsilon {
+			break
+		}
+	}
+
+	return scores
+}
+
+// ModuleRole describes the inferred architectural role of a module.
+type ModuleRole struct {
+	Name  string
+	Role  string // e.g. "核心领域", "入口层", "工具库", "业务模块", "支撑模块"
+	Score float64
+}
+
+// InferModuleRoles uses PageRank and graph structure to infer each module's role.
+func (g *Graph) InferModuleRoles() []ModuleRole {
+	if len(g.Nodes) == 0 {
+		return nil
+	}
+
+	scores := g.PageRank()
+	entries := g.EntryPoints()
+	entrySet := make(map[string]bool)
+	for _, e := range entries {
+		entrySet[e.Name] = true
+	}
+
+	// Compute score thresholds
+	var allScores []float64
+	for _, s := range scores {
+		allScores = append(allScores, s)
+	}
+	sort.Float64s(allScores)
+
+	// Thresholds: top 20% = core, bottom 30% = utility
+	var coreThreshold, utilityThreshold float64
+	if len(allScores) > 0 {
+		coreThreshold = allScores[int(float64(len(allScores))*0.8)]
+		utilityThreshold = allScores[int(float64(len(allScores))*0.3)]
+	}
+
+	var roles []ModuleRole
+	for _, n := range g.Nodes {
+		score := scores[n.Name]
+		dependents := len(g.DependentsOf(n.Name))
+		dependencies := len(g.DependenciesOf(n.Name))
+
+		role := "业务模块"
+		switch {
+		case entrySet[n.Name]:
+			role = "入口层"
+		case score >= coreThreshold && dependents >= 2:
+			role = "核心领域"
+		case dependencies >= 2 && dependents == 0 && score <= utilityThreshold:
+			role = "工具库"
+		case dependents == 0 && dependencies == 0:
+			role = "独立模块"
+		case dependents >= 1 && dependencies >= 1:
+			role = "业务模块"
+		default:
+			role = "支撑模块"
+		}
+
+		roles = append(roles, ModuleRole{
+			Name:  n.Name,
+			Role:  role,
+			Score: score,
+		})
+	}
+
+	// Sort by score descending
+	sort.Slice(roles, func(i, j int) bool {
+		return roles[i].Score > roles[j].Score
+	})
+
+	return roles
+}
+
+func abs(a float64) float64 {
+	if a < 0 {
+		return -a
+	}
+	return a
 }
 
 func hasEdge(edges []Edge, from, to string) bool {
