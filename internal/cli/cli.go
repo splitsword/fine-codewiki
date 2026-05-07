@@ -44,12 +44,12 @@ func RunGenerate(cfg *Config) error {
 		cfg.OutputDir = filepath.Join(cfg.SourceDir, ".codewiki", "wiki")
 	}
 
-	fmt.Printf("Parsing source files in %s...\n", cfg.SourceDir)
+	fmt.Printf("正在解析 %s 中的源文件...\n", cfg.SourceDir)
 	files, err := analyzer.ParseDirectory(cfg.SourceDir, cfg.Language)
 	if err != nil {
 		return fmt.Errorf("parse directory: %w", err)
 	}
-	fmt.Printf("Found %d source files\n", len(files))
+	fmt.Printf("找到 %d 个源文件\n", len(files))
 
 	// Normalize filenames: strip source directory prefix so module names are relative to project root
 	absSource, err := filepath.Abs(cfg.SourceDir)
@@ -69,11 +69,11 @@ func RunGenerate(cfg *Config) error {
 		}
 	}
 
-	fmt.Println("Building dependency graph...")
+	fmt.Println("正在构建依赖图...")
 	graph := grapher.BuildGraph(files)
-	fmt.Printf("Graph: %d nodes, %d edges\n", len(graph.Nodes), len(graph.Edges))
+	fmt.Printf("图谱：%d 个节点，%d 条边\n", len(graph.Nodes), len(graph.Edges))
 
-	fmt.Println("Generating diagrams...")
+	fmt.Println("正在生成图表...")
 	archDSL, err := diagram.GenerateArchitectureDiagram(graph)
 	if err != nil {
 		return fmt.Errorf("generate architecture diagram: %w", err)
@@ -84,12 +84,12 @@ func RunGenerate(cfg *Config) error {
 		return fmt.Errorf("generate class diagram: %w", err)
 	}
 
-	fmt.Println("Analyzing call chains...")
+	fmt.Println("正在分析调用链...")
 	callEdges, _ := sequencer.BuildCallGraph(cfg.SourceDir, files)
-	fmt.Printf("Found %d inter-function calls\n", len(callEdges))
+	fmt.Printf("找到 %d 个函数间调用\n", len(callEdges))
 
 	sequences := sequencer.FindSequences(callEdges, 2)
-	fmt.Printf("Found %d sequence patterns\n", len(sequences))
+	fmt.Printf("找到 %d 个序列模式\n", len(sequences))
 
 	var seqDSL string
 	if len(sequences) > 0 {
@@ -98,7 +98,7 @@ func RunGenerate(cfg *Config) error {
 		seqDSL = "sequenceDiagram\n"
 	}
 
-	fmt.Println("Generating documentation...")
+	fmt.Println("正在生成文档...")
 
 	// Attempt to load LLM config for optional enhancement
 	var provider llm.Provider
@@ -107,7 +107,7 @@ func RunGenerate(cfg *Config) error {
 		p, err := llm.NewProvider(llmCfg)
 		if err == nil {
 			provider = p
-			fmt.Println("LLM enhancement enabled")
+			fmt.Println("LLM 增强已启用")
 		}
 	}
 
@@ -116,12 +116,12 @@ func RunGenerate(cfg *Config) error {
 		return fmt.Errorf("generate wiki: %w", err)
 	}
 
-	fmt.Printf("Writing wiki to %s...\n", cfg.OutputDir)
+	fmt.Printf("正在将 Wiki 写入 %s...\n", cfg.OutputDir)
 	if err := docgen.WriteWikiFiles(cfg.OutputDir, wiki); err != nil {
 		return fmt.Errorf("write wiki files: %w", err)
 	}
 
-	fmt.Println("Done!")
+	fmt.Println("完成！")
 	return nil
 }
 
@@ -132,12 +132,12 @@ func RunServe(cfg *Config) error {
 	}
 
 	if _, err := os.Stat(cfg.OutputDir); os.IsNotExist(err) {
-		return fmt.Errorf("wiki directory not found: %s (run 'generate' first)", cfg.OutputDir)
+		return fmt.Errorf("Wiki 目录未找到：%s（请先运行 'generate'）", cfg.OutputDir)
 	}
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
-	fmt.Printf("Serving wiki from %s at http://localhost%s\n", cfg.OutputDir, addr)
-	fmt.Println("Press Ctrl+C to stop")
+	fmt.Printf("正在从 %s 提供 Wiki 服务，访问 http://localhost%s\n", cfg.OutputDir, addr)
+	fmt.Println("按 Ctrl+C 停止")
 
 	handler := newWikiHandler(cfg.OutputDir)
 	return http.ListenAndServe(addr, handler)
@@ -168,19 +168,19 @@ func (h *wikiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	absRoot, _ := filepath.Abs(h.root)
 	absPath, _ := filepath.Abs(fullPath)
 	if !strings.HasPrefix(absPath, absRoot) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		http.Error(w, "禁止访问", http.StatusForbidden)
 		return
 	}
 
 	info, err := os.Stat(fullPath)
 	if err != nil || info.IsDir() {
-		http.Error(w, "Not found", http.StatusNotFound)
+		http.Error(w, "未找到", http.StatusNotFound)
 		return
 	}
 
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
-		http.Error(w, "Error reading file", http.StatusInternalServerError)
+		http.Error(w, "读取文件出错", http.StatusInternalServerError)
 		return
 	}
 
@@ -452,7 +452,7 @@ func renderMarkdownBody(src []byte) string {
 func buildWikiPage(title, body string, navItems []string, current string) []byte {
 	var out strings.Builder
 	out.WriteString(`<!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -709,7 +709,7 @@ func RunAsk(cfg *Config) error {
 	}
 	llmCfg, err := llm.LoadConfig(configPath)
 	if err != nil || llmCfg == nil {
-		return fmt.Errorf("no LLM config found; run 'codewiki config' or set CODEWIKI_API_KEY")
+		return fmt.Errorf("未找到 LLM 配置；运行 'codewiki config' 或设置 CODEWIKI_API_KEY")
 	}
 
 	provider, err := llm.NewProvider(llmCfg)
@@ -725,7 +725,7 @@ func RunAsk(cfg *Config) error {
 	}
 	defer store.Close()
 	if store.Count() > 0 {
-		fmt.Printf("Loaded %d vectors from %s\n", store.Count(), vectorPath)
+		fmt.Printf("从 %s 加载了 %d 个向量\n", vectorPath, store.Count())
 	}
 
 	// Parse source files
@@ -751,20 +751,20 @@ func RunAsk(cfg *Config) error {
 	// Remove vectors for deleted files
 	pruned := store.PruneFiles(currentPaths)
 	if pruned > 0 {
-		fmt.Printf("Pruned %d vectors for deleted files\n", pruned)
+		fmt.Printf("为已删除文件清理了 %d 个向量\n", pruned)
 	}
 
 	// Index changed files
 	if len(changedFiles) > 0 {
-		fmt.Printf("Indexing %d changed files...\n", len(changedFiles))
+		fmt.Printf("正在索引 %d 个变更文件...\n", len(changedFiles))
 		chunks := chunker.New().ChunkFiles(changedFiles)
-		fmt.Printf("Created %d chunks\n", len(chunks))
+		fmt.Printf("创建了 %d 个分块\n", len(chunks))
 
 		emb := embedder.New(provider, store)
 		if err := emb.EmbedChunks(context.Background(), chunks); err != nil {
 			return fmt.Errorf("embed chunks: %w", err)
 		}
-		fmt.Printf("Embedded %d chunks\n", store.Count())
+		fmt.Printf("嵌入了 %d 个分块\n", store.Count())
 
 		// Mark files as indexed
 		for _, f := range changedFiles {
@@ -775,9 +775,9 @@ func RunAsk(cfg *Config) error {
 			store.MarkFileIndexed(f.Filename, info.ModTime().Unix(), info.Size())
 		}
 	} else if store.Count() == 0 {
-		fmt.Println("Vector store empty and no source files found.")
+		fmt.Println("向量存储为空且未找到源文件。")
 	} else {
-		fmt.Println("Vector index is up to date.")
+		fmt.Println("向量索引已是最新。")
 	}
 
 	engine := rag.NewEngine(provider, store)
@@ -797,13 +797,13 @@ func runSingleAsk(engine *rag.Engine, question string) error {
 	}
 	fmt.Println(ans.Text)
 	if len(ans.Sources) > 0 {
-		fmt.Println("\n--- Sources ---")
+		fmt.Println("\n--- 引用来源 ---")
 		for _, s := range ans.Sources {
 			loc := s.Filename
 			if s.StartLine > 0 {
 				loc = fmt.Sprintf("%s:%d", s.Filename, s.StartLine)
 			}
-			fmt.Printf("- %s (%s: %s)\n", loc, s.Type, s.Name)
+			fmt.Printf("- %s（%s：%s）\n", loc, s.Type, s.Name)
 		}
 	}
 	fmt.Println()
@@ -813,8 +813,8 @@ func runSingleAsk(engine *rag.Engine, question string) error {
 func runInteractiveAsk(engine *rag.Engine) error {
 	scanner := bufio.NewScanner(os.Stdin)
 	session := rag.NewSession()
-	fmt.Println("CodeWiki Interactive Q&A")
-	fmt.Println("Type your question and press Enter. Type 'exit' or 'quit' to leave.")
+	fmt.Println("CodeWiki 交互式问答")
+	fmt.Println("输入问题后按回车。输入 'exit' 或 'quit' 退出。")
 	fmt.Println()
 	for {
 		fmt.Print("> ")
@@ -826,24 +826,24 @@ func runInteractiveAsk(engine *rag.Engine) error {
 			continue
 		}
 		if line == "exit" || line == "quit" {
-			fmt.Println("Goodbye!")
+			fmt.Println("再见！")
 			break
 		}
 		ans, err := engine.AskWithSession(context.Background(), line, session)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "错误：%v\n", err)
 			continue
 		}
 		fmt.Println()
 		fmt.Println(ans.Text)
 		if len(ans.Sources) > 0 {
-			fmt.Println("\n--- Sources ---")
+			fmt.Println("\n--- 引用来源 ---")
 			for _, s := range ans.Sources {
 				loc := s.Filename
 				if s.StartLine > 0 {
 					loc = fmt.Sprintf("%s:%d", s.Filename, s.StartLine)
 				}
-				fmt.Printf("- %s (%s: %s)\n", loc, s.Type, s.Name)
+				fmt.Printf("- %s（%s：%s）\n", loc, s.Type, s.Name)
 			}
 		}
 		fmt.Println()
@@ -872,12 +872,12 @@ func runConfigInteractive(cfg *Config, input io.Reader) error {
 		}
 	}
 
-	fmt.Println("CodeWiki Configuration")
+	fmt.Println("CodeWiki 配置")
 	fmt.Println("----------------------")
 	fmt.Println()
 
 	// Provider
-	fmt.Printf("Provider (openai/ollama) [%s]: ", existing.Provider)
+	fmt.Printf("提供商（openai/ollama）[%s]：", existing.Provider)
 	provider := readLine(scanner)
 	if provider == "" {
 		provider = existing.Provider
@@ -887,7 +887,7 @@ func runConfigInteractive(cfg *Config, input io.Reader) error {
 	// API Key (only for openai)
 	var apiKey string
 	if provider == "openai" {
-		fmt.Printf("API Key [%s]: ", maskKey(existing.APIKey))
+		fmt.Printf("API 密钥 [%s]：", maskKey(existing.APIKey))
 		apiKey = readLine(scanner)
 		if apiKey == "" {
 			apiKey = existing.APIKey
@@ -895,14 +895,14 @@ func runConfigInteractive(cfg *Config, input io.Reader) error {
 	}
 
 	// Base URL
-	fmt.Printf("Base URL [%s]: ", existing.BaseURL)
+	fmt.Printf("基础 URL [%s]：", existing.BaseURL)
 	baseURL := readLine(scanner)
 	if baseURL == "" {
 		baseURL = existing.BaseURL
 	}
 
 	// Model
-	fmt.Printf("Model [%s]: ", existing.Model)
+	fmt.Printf("模型 [%s]：", existing.Model)
 	model := readLine(scanner)
 	if model == "" {
 		model = existing.Model
@@ -926,8 +926,8 @@ func runConfigInteractive(cfg *Config, input io.Reader) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	fmt.Printf("\nConfiguration saved to %s\n", path)
-	fmt.Println("You can override settings with environment variables:")
+	fmt.Printf("\n配置已保存到 %s\n", path)
+	fmt.Println("你可以通过环境变量覆盖设置：")
 	fmt.Println("  CODEWIKI_API_KEY, CODEWIKI_MODEL, CODEWIKI_BASE_URL")
 	return nil
 }

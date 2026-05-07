@@ -77,18 +77,18 @@ func GenerateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 func buildOverviewPrompt(graph *grapher.Graph, projectName string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Analyze the following codebase and write a concise project overview in 2-3 paragraphs.\n\n")
-	fmt.Fprintf(&b, "Project: %s\n", projectName)
-	fmt.Fprintf(&b, "Modules: %d\n", len(graph.Nodes))
-	fmt.Fprintf(&b, "Dependencies: %d\n\n", len(graph.Edges))
-	fmt.Fprintf(&b, "Module list:\n")
+	fmt.Fprintf(&b, "分析以下代码库，用 2-3 段简洁的文字撰写项目概述。\n\n")
+	fmt.Fprintf(&b, "项目：%s\n", projectName)
+	fmt.Fprintf(&b, "模块数：%d\n", len(graph.Nodes))
+	fmt.Fprintf(&b, "依赖数：%d\n\n", len(graph.Edges))
+	fmt.Fprintf(&b, "模块列表：\n")
 	for _, n := range graph.Nodes {
 		line := "- " + n.Name
 		if len(n.Classes) > 0 {
-			line += fmt.Sprintf(" (%d classes)", len(n.Classes))
+			line += fmt.Sprintf("（%d 个类）", len(n.Classes))
 		}
 		if len(n.Functions) > 0 {
-			line += fmt.Sprintf(" (%d functions)", len(n.Functions))
+			line += fmt.Sprintf("（%d 个函数）", len(n.Functions))
 		}
 		fmt.Fprintln(&b, line)
 	}
@@ -97,14 +97,14 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName string) string {
 
 func buildArchitecturePrompt(graph *grapher.Graph) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Analyze the following module dependency structure and describe the system architecture, design patterns, and layer relationships in 2-3 paragraphs.\n\n")
-	fmt.Fprintf(&b, "Modules and their dependencies:\n")
+	fmt.Fprintf(&b, "分析以下模块依赖结构，用 2-3 段文字描述系统架构、设计模式及层级关系。\n\n")
+	fmt.Fprintf(&b, "模块及其依赖：\n")
 	for _, n := range graph.Nodes {
 		deps := graph.DependenciesOf(n.Name)
 		if len(deps) > 0 {
-			fmt.Fprintf(&b, "- %s depends on: %s\n", n.Name, strings.Join(deps, ", "))
+			fmt.Fprintf(&b, "- %s 依赖：%s\n", n.Name, strings.Join(deps, ", "))
 		} else {
-			fmt.Fprintf(&b, "- %s (no internal dependencies)\n", n.Name)
+			fmt.Fprintf(&b, "- %s（无内部依赖）\n", n.Name)
 		}
 	}
 	return b.String()
@@ -116,7 +116,7 @@ func GenerateOverviewMarkdown(graph *grapher.Graph, projectName string) (string,
 	b.WriteString(fmt.Sprintf("# %s\n\n", projectName))
 
 	if len(graph.Nodes) == 0 {
-		b.WriteString("No modules found in this project.\n")
+		b.WriteString("未在项目中找到模块。\n")
 		return b.String(), nil
 	}
 
@@ -130,16 +130,16 @@ func GenerateOverviewMarkdown(graph *grapher.Graph, projectName string) (string,
 		}
 	}
 
-	b.WriteString("## Project Stats\n\n")
-	b.WriteString(fmt.Sprintf("- **Modules**: %d\n", len(graph.Nodes)))
-	b.WriteString(fmt.Sprintf("- **Classes**: %d\n", classCount))
-	b.WriteString(fmt.Sprintf("- **Functions**: %d\n", funcCount))
-	b.WriteString(fmt.Sprintf("- **Dependencies**: %d\n\n", len(graph.Edges)))
+	b.WriteString("## 项目统计\n\n")
+	b.WriteString(fmt.Sprintf("- **模块**：%d\n", len(graph.Nodes)))
+	b.WriteString(fmt.Sprintf("- **类**：%d\n", classCount))
+	b.WriteString(fmt.Sprintf("- **函数**：%d\n", funcCount))
+	b.WriteString(fmt.Sprintf("- **依赖**：%d\n\n", len(graph.Edges)))
 
 	// Entry points
 	entries := graph.EntryPoints()
 	if len(entries) > 0 {
-		b.WriteString("## Entry Points\n\n")
+		b.WriteString("## 入口点\n\n")
 		for _, e := range entries {
 			b.WriteString(fmt.Sprintf("- `%s`\n", e.Name))
 		}
@@ -148,20 +148,20 @@ func GenerateOverviewMarkdown(graph *grapher.Graph, projectName string) (string,
 
 	// Module list grouped by directory
 	groups := graph.GroupByDirectory()
-	b.WriteString("## Modules\n\n")
+	b.WriteString("## 模块\n\n")
 	for _, dir := range sortedKeys(groups) {
 		nodes := groups[dir]
 		if dir == "." || dir == "" {
-			dir = "(root)"
+			dir = "（根目录）"
 		}
 		b.WriteString(fmt.Sprintf("### %s\n\n", dir))
 		for _, n := range nodes {
 			b.WriteString(fmt.Sprintf("- `%s`", n.Name))
 			if len(n.Classes) > 0 {
-				b.WriteString(fmt.Sprintf(" — %d classes", len(n.Classes)))
+				b.WriteString(fmt.Sprintf(" — %d 个类", len(n.Classes)))
 			}
 			if len(n.Functions) > 0 {
-				b.WriteString(fmt.Sprintf(" — %d functions", len(n.Functions)))
+				b.WriteString(fmt.Sprintf(" — %d 个函数", len(n.Functions)))
 			}
 			b.WriteString("\n")
 		}
@@ -174,10 +174,10 @@ func GenerateOverviewMarkdown(graph *grapher.Graph, projectName string) (string,
 // GenerateAPIReferenceMarkdown creates an API reference from classes and functions.
 func GenerateAPIReferenceMarkdown(graph *grapher.Graph) (string, error) {
 	var b strings.Builder
-	b.WriteString("# API Reference\n\n")
+	b.WriteString("# API 参考\n\n")
 
 	if len(graph.Nodes) == 0 {
-		b.WriteString("No API symbols found.\n")
+		b.WriteString("未找到 API 符号。\n")
 		return b.String(), nil
 	}
 
@@ -191,15 +191,15 @@ func GenerateAPIReferenceMarkdown(graph *grapher.Graph) (string, error) {
 	}
 
 	if hasClasses {
-		b.WriteString("## Classes\n\n")
+		b.WriteString("## 类\n\n")
 		for _, n := range graph.Nodes {
 			for _, c := range n.Classes {
 				b.WriteString(fmt.Sprintf("### %s\n\n", c.Name))
 				if len(c.Bases) > 0 {
-					b.WriteString(fmt.Sprintf("**Inherits**: %s\n\n", strings.Join(c.Bases, ", ")))
+					b.WriteString(fmt.Sprintf("**继承**：%s\n\n", strings.Join(c.Bases, ", ")))
 				}
 				if len(c.Methods) > 0 {
-					b.WriteString("#### Methods\n\n")
+					b.WriteString("#### 方法\n\n")
 					for _, m := range c.Methods {
 						sig := formatSignature(m.Name, m.Params, m.ReturnType)
 						b.WriteString(fmt.Sprintf("- `%s`\n", sig))
@@ -220,7 +220,7 @@ func GenerateAPIReferenceMarkdown(graph *grapher.Graph) (string, error) {
 	}
 
 	if hasFunctions {
-		b.WriteString("## Functions\n\n")
+		b.WriteString("## 函数\n\n")
 		for _, n := range graph.Nodes {
 			for _, f := range n.Functions {
 				b.WriteString(fmt.Sprintf("### %s\n\n", f.Name))
@@ -236,31 +236,31 @@ func GenerateAPIReferenceMarkdown(graph *grapher.Graph) (string, error) {
 // GenerateArchitectureMarkdown creates an architecture document with embedded diagrams.
 func GenerateArchitectureMarkdown(graph *grapher.Graph, archDSL string) (string, error) {
 	var b strings.Builder
-	b.WriteString("# Architecture\n\n")
+	b.WriteString("# 架构\n\n")
 
 	// Module overview table
-	b.WriteString("## Module Overview\n\n")
-	b.WriteString("| Module | Type | Dependencies | Dependents |\n")
-	b.WriteString("|--------|------|--------------|------------|\n")
+	b.WriteString("## 模块概览\n\n")
+	b.WriteString("| 模块 | 类型 | 依赖 | 被依赖 |\n")
+	b.WriteString("|------|------|------|--------|\n")
 
 	for _, n := range graph.Nodes {
-		nodeType := "module"
+		nodeType := "模块"
 		if len(n.Classes) > 0 {
-			nodeType = "classes"
+			nodeType = "类模块"
 		} else if len(n.Functions) > 0 {
-			nodeType = "functions"
+			nodeType = "函数模块"
 		}
 
 		deps := graph.DependenciesOf(n.Name)
 		depsStr := "—"
 		if len(deps) > 0 {
-			depsStr = "`" + strings.Join(deps, "`, `") + "`"
+			depsStr = "`" + strings.Join(deps, "`，`") + "`"
 		}
 
 		dependents := graph.DependentsOf(n.Name)
 		depStr := "—"
 		if len(dependents) > 0 {
-			depStr = "`" + strings.Join(dependents, "`, `") + "`"
+			depStr = "`" + strings.Join(dependents, "`，`") + "`"
 		}
 
 		b.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s |\n", n.Name, nodeType, depsStr, depStr))
@@ -269,7 +269,7 @@ func GenerateArchitectureMarkdown(graph *grapher.Graph, archDSL string) (string,
 
 	// Embedded architecture diagram
 	if archDSL != "" {
-		b.WriteString("## Dependency Graph\n\n")
+		b.WriteString("## 依赖图\n\n")
 		b.WriteString("```mermaid\n")
 		b.WriteString(archDSL)
 		b.WriteString("```\n\n")

@@ -30,12 +30,12 @@ func TestGenerateOverviewMarkdown(t *testing.T) {
 	assert.Contains(t, md, "# python-basic")
 
 	// Should contain stats
-	assert.Contains(t, md, "Modules")
-	assert.Contains(t, md, "Classes")
-	assert.Contains(t, md, "Functions")
+	assert.Contains(t, md, "模块")
+	assert.Contains(t, md, "类")
+	assert.Contains(t, md, "函数")
 
 	// Should contain module list
-	assert.Contains(t, md, "## Modules")
+	assert.Contains(t, md, "## 模块")
 
 	// Should contain module list
 	assert.Contains(t, md, "models/user")
@@ -48,7 +48,7 @@ func TestGenerateOverviewMarkdownEmptyProject(t *testing.T) {
 	md, err := GenerateOverviewMarkdown(graph, "empty-project")
 	require.NoError(t, err)
 	assert.Contains(t, md, "# empty-project")
-	assert.Contains(t, md, "No modules found")
+	assert.Contains(t, md, "未在项目中找到模块")
 }
 
 func TestGenerateAPIReferenceMarkdown(t *testing.T) {
@@ -75,7 +75,7 @@ func TestGenerateAPIReferenceMarkdown(t *testing.T) {
 	require.NotEmpty(t, md)
 
 	// Should contain API reference heading
-	assert.Contains(t, md, "# API Reference")
+	assert.Contains(t, md, "# API 参考")
 
 	// Should contain class documentation
 	assert.Contains(t, md, "## User")
@@ -111,9 +111,9 @@ func TestGenerateArchitectureMarkdown(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, md)
 
-	assert.Contains(t, md, "# Architecture")
-	assert.Contains(t, md, "## Module Overview")
-	assert.Contains(t, md, "## Dependency Graph")
+	assert.Contains(t, md, "# 架构")
+	assert.Contains(t, md, "## 模块概览")
+	assert.Contains(t, md, "## 依赖图")
 	assert.Contains(t, md, "```mermaid")
 	assert.Contains(t, md, archDSL)
 	assert.Contains(t, md, "```")
@@ -260,9 +260,9 @@ func TestGenerateOverviewMarkdownSingleFile(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, md, "# single-file-app")
-	assert.Contains(t, md, "**Modules**")
-	assert.Contains(t, md, "**Classes**")
-	assert.Contains(t, md, "**Functions**")
+	assert.Contains(t, md, "**模块**")
+	assert.Contains(t, md, "**类**")
+	assert.Contains(t, md, "**函数**")
 	assert.Contains(t, md, "app")
 }
 
@@ -274,7 +274,7 @@ func TestGenerateWikiEmptyRepo(t *testing.T) {
 	require.NotNil(t, wiki)
 
 	assert.Contains(t, wiki.Overview, "empty")
-	assert.Contains(t, wiki.Overview, "No modules found")
-	assert.Contains(t, wiki.APIReference, "No API symbols found")
-	assert.Contains(t, wiki.Architecture, "Module Overview")
+	assert.Contains(t, wiki.Overview, "未在项目中找到模块")
+	assert.Contains(t, wiki.APIReference, "未找到 API 符号")
+	assert.Contains(t, wiki.Architecture, "模块概览")
 }

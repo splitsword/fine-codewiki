@@ -93,7 +93,7 @@ func TestGenerateCommandEmptyDir(t *testing.T) {
 
 	overview, err := os.ReadFile(filepath.Join(outDir, "overview.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(overview), "No modules found")
+	assert.Contains(t, string(overview), "未在项目中找到模块")
 }
 
 func TestGenerateCommandInvalidSource(t *testing.T) {
@@ -230,7 +230,7 @@ func TestRunServeMissingWikiDir(t *testing.T) {
 
 	err := RunServe(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "wiki directory not found")
+	assert.Contains(t, err.Error(), "Wiki 目录未找到")
 }
 
 func TestRunConfigInteractive(t *testing.T) {

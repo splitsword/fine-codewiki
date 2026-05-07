@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-07 — feat: localize all wiki output and CLI to Simplified Chinese (4485ff0)
+
 - 2026-05-07 — docs: update changelog with sequencer fix (d9379fc)
 
 - 2026-05-07 — fix(sequencer): resolve empty sequence diagram due to class scope reset, regex cross-contamination, and self-loop source detection (98177ea)
