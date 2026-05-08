@@ -465,7 +465,8 @@ func GenerateAPIReferenceMarkdown(graph *grapher.Graph) (string, error) {
 					b.WriteString("#### 方法\n\n")
 					for _, m := range c.Methods {
 						sig := formatSignature(m.Name, m.Params, m.ReturnType)
-						b.WriteString(fmt.Sprintf("- `%s`\n", sig))
+						desc := describeFunction(m.Name, m.Params, m.ReturnType)
+						b.WriteString(fmt.Sprintf("- `%s` — %s\n", sig, desc))
 					}
 					b.WriteString("\n")
 				}
@@ -488,7 +489,9 @@ func GenerateAPIReferenceMarkdown(graph *grapher.Graph) (string, error) {
 			for _, f := range n.Functions {
 				b.WriteString(fmt.Sprintf("### %s\n\n", f.Name))
 				sig := formatSignature(f.Name, f.Params, f.ReturnType)
+				desc := describeFunction(f.Name, f.Params, f.ReturnType)
 				b.WriteString(fmt.Sprintf("```\n%s\n```\n\n", sig))
+				b.WriteString(fmt.Sprintf("%s\n\n", desc))
 			}
 		}
 	}
@@ -579,6 +582,212 @@ func WriteWikiFiles(outputDir string, wiki *Wiki) error {
 }
 
 // formatSignature builds a human-readable function signature.
+// describeFunction generates a static semantic description for a function
+// based on its name, parameters, and return type.
+func describeFunction(name string, params []string, returnType string) string {
+	// Extract noun from name (after verb prefix)
+	noun := name
+	verb := ""
+
+	switch {
+	case name == "__init__":
+		return "构造函数，初始化对象属性"
+	case name == "__str__":
+		return "返回对象的字符串表示"
+	case name == "__repr__":
+		return "返回对象的正式字符串表示"
+	case name == "authenticate" || name == "login":
+		return "用户认证，验证身份凭据"
+	case name == "register" || name == "signup":
+		return "用户注册，创建新账户"
+	case name == "logout":
+		return "用户登出，终止当前会话"
+	case name == "run" || name == "main" || name == "start" || name == "execute":
+		return "程序入口，执行主逻辑"
+	case name == "init" || name == "setup" || name == "configure":
+		return "初始化系统或配置环境"
+	case strings.HasPrefix(name, "get_"):
+		verb = "获取"
+		noun = name[4:]
+	case strings.HasPrefix(name, "set_"):
+		verb = "设置"
+		noun = name[4:]
+	case strings.HasPrefix(name, "create_") || strings.HasPrefix(name, "add_") || strings.HasPrefix(name, "new_"):
+		verb = "创建"
+		if strings.HasPrefix(name, "create_") {
+			noun = name[7:]
+		} else if strings.HasPrefix(name, "add_") {
+			noun = name[4:]
+		} else {
+			noun = name[4:]
+		}
+	case strings.HasPrefix(name, "update_") || strings.HasPrefix(name, "modify_"):
+		verb = "更新"
+		if strings.HasPrefix(name, "update_") {
+			noun = name[7:]
+		} else {
+			noun = name[7:]
+		}
+	case strings.HasPrefix(name, "delete_") || strings.HasPrefix(name, "remove_") || strings.HasPrefix(name, "drop_"):
+		verb = "删除"
+		if strings.HasPrefix(name, "delete_") {
+			noun = name[7:]
+		} else if strings.HasPrefix(name, "remove_") {
+			noun = name[7:]
+		} else {
+			noun = name[5:]
+		}
+	case strings.HasPrefix(name, "validate_") || strings.HasPrefix(name, "check_") || strings.HasPrefix(name, "verify_"):
+		verb = "验证"
+		if strings.HasPrefix(name, "validate_") {
+			noun = name[9:]
+		} else if strings.HasPrefix(name, "check_") {
+			noun = name[6:]
+		} else {
+			noun = name[7:]
+		}
+	case strings.HasPrefix(name, "parse_") || strings.HasPrefix(name, "extract_"):
+		verb = "解析"
+		if strings.HasPrefix(name, "parse_") {
+			noun = name[6:]
+		} else {
+			noun = name[8:]
+		}
+	case strings.HasPrefix(name, "format_"):
+		verb = "格式化"
+		noun = name[7:]
+	case strings.HasPrefix(name, "send_"):
+		verb = "发送"
+		noun = name[5:]
+	case strings.HasPrefix(name, "receive_") || strings.HasPrefix(name, "recv_"):
+		verb = "接收"
+		if strings.HasPrefix(name, "receive_") {
+			noun = name[8:]
+		} else {
+			noun = name[5:]
+		}
+	case strings.HasPrefix(name, "process_") || strings.HasPrefix(name, "handle_"):
+		verb = "处理"
+		if strings.HasPrefix(name, "process_") {
+			noun = name[8:]
+		} else {
+			noun = name[7:]
+		}
+	case strings.HasPrefix(name, "load_") || strings.HasPrefix(name, "read_"):
+		verb = "读取"
+		if strings.HasPrefix(name, "load_") {
+			noun = name[5:]
+		} else {
+			noun = name[5:]
+		}
+	case strings.HasPrefix(name, "save_") || strings.HasPrefix(name, "write_") || strings.HasPrefix(name, "store_"):
+		verb = "保存"
+		if strings.HasPrefix(name, "save_") {
+			noun = name[5:]
+		} else if strings.HasPrefix(name, "write_") {
+			noun = name[6:]
+		} else {
+			noun = name[6:]
+		}
+	case strings.HasPrefix(name, "find_") || strings.HasPrefix(name, "search_") || strings.HasPrefix(name, "query_") || strings.HasPrefix(name, "lookup_"):
+		verb = "查找"
+		if strings.HasPrefix(name, "find_") {
+			noun = name[5:]
+		} else if strings.HasPrefix(name, "search_") {
+			noun = name[7:]
+		} else if strings.HasPrefix(name, "query_") {
+			noun = name[6:]
+		} else {
+			noun = name[7:]
+		}
+	case strings.HasPrefix(name, "build_") || strings.HasPrefix(name, "make_") || strings.HasPrefix(name, "generate_"):
+		verb = "生成"
+		if strings.HasPrefix(name, "build_") {
+			noun = name[6:]
+		} else if strings.HasPrefix(name, "make_") {
+			noun = name[5:]
+		} else {
+			noun = name[9:]
+		}
+	case strings.HasPrefix(name, "convert_") || strings.HasPrefix(name, "transform_"):
+		verb = "转换"
+		if strings.HasPrefix(name, "convert_") {
+			noun = name[8:]
+		} else {
+			noun = name[11:]
+		}
+	case strings.HasPrefix(name, "to_"):
+		verb = "转换为"
+		noun = name[3:]
+	case strings.HasPrefix(name, "from_"):
+		verb = "从"
+		noun = name[5:] + " 解析/构建"
+	case strings.HasPrefix(name, "is_") || strings.HasPrefix(name, "has_") || strings.HasPrefix(name, "can_"):
+		verb = "判断"
+		if strings.HasPrefix(name, "is_") {
+			noun = name[3:] + " 状态"
+		} else if strings.HasPrefix(name, "has_") {
+			noun = "是否具备 " + name[4:]
+		} else {
+			noun = "是否可 " + name[4:]
+		}
+	case strings.HasPrefix(name, "render_") || strings.HasPrefix(name, "draw_") || strings.HasPrefix(name, "display_"):
+		verb = "渲染"
+		if strings.HasPrefix(name, "render_") {
+			noun = name[7:]
+		} else if strings.HasPrefix(name, "draw_") {
+			noun = name[5:]
+		} else {
+			noun = name[8:]
+		}
+	case strings.HasPrefix(name, "encode_") || strings.HasPrefix(name, "decode_"):
+		verb = "编解码"
+		if strings.HasPrefix(name, "encode_") {
+			noun = name[7:]
+		} else {
+			noun = name[7:]
+		}
+	case strings.HasPrefix(name, "serialize") || strings.HasPrefix(name, "to_dict") || strings.HasPrefix(name, "to_json"):
+		return "序列化对象为结构化数据"
+	case strings.HasPrefix(name, "deserialize") || strings.HasPrefix(name, "from_dict") || strings.HasPrefix(name, "from_json"):
+		return "从结构化数据反序列化对象"
+	default:
+		// Try to infer from suffix patterns
+		if strings.HasSuffix(name, "_service") || strings.HasSuffix(name, "_handler") {
+			return "处理 " + noun + " 相关逻辑"
+		}
+		return "执行 " + name + " 操作"
+	}
+
+	// Build description with noun
+	desc := verb
+	if noun != "" {
+		// Convert snake_case to spaces for readability
+		noun = strings.ReplaceAll(noun, "_", " ")
+		desc += noun
+	}
+
+	// Add parameter context
+	if len(params) > 0 {
+		var paramNames []string
+		for _, p := range params {
+			if p != "self" && p != "cls" {
+				paramNames = append(paramNames, p)
+			}
+		}
+		if len(paramNames) > 0 {
+			desc += fmt.Sprintf("，参数：%s", strings.Join(paramNames, ", "))
+		}
+	}
+
+	// Add return type hint
+	if returnType != "" && returnType != "None" && returnType != "void" {
+		desc += fmt.Sprintf("，返回 %s", returnType)
+	}
+
+	return desc
+}
+
 func formatSignature(name string, params []string, returnType string) string {
 	// Filter out self/cls
 	var displayParams []string

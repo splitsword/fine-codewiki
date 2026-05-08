@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-08 — feat(docgen): 添加函数级静态语义摘要 (ef1c09a)
+
 - 2026-05-08 — docs: 将 CHANGELOG.md 提交历史描述翻译为简体中文 (f057ea5)
 
 - 2026-05-08 — docs(PRD_COVERAGE): 更新 M3 已完成项状态 (6e64421)

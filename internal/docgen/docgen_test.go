@@ -306,3 +306,61 @@ func TestGenerateWikiEmptyRepo(t *testing.T) {
 	assert.Contains(t, wiki.APIReference, "未找到 API 符号")
 	assert.Contains(t, wiki.Architecture, "模块概览")
 }
+
+func TestDescribeFunction(t *testing.T) {
+	tests := []struct {
+		name       string
+		params     []string
+		returnType string
+		want       string
+	}{
+		{"get_user", []string{"user_id"}, "User", "获取user，参数：user_id，返回 User"},
+		{"create_order", []string{"items", "user_id"}, "Order", "创建order，参数：items, user_id，返回 Order"},
+		{"validate_email", []string{"email"}, "bool", "验证email，参数：email，返回 bool"},
+		{"parse_config", []string{"path"}, "dict", "解析config，参数：path，返回 dict"},
+		{"send_email", []string{"to", "subject", "body"}, "None", "发送email，参数：to, subject, body"},
+		{"authenticate", []string{"username", "password"}, "bool", "用户认证，验证身份凭据"},
+		{"__init__", []string{"self", "name"}, "None", "构造函数，初始化对象属性"},
+		{"to_dict", []string{}, "dict", "序列化对象为结构化数据"},
+		{"is_active", []string{}, "bool", "判断active 状态，返回 bool"},
+		{"process_payment", []string{"amount"}, "Receipt", "处理payment，参数：amount，返回 Receipt"},
+		{"main", []string{}, "int", "程序入口，执行主逻辑"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := describeFunction(tt.name, tt.params, tt.returnType)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDescribeFunctionUnknown(t *testing.T) {
+	desc := describeFunction("foobar", []string{}, "")
+	assert.Contains(t, desc, "foobar")
+	assert.Contains(t, desc, "执行")
+}
+
+func TestGenerateAPIReferenceWithDescriptions(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "utils/logger.py",
+			Functions: []analyzer.FunctionInfo{
+				{Name: "get_logger", Params: []string{"name"}, ReturnType: "Logger"},
+				{Name: "configure", Params: []string{"level"}, ReturnType: "None"},
+			},
+		},
+	}
+	graph := grapher.BuildGraph(files)
+
+	md, err := GenerateAPIReferenceMarkdown(graph)
+	require.NoError(t, err)
+
+	// 应该包含函数签名
+	assert.Contains(t, md, "get_logger(name)")
+	assert.Contains(t, md, "configure(level)")
+
+	// 应该包含静态语义描述
+	assert.Contains(t, md, "获取logger")
+	assert.Contains(t, md, "初始化系统或配置环境")
+}
