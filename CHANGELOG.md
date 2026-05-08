@@ -6,45 +6,47 @@
 
 ## [Unreleased]
 
-- 2026-05-08 — docs(PRD_COVERAGE): update M3 status for completed items (6e64421)
+- 2026-05-08 — docs: 将 CHANGELOG.md 提交历史描述翻译为简体中文 (f057ea5)
 
-- 2026-05-08 — feat(diagram): add semantic annotations to Mermaid DSL output (fe93808)
+- 2026-05-08 — docs(PRD_COVERAGE): 更新 M3 已完成项状态 (6e64421)
 
-- 2026-05-08 — feat(benchmark): add performance benchmark suite (1ce3c47)
+- 2026-05-08 — feat(diagram): 为 Mermaid DSL 输出添加语义注释 (fe93808)
 
-- 2026-05-08 — feat(docgen): add module role column to architecture markdown (a975a54)
+- 2026-05-08 — feat(benchmark): 添加性能基准测试套件 (1ce3c47)
 
-- 2026-05-08 — feat(grapher): add PageRank-based module role inference (f4ff10b)
+- 2026-05-08 — feat(docgen): 在架构 Markdown 中添加模块角色列 (a975a54)
 
-- 2026-05-08 — update PRD_COVERAGE.md: add M3 success criteria, test plan, and engineering infra items (e246c7c)
+- 2026-05-08 — feat(grapher): 基于 PageRank 实现模块角色推断 (f4ff10b)
 
-- 2026-05-08 — docs(prd): expand M3 with engineering gaps from M1-M2 audit (4e000aa)
+- 2026-05-08 — 更新 PRD_COVERAGE.md：添加 M3 成功标准、测试计划和工程基建项 (e246c7c)
 
-- 2026-05-08 — docs: add PRD coverage tracking document (84c9df8)
+- 2026-05-08 — docs(prd): 根据 M1-M2 审计结果扩展 M3 工程基建内容 (4e000aa)
 
-- 2026-05-08 — chore(docgen): print timeout hint when LLM request exceeds deadline (f197e7d)
+- 2026-05-08 — docs: 添加 PRD 覆盖追踪文档 (84c9df8)
 
-- 2026-05-08 — feat(docgen): prioritize README and core modules in LLM prompt (f1730d0)
+- 2026-05-08 — chore(docgen): LLM 请求超时时打印超时提示 (f197e7d)
 
-- 2026-05-08 — fix(docgen): truncate prompt module lists to avoid API timeout (3bd8719)
+- 2026-05-08 — feat(docgen): 在 LLM 提示词中优先注入 README 和核心模块 (f1730d0)
 
-- 2026-05-08 — fix(docgen): add LLM error logging to diagnose enhancement failures (9939cc0)
+- 2026-05-08 — fix(docgen): 截断提示词模块列表以避免 API 超时 (3bd8719)
 
-- 2026-05-07 — fix(docgen): skip meaningless community groups in auto description (14f817e)
+- 2026-05-08 — fix(docgen): 添加 LLM 错误日志以诊断增强失败 (9939cc0)
 
-- 2026-05-07 — fix(docgen): restore project description in overview.md (623ab2a)
+- 2026-05-07 — fix(docgen): 在自动描述中跳过无意义的社区分组 (14f817e)
 
-- 2026-05-07 — docs(prd): update M2 completion and M3 doc-depth enhancement (246b581)
+- 2026-05-07 — fix(docgen): 恢复 overview.md 中的项目描述 (623ab2a)
 
-- 2026-05-07 — feat(llm): split config into generation and embedding providers (80d5511)
+- 2026-05-07 — docs(prd): 更新 M2 完成状态及 M3 文档深度增强 (246b581)
 
-- 2026-05-07 — feat: localize all wiki output and CLI to Simplified Chinese (4485ff0)
+- 2026-05-07 — feat(llm): 将配置拆分为生成模型和向量模型 (80d5511)
 
-- 2026-05-07 — docs: update changelog with sequencer fix (d9379fc)
+- 2026-05-07 — feat: 将所有 Wiki 输出和 CLI 本地化为简体中文 (4485ff0)
 
-- 2026-05-07 — fix(sequencer): resolve empty sequence diagram due to class scope reset, regex cross-contamination, and self-loop source detection (98177ea)
+- 2026-05-07 — docs: 更新变更日志，补充时序图修复 (d9379fc)
 
-- 2026-05-07 — chore: add post-commit hook to auto-update docs (02ab102)
+- 2026-05-07 — fix(sequencer): 修复类作用域重置、正则交叉污染和自环源检测导致的时序图为空问题 (98177ea)
+
+- 2026-05-07 — chore: 添加 post-commit 钩子自动更新文档 (02ab102)
 
 ### 修复
 - **时序图空输出修复**：修复 `sequencer` 模块中导致时序图为空的三个交互 bug
