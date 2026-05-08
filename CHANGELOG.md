@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-08 — feat(docgen): 实现 Wiki Markdown 合辑导出 (f31cf8b)
+
 - 2026-05-08 — docs(PRD_COVERAGE): 更新 M3-3.1 和 M3-3.3 静态层完成状态 (86639cd)
 
 - 2026-05-08 — feat(sequencer): 为时序图添加调用链路场景描述 (d3d370f)

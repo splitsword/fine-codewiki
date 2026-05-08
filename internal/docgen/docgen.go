@@ -563,12 +563,13 @@ func WriteWikiFiles(outputDir string, wiki *Wiki) error {
 	}
 
 	files := map[string]string{
-		"overview.md":         wiki.Overview,
-		"api-reference.md":    wiki.APIReference,
-		"architecture.md":     wiki.Architecture,
-		"class-diagram.mmd":   wiki.ClassDiagram,
-		"architecture.mmd":    wiki.ArchitectureDiagram,
+		"overview.md":          wiki.Overview,
+		"api-reference.md":     wiki.APIReference,
+		"architecture.md":      wiki.Architecture,
+		"class-diagram.mmd":    wiki.ClassDiagram,
+		"architecture.mmd":     wiki.ArchitectureDiagram,
 		"sequence-diagram.mmd": wiki.SequenceDiagram,
+		"compilation.md":       GenerateMarkdownCompilation(wiki),
 	}
 
 	for name, content := range files {
@@ -579,6 +580,90 @@ func WriteWikiFiles(outputDir string, wiki *Wiki) error {
 	}
 
 	return nil
+}
+
+// GenerateMarkdownCompilation merges all Markdown documents into a single compilation
+// with table of contents for easy offline reading.
+func GenerateMarkdownCompilation(wiki *Wiki) string {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("# %s Wiki 合辑\n\n", wiki.ProjectName))
+	b.WriteString("> 本文档由 CodeWiki 自动生成，整合项目概述、架构说明与 API 参考。\n\n")
+	b.WriteString("---\n\n")
+
+	// Table of contents
+	b.WriteString("## 目录\n\n")
+	b.WriteString("1. [项目概述](#项目概述)\n")
+	b.WriteString("2. [架构说明](#架构说明)\n")
+	b.WriteString("3. [API 参考](#api-参考)\n")
+	if wiki.ArchitectureDiagram != "" {
+		b.WriteString("4. [架构图](#架构图)\n")
+	}
+	if wiki.ClassDiagram != "" {
+		b.WriteString("5. [类图](#类图)\n")
+	}
+	if wiki.SequenceDiagram != "" {
+		b.WriteString("6. [时序图](#时序图)\n")
+	}
+	b.WriteString("\n---\n\n")
+
+	// Section 1: Overview
+	b.WriteString(adjustHeadingLevel(wiki.Overview, 1))
+	b.WriteString("\n\n---\n\n")
+
+	// Section 2: Architecture
+	b.WriteString(adjustHeadingLevel(wiki.Architecture, 1))
+	b.WriteString("\n\n---\n\n")
+
+	// Section 3: API Reference
+	b.WriteString(adjustHeadingLevel(wiki.APIReference, 1))
+	b.WriteString("\n\n---\n\n")
+
+	// Embedded diagrams (if available)
+	if wiki.ArchitectureDiagram != "" {
+		b.WriteString("## 架构图\n\n```mermaid\n")
+		b.WriteString(wiki.ArchitectureDiagram)
+		b.WriteString("```\n\n---\n\n")
+	}
+
+	if wiki.ClassDiagram != "" {
+		b.WriteString("## 类图\n\n```mermaid\n")
+		b.WriteString(wiki.ClassDiagram)
+		b.WriteString("```\n\n---\n\n")
+	}
+
+	if wiki.SequenceDiagram != "" {
+		b.WriteString("## 时序图\n\n```mermaid\n")
+		b.WriteString(wiki.SequenceDiagram)
+		b.WriteString("```\n\n---\n\n")
+	}
+
+	return b.String()
+}
+
+// adjustHeadingLevel shifts all Markdown headings down by shift levels
+// so they fit under the compilation title.
+func adjustHeadingLevel(content string, shift int) string {
+	if shift <= 0 {
+		return content
+	}
+	var lines []string
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		if strings.HasPrefix(trimmed, "#") {
+			// Count heading level
+			level := 0
+			for i := 0; i < len(trimmed) && trimmed[i] == '#'; i++ {
+				level++
+			}
+			if level+shift <= 6 {
+				// Replace the leading #s with deeper ones
+				line = strings.Repeat("#", shift) + line[level:]
+			}
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // formatSignature builds a human-readable function signature.

@@ -169,11 +169,22 @@ func TestWriteWikiFiles(t *testing.T) {
 	assert.FileExists(t, filepath.Join(wikiDir, "architecture.md"))
 	assert.FileExists(t, filepath.Join(wikiDir, "class-diagram.mmd"))
 	assert.FileExists(t, filepath.Join(wikiDir, "architecture.mmd"))
+	assert.FileExists(t, filepath.Join(wikiDir, "compilation.md"))
 
 	// Verify content
 	content, err := os.ReadFile(filepath.Join(wikiDir, "overview.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "# test-project\n", string(content))
+
+	// Verify compilation contains all sections
+	compContent, err := os.ReadFile(filepath.Join(wikiDir, "compilation.md"))
+	require.NoError(t, err)
+	comp := string(compContent)
+	assert.Contains(t, comp, "# test-project Wiki 合辑")
+	assert.Contains(t, comp, "## 目录")
+	assert.Contains(t, comp, "## test-project")
+	assert.Contains(t, comp, "## Architecture")
+	assert.Contains(t, comp, "## API 参考")
 }
 
 func TestMarkdownEscape(t *testing.T) {
@@ -363,4 +374,67 @@ func TestGenerateAPIReferenceWithDescriptions(t *testing.T) {
 	// 应该包含静态语义描述
 	assert.Contains(t, md, "获取logger")
 	assert.Contains(t, md, "初始化系统或配置环境")
+}
+
+func TestAdjustHeadingLevel(t *testing.T) {
+	input := "# 标题\n## 子标题\n### 三级\n正文内容"
+
+	// shift=0 应该保持不变
+	assert.Equal(t, input, adjustHeadingLevel(input, 0))
+
+	// shift=1 应该将所有标题降级一级
+	shifted := adjustHeadingLevel(input, 1)
+	assert.Contains(t, shifted, "## 标题")
+	assert.Contains(t, shifted, "### 子标题")
+	assert.Contains(t, shifted, "#### 三级")
+	assert.Contains(t, shifted, "正文内容")
+
+	// 不超过六级标题
+	six := "###### 最深"
+	assert.Equal(t, "###### 最深", adjustHeadingLevel(six, 1))
+}
+
+func TestGenerateMarkdownCompilation(t *testing.T) {
+	wiki := &Wiki{
+		ProjectName:         "demo",
+		Overview:            "# demo\n\n项目概述内容。\n",
+		Architecture:        "# 架构\n\n架构说明内容。\n",
+		APIReference:        "# API 参考\n\nAPI 内容。\n",
+		ArchitectureDiagram: "graph TD\n    A --> B\n",
+		ClassDiagram:        "classDiagram\n    class A\n",
+		SequenceDiagram:     "sequenceDiagram\n    A->>B: msg\n",
+	}
+
+	comp := GenerateMarkdownCompilation(wiki)
+
+	// 应该包含合辑标题
+	assert.Contains(t, comp, "# demo Wiki 合辑")
+
+	// 应该包含目录
+	assert.Contains(t, comp, "## 目录")
+	assert.Contains(t, comp, "1. [项目概述](#项目概述)")
+	assert.Contains(t, comp, "2. [架构说明](#架构说明)")
+	assert.Contains(t, comp, "3. [API 参考](#api-参考)")
+
+	// 子文档标题应该被降级一级
+	assert.Contains(t, comp, "## demo")
+	assert.Contains(t, comp, "## 架构")
+	assert.Contains(t, comp, "## API 参考")
+
+	// 不应该还有一级标题（因为已经被降级）
+	// 只允许合辑标题是 # 级别
+	lines := strings.Split(comp, "\n")
+	level1Count := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "# ") {
+			level1Count++
+		}
+	}
+	assert.Equal(t, 1, level1Count, "合辑中只允许一个一级标题")
+
+	// 应该包含嵌入的图表
+	assert.Contains(t, comp, "## 架构图")
+	assert.Contains(t, comp, "## 类图")
+	assert.Contains(t, comp, "## 时序图")
+	assert.Contains(t, comp, "```mermaid")
 }
