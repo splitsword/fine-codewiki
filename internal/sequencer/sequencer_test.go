@@ -439,3 +439,56 @@ func TestBuildCallGraphPythonBasic(t *testing.T) {
 		require.True(t, len(s.Participants) >= 2, "each sequence should cross multiple modules")
 	}
 }
+
+func TestGenerateSequenceDiagramWithDescription(t *testing.T) {
+	seq := Sequence{
+		Title:        "create flow",
+		Description:  "触发条件：调用 api 的数据创建；经过 3 个模块协作；最终由 repo 完成数据持久化",
+		Participants: []string{"api", "service", "repo"},
+		Messages: []Message{
+			{From: "api", To: "service", Label: "create_user"},
+			{From: "service", To: "repo", Label: "save"},
+		},
+	}
+
+	dsl := GenerateSequenceDiagram(seq)
+	assert.Contains(t, dsl, "触发条件")
+	assert.Contains(t, dsl, "api")
+	assert.Contains(t, dsl, "数据持久化")
+}
+
+func TestInferAction(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"get_user", "数据查询"},
+		{"create_order", "数据创建"},
+		{"update_profile", "数据更新"},
+		{"delete_item", "数据删除"},
+		{"validate_email", "数据校验"},
+		{"authenticate", "身份认证"},
+		{"register", "用户注册"},
+		{"send_email", "消息发送"},
+		{"process_payment", "业务处理"},
+		{"save_data", "数据持久化"},
+		{"load_config", "数据加载"},
+		{"parse_json", "数据解析"},
+		{"render_page", "数据渲染"},
+		{"main", "主流程执行"},
+		{"foobar", "foobar 操作"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := inferAction(tt.name)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSimplifyModuleName(t *testing.T) {
+	assert.Equal(t, "models", simplifyModuleName("models/user"))
+	assert.Equal(t, "services", simplifyModuleName("services/api"))
+	assert.Equal(t, "main", simplifyModuleName("main"))
+}

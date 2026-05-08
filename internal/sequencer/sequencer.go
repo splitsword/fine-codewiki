@@ -31,6 +31,7 @@ type CallEdge struct {
 // Sequence represents a linear call path suitable for a sequence diagram.
 type Sequence struct {
 	Title        string
+	Description  string
 	Participants []string
 	Messages     []Message
 }
@@ -453,12 +454,83 @@ func pathToSequence(path []CallEdge) Sequence {
 	first := path[0].From
 	last := path[len(path)-1].To
 	title := fmt.Sprintf("%s.%s -> %s.%s", first.Module, first.Name, last.Module, last.Name)
+	desc := generateSequenceDescription(first, last, messages)
 
 	return Sequence{
 		Title:        title,
+		Description:  desc,
 		Participants: participants,
 		Messages:     messages,
 	}
+}
+
+// generateSequenceDescription creates a static scenario description
+// based on the entry point and final action of the sequence.
+func generateSequenceDescription(first FunctionRef, last FunctionRef, messages []Message) string {
+	entryAction := inferAction(first.Name)
+	finalAction := inferAction(last.Name)
+	entryModule := simplifyModuleName(first.Module)
+	finalModule := simplifyModuleName(last.Module)
+
+	// Count intermediate layers
+	layers := make(map[string]bool)
+	for _, m := range messages {
+		layers[simplifyModuleName(m.From)] = true
+		layers[simplifyModuleName(m.To)] = true
+	}
+	layerCount := len(layers)
+
+	desc := fmt.Sprintf("触发条件：调用 %s 的 %s", entryModule, entryAction)
+	if layerCount > 2 {
+		desc += fmt.Sprintf("；经过 %d 个模块协作", layerCount)
+	}
+	desc += fmt.Sprintf("；最终由 %s 完成 %s", finalModule, finalAction)
+	return desc
+}
+
+// inferAction maps common function name patterns to Chinese action descriptions.
+func inferAction(name string) string {
+	switch {
+	case strings.HasPrefix(name, "get_") || strings.HasPrefix(name, "fetch_"):
+		return "数据查询"
+	case strings.HasPrefix(name, "create_") || strings.HasPrefix(name, "add_") || strings.HasPrefix(name, "new_"):
+		return "数据创建"
+	case strings.HasPrefix(name, "update_") || strings.HasPrefix(name, "modify_") || strings.HasPrefix(name, "set_"):
+		return "数据更新"
+	case strings.HasPrefix(name, "delete_") || strings.HasPrefix(name, "remove_"):
+		return "数据删除"
+	case strings.HasPrefix(name, "validate_") || strings.HasPrefix(name, "check_") || strings.HasPrefix(name, "verify_"):
+		return "数据校验"
+	case strings.HasPrefix(name, "authenticate") || strings.HasPrefix(name, "login"):
+		return "身份认证"
+	case strings.HasPrefix(name, "register") || strings.HasPrefix(name, "signup"):
+		return "用户注册"
+	case strings.HasPrefix(name, "send_") || strings.HasPrefix(name, "notify_"):
+		return "消息发送"
+	case strings.HasPrefix(name, "process_") || strings.HasPrefix(name, "handle_"):
+		return "业务处理"
+	case strings.HasPrefix(name, "save_") || strings.HasPrefix(name, "store_") || strings.HasPrefix(name, "write_"):
+		return "数据持久化"
+	case strings.HasPrefix(name, "load_") || strings.HasPrefix(name, "read_"):
+		return "数据加载"
+	case strings.HasPrefix(name, "parse_") || strings.HasPrefix(name, "extract_"):
+		return "数据解析"
+	case strings.HasPrefix(name, "format_") || strings.HasPrefix(name, "render_"):
+		return "数据渲染"
+	case strings.HasPrefix(name, "run") || strings.HasPrefix(name, "main") || strings.HasPrefix(name, "execute"):
+		return "主流程执行"
+	default:
+		return name + " 操作"
+	}
+}
+
+// simplifyModuleName extracts the top-level directory or module name.
+func simplifyModuleName(module string) string {
+	parts := strings.Split(module, "/")
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return module
 }
 
 // GenerateSequenceDiagram renders a Sequence as Mermaid sequenceDiagram DSL.
@@ -470,6 +542,11 @@ func GenerateSequenceDiagram(seq Sequence) string {
 	var b strings.Builder
 	b.WriteString("%% 时序图：展示关键调用链路的交互顺序\n")
 	b.WriteString("sequenceDiagram\n")
+
+	// 场景描述注释
+	if seq.Description != "" {
+		b.WriteString(fmt.Sprintf("    %% %s\n", seq.Description))
+	}
 
 	// Declare participants in order of first appearance
 	for _, p := range seq.Participants {
