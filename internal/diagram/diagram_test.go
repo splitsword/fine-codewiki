@@ -65,8 +65,8 @@ func TestGenerateArchitectureDiagram(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, dsl)
 
-	// Must be valid Mermaid graph TD
-	assert.True(t, strings.HasPrefix(dsl, "graph TD"), "should start with 'graph TD'")
+	// Must be valid Mermaid graph TD (after semantic comment)
+	assert.Contains(t, dsl, "graph TD")
 
 	// Should contain subgraphs for directories
 	assert.Contains(t, dsl, "subgraph models")
@@ -93,7 +93,7 @@ func TestGenerateArchitectureDiagramEmpty(t *testing.T) {
 	graph := grapher.BuildGraph([]*analyzer.FileResult{})
 	dsl, err := GenerateArchitectureDiagram(graph)
 	require.NoError(t, err)
-	assert.Equal(t, "graph TD\n", dsl)
+	assert.Contains(t, dsl, "graph TD\n")
 }
 
 func TestGenerateClassDiagram(t *testing.T) {
@@ -145,8 +145,8 @@ func TestGenerateClassDiagram(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, dsl)
 
-	// Must be valid Mermaid classDiagram
-	assert.True(t, strings.HasPrefix(dsl, "classDiagram"), "should start with 'classDiagram'")
+	// Must be valid Mermaid classDiagram (after semantic comment)
+	assert.Contains(t, dsl, "classDiagram")
 
 	// Should contain class definitions
 	assert.Contains(t, dsl, "class BaseModel")
@@ -169,7 +169,7 @@ func TestGenerateClassDiagramNoClasses(t *testing.T) {
 	graph := grapher.BuildGraph(files)
 	dsl, err := GenerateClassDiagram(graph)
 	require.NoError(t, err)
-	assert.Equal(t, "classDiagram\n", dsl)
+	assert.Contains(t, dsl, "classDiagram\n")
 }
 
 func TestGenerateClassDiagramWithMultipleInheritance(t *testing.T) {

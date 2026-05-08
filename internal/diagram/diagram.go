@@ -13,6 +13,7 @@ import (
 // representing the module dependency structure.
 func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 	var b strings.Builder
+	b.WriteString("%% 架构图：展示项目模块间的依赖关系与层级结构\n")
 	b.WriteString("graph TD\n")
 
 	if len(graph.Nodes) == 0 {
@@ -85,6 +86,7 @@ func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 // GenerateClassDiagram generates a Mermaid classDiagram from the code graph.
 func GenerateClassDiagram(graph *grapher.Graph) (string, error) {
 	var b strings.Builder
+	b.WriteString("%% 类图：展示项目中类的定义、属性及继承/实现关系\n")
 	b.WriteString("classDiagram\n")
 
 	if len(graph.Nodes) == 0 {

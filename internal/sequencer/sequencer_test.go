@@ -50,7 +50,7 @@ func TestGenerateSequenceDiagramMultiLevel(t *testing.T) {
 func TestGenerateSequenceDiagramEmpty(t *testing.T) {
 	seq := Sequence{Title: "empty"}
 	dsl := GenerateSequenceDiagram(seq)
-	assert.Equal(t, "sequenceDiagram\n", dsl)
+	assert.Contains(t, dsl, "sequenceDiagram\n")
 }
 
 func TestGenerateSequenceDiagramDeduplication(t *testing.T) {

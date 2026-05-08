@@ -464,10 +464,11 @@ func pathToSequence(path []CallEdge) Sequence {
 // GenerateSequenceDiagram renders a Sequence as Mermaid sequenceDiagram DSL.
 func GenerateSequenceDiagram(seq Sequence) string {
 	if len(seq.Messages) == 0 {
-		return "sequenceDiagram\n"
+		return "%% 时序图：展示关键调用链路的交互顺序\nsequenceDiagram\n"
 	}
 
 	var b strings.Builder
+	b.WriteString("%% 时序图：展示关键调用链路的交互顺序\n")
 	b.WriteString("sequenceDiagram\n")
 
 	// Declare participants in order of first appearance
