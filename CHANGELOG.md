@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-08 — docs(PRD_COVERAGE): update M3 status for completed items (6e64421)
+
 - 2026-05-08 — feat(diagram): add semantic annotations to Mermaid DSL output (fe93808)
 
 - 2026-05-08 — feat(benchmark): add performance benchmark suite (1ce3c47)

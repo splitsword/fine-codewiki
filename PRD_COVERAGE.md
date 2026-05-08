@@ -103,7 +103,7 @@
 | 3.1 | 函数级逻辑分析 | `internal/docgen/docgen.go` (静态) | ⚠️ | `buildAutoDescription` 有基础规模/核心模块/入口点描述；缺少 LLM 驱动的函数语义摘要 |
 | 3.2 | 模块职责推断 | `internal/docgen/docgen.go` + `internal/grapher/grapher.go` | ✅ | `InferModuleRoles()` 已实现 PageRank + 角色标签（核心领域/入口层/工具库/业务模块/支撑模块/独立模块）；已集成到 `buildAutoDescription` |
 | 3.3 | 调用链路语义描述 | `internal/docgen/docgen.go` | ⚠️ | `buildAutoDescription` 检测循环依赖；缺少时序图场景文字生成 |
-| 3.4 | 图表语义标注 | 无 | ❌ | Mermaid DSL 中无 `%%` 场景注释；无图表→语义描述生成 |
+| 3.4 | 图表语义标注 | `internal/diagram/diagram.go` + `internal/sequencer/sequencer.go` | ⚠️ | 基础静态 `%%` 注释已实现（架构图/类图/时序图）；缺少 LLM 驱动的深度场景描述 |
 | 3.5 | Wiki 导出 Markdown 合辑 | 无 | ❌ | 未实现多文件合并导出 |
 | 3.6 | 导出静态 HTML | `internal/cli/cli.go` (serve) | ⚠️ | `serve` 实时渲染 HTML，但无离线 HTML 导出功能 |
 | 3.7 | 导出 PDF | 无 | ❌ | 未实现 |
@@ -129,7 +129,7 @@
 |------|------|----------|
 | 每个函数附带职责说明而非仅签名 | ❌ | 未实现函数级语义摘要 |
 | 每个模块附带设计意图而非仅文件清单 | ✅ | `InferModuleRoles()` 已集成 PageRank 角色推断到 overview |
-| 图表附带语义标注（`%%` 注释） | ❌ | 未实现 |
+| 图表附带语义标注（`%%` 注释） | ⚠️ | 基础静态注释已实现；缺少 LLM 深度场景描述 |
 | 时序图附带场景描述文字 | ❌ | 未实现 |
 | 导出 HTML 含可交互 Mermaid 图表 | ⚠️ | `serve` 可实时渲染，缺离线导出 |
 | 10 万行仓库 < 3 分钟生成 | ❌ | 无性能基准套件 (G3) |
@@ -147,7 +147,7 @@
 | 调用链路语义描述 | ❌ | 未实现 |
 | 空函数/抽象函数降级 | ❌ | 未实现 |
 | LLM 幻觉检测 | ❌ | 未实现 |
-| 架构图/类图语义标注 | ❌ | 未实现 |
+| 架构图/类图语义标注 | ⚠️ | 静态 `%%` 注释已覆盖三种图表类型 |
 | 图表"清单化"检测 | ❌ | 未实现 |
 | HTML 导出含 Mermaid 图表 | ❌ | 未实现 |
 | PDF 导出含中文字符 | ❌ | 未实现 |
