@@ -100,9 +100,9 @@
 
 | # | PRD 能力 | 实现文件 | 状态 | Gap / 下一步 |
 |---|----------|----------|------|--------------|
-| 3.1 | 函数级逻辑分析 | `internal/docgen/docgen.go` (静态) | ⚠️ | `buildAutoDescription` 有基础规模/核心模块/入口点描述；缺少 LLM 驱动的函数语义摘要 |
+| 3.1 | 函数级逻辑分析 | `internal/docgen/docgen.go` | ⚠️ | `describeFunction()` 已实现 30+ 种动词模式的静态语义推断；缺少 LLM 驱动的函数体分析 |
 | 3.2 | 模块职责推断 | `internal/docgen/docgen.go` + `internal/grapher/grapher.go` | ✅ | `InferModuleRoles()` 已实现 PageRank + 角色标签（核心领域/入口层/工具库/业务模块/支撑模块/独立模块）；已集成到 `buildAutoDescription` |
-| 3.3 | 调用链路语义描述 | `internal/docgen/docgen.go` | ⚠️ | `buildAutoDescription` 检测循环依赖；缺少时序图场景文字生成 |
+| 3.3 | 调用链路语义描述 | `internal/sequencer/sequencer.go` | ⚠️ | `generateSequenceDescription()` 已实现静态场景描述（触发条件/协作模块/最终操作）；缺少 LLM 深度业务语义 |
 | 3.4 | 图表语义标注 | `internal/diagram/diagram.go` + `internal/sequencer/sequencer.go` | ⚠️ | 基础静态 `%%` 注释已实现（架构图/类图/时序图）；缺少 LLM 驱动的深度场景描述 |
 | 3.5 | Wiki 导出 Markdown 合辑 | 无 | ❌ | 未实现多文件合并导出 |
 | 3.6 | 导出静态 HTML | `internal/cli/cli.go` (serve) | ⚠️ | `serve` 实时渲染 HTML，但无离线 HTML 导出功能 |
@@ -127,7 +127,7 @@
 
 | 标准 | 状态 | 验证方式 |
 |------|------|----------|
-| 每个函数附带职责说明而非仅签名 | ❌ | 未实现函数级语义摘要 |
+| 每个函数附带职责说明而非仅签名 | ⚠️ | `describeFunction()` 已覆盖 30+ 动词模式静态描述；缺少 LLM 函数体分析 |
 | 每个模块附带设计意图而非仅文件清单 | ✅ | `InferModuleRoles()` 已集成 PageRank 角色推断到 overview |
 | 图表附带语义标注（`%%` 注释） | ⚠️ | 基础静态注释已实现；缺少 LLM 深度场景描述 |
 | 时序图附带场景描述文字 | ❌ | 未实现 |
@@ -142,9 +142,9 @@
 
 | 测试项 | 状态 | 实现方式 |
 |--------|------|----------|
-| 函数级逻辑描述 | ❌ | 未实现 |
+| 函数级逻辑描述 | ⚠️ | `describeFunction()` 静态推断已覆盖 30+ 动词模式 |
 | 模块职责推断 | ✅ | `grapher` 单元测试覆盖 PageRank + 角色分类 |
-| 调用链路语义描述 | ❌ | 未实现 |
+| 调用链路语义描述 | ⚠️ | `generateSequenceDescription()` 静态场景描述已实现 |
 | 空函数/抽象函数降级 | ❌ | 未实现 |
 | LLM 幻觉检测 | ❌ | 未实现 |
 | 架构图/类图语义标注 | ⚠️ | 静态 `%%` 注释已覆盖三种图表类型 |
