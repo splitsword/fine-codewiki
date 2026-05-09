@@ -21,6 +21,12 @@ func (m *mockEmbedder) Complete(ctx context.Context, prompt string) (string, err
 	return "", nil
 }
 
+func (m *mockEmbedder) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
+	ch := make(chan string)
+	go func() { defer close(ch) }()
+	return ch, nil
+}
+
 func (m *mockEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	m.calls++
 	if m.err != nil {

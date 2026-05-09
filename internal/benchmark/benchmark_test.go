@@ -16,7 +16,7 @@ func TestLoadSuite(t *testing.T) {
 	require.NotNil(t, suite)
 
 	assert.Equal(t, "CodeWiki QA Benchmark v1", suite.Name)
-	assert.Len(t, suite.Cases, 3)
+	assert.Len(t, suite.Cases, 5)
 	assert.Equal(t, "arch-001", suite.Cases[0].ID)
 	assert.Equal(t, "architecture", suite.Cases[0].Category)
 }

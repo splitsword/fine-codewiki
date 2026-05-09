@@ -1,0 +1,7 @@
+分析以下模块依赖结构，用 2-3 段文字描述系统架构、设计模式及层级关系。
+
+模块及其依赖：
+- main 依赖：services/api
+- services/api 依赖：models/user, utils/logger
+- models/user（无内部依赖）
+- utils/logger（无内部依赖）

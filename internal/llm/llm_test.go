@@ -578,3 +578,115 @@ func TestNewEmbeddingProvider(t *testing.T) {
 	_, ok := p.(*OllamaProvider)
 	assert.True(t, ok)
 }
+
+func TestOllamaProviderConnectionRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	server.Close()
+
+	p := &OllamaProvider{
+		BaseURL:    server.URL,
+		Model:      "qwen:14b",
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	_, err := p.Complete(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "无法连接到 Ollama 服务")
+}
+
+func TestOpenAIProviderInvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, "{invalid json}")
+	}))
+	defer server.Close()
+
+	p := &OpenAIProvider{
+		BaseURL:    server.URL + "/v1",
+		APIKey:     "test-key",
+		Model:      "gpt-4o",
+		MaxRetries: 0,
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	_, err := p.Complete(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "解析响应失败")
+	assert.Contains(t, err.Error(), "原始响应")
+}
+
+func TestOpenAIProviderCompleteStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}")
+		fmt.Fprintln(w, "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}")
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer server.Close()
+
+	p := &OpenAIProvider{
+		BaseURL:    server.URL + "/v1",
+		APIKey:     "test-key",
+		Model:      "gpt-4o",
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	ch, err := p.CompleteStream(context.Background(), "Say hello")
+	require.NoError(t, err)
+
+	var tokens []string
+	for token := range ch {
+		tokens = append(tokens, token)
+	}
+	assert.Equal(t, []string{"Hello", " world"}, tokens)
+}
+
+func TestOllamaProviderCompleteStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/api/generate", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		fmt.Fprintln(w, `{"response":"Hello","done":false}`)
+		fmt.Fprintln(w, `{"response":" world","done":false}`)
+		fmt.Fprintln(w, `{"response":"","done":true}`)
+	}))
+	defer server.Close()
+
+	p := &OllamaProvider{
+		BaseURL:    server.URL,
+		Model:      "qwen:14b",
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	ch, err := p.CompleteStream(context.Background(), "Say hello")
+	require.NoError(t, err)
+
+	var tokens []string
+	for token := range ch {
+		tokens = append(tokens, token)
+	}
+	assert.Equal(t, []string{"Hello", " world"}, tokens)
+}
+
+func TestOpenAIProviderCompleteStreamError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"invalid key"}`)
+	}))
+	defer server.Close()
+
+	p := &OpenAIProvider{
+		BaseURL:    server.URL + "/v1",
+		APIKey:     "bad-key",
+		Model:      "gpt-4o",
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	_, err := p.CompleteStream(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "401")
+}

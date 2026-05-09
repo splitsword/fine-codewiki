@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -20,6 +21,8 @@ import (
 type Provider interface {
 	// Complete sends a prompt and returns the generated text.
 	Complete(ctx context.Context, prompt string) (string, error)
+	// CompleteStream sends a prompt and returns a channel of text tokens.
+	CompleteStream(ctx context.Context, prompt string) (<-chan string, error)
 	// Embed returns vector embeddings for the given texts.
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
@@ -259,6 +262,67 @@ func (p *OpenAIProvider) Complete(ctx context.Context, prompt string) (string, e
 	return resp.Choices[0].Message.Content, nil
 }
 
+// CompleteStream implements Provider.
+func (p *OpenAIProvider) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
+	reqBody := map[string]any{
+		"model": p.Model,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+		"stream": true,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	url := strings.TrimSuffix(p.BaseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.APIKey)
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
+	}
+
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		defer resp.Body.Close()
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := strings.TrimPrefix(line, "data: ")
+			if data == "[DONE]" {
+				break
+			}
+			var chunk openAIStreamChunk
+			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				continue
+			}
+			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+				ch <- chunk.Choices[0].Delta.Content
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
 // Embed implements Provider.
 func (p *OpenAIProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	reqBody := map[string]any{
@@ -333,7 +397,10 @@ func (p *OpenAIProvider) post(ctx context.Context, path string, reqBody, respBod
 			return fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
 		}
 
-		return json.Unmarshal(data, respBody)
+		if err := json.Unmarshal(data, respBody); err != nil {
+			return fmt.Errorf("解析响应失败: %w (原始响应: %s)", err, string(data))
+		}
+		return nil
 	}
 
 	if lastErr != nil {
@@ -354,6 +421,14 @@ type openAIEmbedResponse struct {
 	Data []struct {
 		Embedding []float32 `json:"embedding"`
 	} `json:"data"`
+}
+
+type openAIStreamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+	} `json:"choices"`
 }
 
 // ---------- Ollama Provider ----------
@@ -392,6 +467,62 @@ func (p *OllamaProvider) Complete(ctx context.Context, prompt string) (string, e
 	return resp.Response, nil
 }
 
+// CompleteStream implements Provider.
+func (p *OllamaProvider) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
+	reqBody := map[string]any{
+		"model":  p.Model,
+		"prompt": prompt,
+		"stream": true,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	url := strings.TrimSuffix(p.BaseURL, "/") + "/api/generate"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		if isConnectionError(err) {
+			return nil, fmt.Errorf("无法连接到 Ollama 服务（%s）。请确认 Ollama 已启动，或检查 base_url 配置是否正确", p.BaseURL)
+		}
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("Ollama error %d: %s", resp.StatusCode, string(data))
+	}
+
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		defer resp.Body.Close()
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			var chunk ollamaStreamChunk
+			if err := json.Unmarshal(scanner.Bytes(), &chunk); err != nil {
+				continue
+			}
+			if chunk.Response != "" {
+				ch <- chunk.Response
+			}
+			if chunk.Done {
+				break
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
 // Embed implements Provider.
 func (p *OllamaProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	reqBody := map[string]any{
@@ -422,6 +553,9 @@ func (p *OllamaProvider) post(ctx context.Context, path string, reqBody, respBod
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
+		if isConnectionError(err) {
+			return fmt.Errorf("无法连接到 Ollama 服务（%s）。请确认 Ollama 已启动，或检查 base_url 配置是否正确", p.BaseURL)
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -446,6 +580,11 @@ type ollamaEmbedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"`
 }
 
+type ollamaStreamChunk struct {
+	Response string `json:"response"`
+	Done     bool   `json:"done"`
+}
+
 // ---------- Utilities ----------
 
 func isTimeout(err error) bool {
@@ -454,4 +593,14 @@ func isTimeout(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded")
+}
+
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "no connection could be made") ||
+		strings.Contains(msg, "connectex") && strings.Contains(msg, "dial tcp")
 }

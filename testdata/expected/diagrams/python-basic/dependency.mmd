@@ -1,0 +1,30 @@
+%% 依赖图：展示模块间的完整导入依赖关系
+graph LR
+    main[main]
+    models_base[models/base]
+    models_user[models/user]
+    repositories_user_repository[repositories/user_repository]
+    services_user_service[services/user_service]
+    utils_crypto[utils/crypto]
+    utils_logger[utils/logger]
+
+    %% 节点角色标注：按模块职责着色
+    classDef entry fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef core fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef support fill:#e8f5e9,stroke:#1b5e20,stroke-width:1px
+    classDef business fill:#f5f5f5,stroke:#424242,stroke-width:1px
+    class main entry
+    class models_base support
+    class models_user core
+    class repositories_user_repository business
+    class services_user_service business
+    class utils_crypto support
+    class utils_logger support
+    main --> repositories_user_repository
+    main --> services_user_service
+    models_user --> models_base
+    models_user --> utils_crypto
+    repositories_user_repository --> models_user
+    services_user_service --> models_user
+    services_user_service --> repositories_user_repository
+    services_user_service --> utils_logger

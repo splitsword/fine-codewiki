@@ -336,7 +336,17 @@ func resolveRelativeImport(fromFile, module string) string {
 	// Append the rest of the module path
 	rest := module[dotCount:]
 	if rest != "" {
-		rest = strings.ReplaceAll(rest, ".", "/")
+		// If rest looks like a file path (contains / or \), keep it intact
+		// but strip any file extension so it matches moduleNameFromFilename.
+		if strings.Contains(rest, "/") || strings.Contains(rest, "\\") {
+			ext := filepath.Ext(rest)
+			if ext != "" {
+				rest = strings.TrimSuffix(rest, ext)
+			}
+		} else {
+			// Package-style import (e.g. Python): a.b.c → a/b/c
+			rest = strings.ReplaceAll(rest, ".", "/")
+		}
 		dir = filepath.Join(dir, rest)
 	}
 

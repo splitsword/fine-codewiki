@@ -33,11 +33,39 @@ func (m *mockProvider) Complete(ctx context.Context, prompt string) (string, err
 	return "mock answer", nil
 }
 
+func (m *mockProvider) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		if m.completeFunc != nil {
+			text, err := m.completeFunc(ctx, prompt)
+			if err == nil && text != "" {
+				ch <- text
+			}
+		} else {
+			ch <- "mock answer"
+		}
+	}()
+	return ch, nil
+}
+
 func (m *mockProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	if m.embedFunc != nil {
 		return m.embedFunc(ctx, texts)
 	}
 	return make([][]float32, len(texts)), nil
+}
+
+func clearCodewikiEnv(t *testing.T) {
+	t.Helper()
+	envVars := []string{
+		"CODEWIKI_API_KEY", "CODEWIKI_MODEL", "CODEWIKI_BASE_URL",
+		"CODEWIKI_GEN_API_KEY", "CODEWIKI_GEN_MODEL", "CODEWIKI_GEN_BASE_URL",
+		"CODEWIKI_EMB_API_KEY", "CODEWIKI_EMB_MODEL", "CODEWIKI_EMB_BASE_URL",
+	}
+	for _, k := range envVars {
+		os.Unsetenv(k)
+	}
 }
 
 func TestGenerateCommand(t *testing.T) {
@@ -50,6 +78,17 @@ func TestGenerateCommand(t *testing.T) {
 	tmpDir := t.TempDir()
 	outDir := filepath.Join(tmpDir, ".codewiki", "wiki")
 
+	// Isolate from user's real LLM config to avoid real API calls
+	oldHome := os.Getenv("HOME")
+	oldUserProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", tmpDir)
+	os.Setenv("USERPROFILE", tmpDir)
+	defer func() {
+		os.Setenv("HOME", oldHome)
+		os.Setenv("USERPROFILE", oldUserProfile)
+	}()
+	clearCodewikiEnv(t)
+
 	cfg := &Config{
 		SourceDir:   repoPath,
 		OutputDir:   outDir,
@@ -60,26 +99,37 @@ func TestGenerateCommand(t *testing.T) {
 	err = RunGenerate(cfg)
 	require.NoError(t, err)
 
-	assert.FileExists(t, filepath.Join(outDir, "overview.md"))
+	assert.FileExists(t, filepath.Join(outDir, "00-overview.md"))
 	assert.FileExists(t, filepath.Join(outDir, "api-reference.md"))
-	assert.FileExists(t, filepath.Join(outDir, "architecture.md"))
+	assert.FileExists(t, filepath.Join(outDir, "02-architecture.md"))
 	assert.FileExists(t, filepath.Join(outDir, "architecture.mmd"))
 	assert.FileExists(t, filepath.Join(outDir, "class-diagram.mmd"))
 	assert.FileExists(t, filepath.Join(outDir, "sequence-diagram.mmd"))
 
-	overview, err := os.ReadFile(filepath.Join(outDir, "overview.md"))
+	overview, err := os.ReadFile(filepath.Join(outDir, "00-overview.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(overview), "python-basic")
 	assert.Contains(t, string(overview), "models/user")
 
 	arch, err := os.ReadFile(filepath.Join(outDir, "architecture.mmd"))
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(string(arch), "graph TD"))
+	assert.Contains(t, string(arch), "graph TD")
 }
 
 func TestGenerateCommandEmptyDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	outDir := filepath.Join(tmpDir, "wiki")
+
+	// Isolate from user's real LLM config to avoid real API calls
+	oldHome := os.Getenv("HOME")
+	oldUserProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", tmpDir)
+	os.Setenv("USERPROFILE", tmpDir)
+	defer func() {
+		os.Setenv("HOME", oldHome)
+		os.Setenv("USERPROFILE", oldUserProfile)
+	}()
+	clearCodewikiEnv(t)
 
 	cfg := &Config{
 		SourceDir:   tmpDir,
@@ -91,7 +141,7 @@ func TestGenerateCommandEmptyDir(t *testing.T) {
 	err := RunGenerate(cfg)
 	require.NoError(t, err)
 
-	overview, err := os.ReadFile(filepath.Join(outDir, "overview.md"))
+	overview, err := os.ReadFile(filepath.Join(outDir, "00-overview.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(overview), "未在项目中找到模块")
 }
@@ -105,7 +155,38 @@ func TestGenerateCommandInvalidSource(t *testing.T) {
 
 	err := RunGenerate(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parse directory")
+	assert.Contains(t, err.Error(), "walk source files")
+}
+
+func TestGenerateCommandMaxFunctions(t *testing.T) {
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "repo")
+	outDir := filepath.Join(tmpDir, "wiki")
+	require.NoError(t, os.MkdirAll(filepath.Join(repoPath, "app"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "app", "main.py"), []byte("def main(): pass\n"), 0644))
+
+	// Isolate from user's real LLM config to avoid real API calls
+	oldHome := os.Getenv("HOME")
+	oldUserProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", tmpDir)
+	os.Setenv("USERPROFILE", tmpDir)
+	defer func() {
+		os.Setenv("HOME", oldHome)
+		os.Setenv("USERPROFILE", oldUserProfile)
+	}()
+	clearCodewikiEnv(t)
+
+	cfg := &Config{
+		SourceDir:       repoPath,
+		OutputDir:       outDir,
+		Language:        "python",
+		ProjectName:     "maxfunc-test",
+		MaxLLMFunctions: 0,
+	}
+
+	err := RunGenerate(cfg)
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(outDir, "00-overview.md"))
 }
 
 func TestWikiHandler(t *testing.T) {
@@ -116,7 +197,7 @@ func TestWikiHandler(t *testing.T) {
 	indexContent := `<html><body><a href="overview.md">Overview</a></body></html>`
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "index.html"), []byte(indexContent), 0644))
 
-	handler := newWikiHandler(tmpDir)
+	handler := newServerHandler(tmpDir, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/overview.md", nil)
 	rr := httptest.NewRecorder()
@@ -130,7 +211,7 @@ func TestWikiHandler(t *testing.T) {
 
 func TestWikiHandlerNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
-	handler := newWikiHandler(tmpDir)
+	handler := newServerHandler(tmpDir, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/nonexistent.md", nil)
 	rr := httptest.NewRecorder()
@@ -143,7 +224,7 @@ func TestWikiHandlerMermaidContentType(t *testing.T) {
 	tmpDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "diagram.mmd"), []byte("graph TD\n"), 0644))
 
-	handler := newWikiHandler(tmpDir)
+	handler := newServerHandler(tmpDir, nil)
 	req := httptest.NewRequest(http.MethodGet, "/diagram.mmd", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -158,7 +239,7 @@ func TestWikiHandlerMermaidDiagramPage(t *testing.T) {
 	tmpDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "architecture.mmd"), []byte("graph TD\nA-->B\n"), 0644))
 
-	handler := newWikiHandler(tmpDir)
+	handler := newServerHandler(tmpDir, nil)
 	req := httptest.NewRequest(http.MethodGet, "/architecture.mmd", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -176,7 +257,7 @@ func TestWikiHandlerNavigationItems(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "api.md"), []byte("# API\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "diagram.mmd"), []byte("graph TD\n"), 0644))
 
-	handler := newWikiHandler(tmpDir)
+	handler := newServerHandler(tmpDir, nil)
 	req := httptest.NewRequest(http.MethodGet, "/overview.md", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -191,7 +272,7 @@ func TestWikiHandlerDirectoryRequest(t *testing.T) {
 	tmpDir := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(tmpDir, "subdir"), 0755))
 
-	handler := newWikiHandler(tmpDir)
+	handler := newServerHandler(tmpDir, nil)
 	req := httptest.NewRequest(http.MethodGet, "/subdir", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -201,7 +282,7 @@ func TestWikiHandlerDirectoryRequest(t *testing.T) {
 
 func TestWikiHandlerDirectoryTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
-	handler := newWikiHandler(tmpDir)
+	handler := newServerHandler(tmpDir, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.URL.Path = "../../../etc/passwd"
@@ -209,6 +290,133 @@ func TestWikiHandlerDirectoryTraversal(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, 403, rr.Code)
+}
+
+func TestServeAskPageDisabled(t *testing.T) {
+	handler := newServerHandler(t.TempDir(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/ask", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, 200, rr.Code)
+	assert.Contains(t, rr.Body.String(), "问答终端")
+	assert.Contains(t, rr.Body.String(), "--source")
+}
+
+func TestServeAskAPIDisabled(t *testing.T) {
+	handler := newServerHandler(t.TempDir(), nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/ask", strings.NewReader(`{"question":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, 503, rr.Code)
+	assert.Contains(t, rr.Body.String(), "RAG 引擎未启用")
+}
+
+func TestBuildIndexLink(t *testing.T) {
+	link := buildIndexLink("overview.md", "项目概述", "了解项目整体情况")
+	assert.Contains(t, link, `href="overview.md"`)
+	assert.Contains(t, link, "<strong>项目概述</strong>")
+	assert.Contains(t, link, "了解项目整体情况")
+}
+
+func TestHandleAskAPIBadRequest(t *testing.T) {
+	// Engine available but bad JSON
+	mock := &mockAskProvider{}
+	store := vectorstore.New()
+	store.Upsert("c1", []float32{1, 0, 0}, &chunker.Chunk{ID: "c1", Filename: "test.go", Name: "Test", Type: chunker.TypeFunction, Content: "func Test() {}"})
+	engine := rag.NewEngine(mock, store)
+	handler := newServerHandler(t.TempDir(), engine)
+
+	// Invalid JSON
+	req := httptest.NewRequest(http.MethodPost, "/api/ask", strings.NewReader(`{invalid`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	assert.Equal(t, 400, rr.Code)
+	assert.Contains(t, rr.Body.String(), "请求格式错误")
+
+	// Empty question
+	req2 := httptest.NewRequest(http.MethodPost, "/api/ask", strings.NewReader(`{"question":""}`))
+	req2.Header.Set("Content-Type", "application/json")
+	rr2 := httptest.NewRecorder()
+	handler.ServeHTTP(rr2, req2)
+	assert.Equal(t, 400, rr2.Code)
+	assert.Contains(t, rr2.Body.String(), "问题不能为空")
+}
+
+func TestHandleAskAPISuccess(t *testing.T) {
+	mock := &mockAskProvider{answer: "This is the answer."}
+	store := vectorstore.New()
+	store.Upsert("c1", []float32{1, 0, 0}, &chunker.Chunk{ID: "c1", Filename: "test.go", Name: "Test", Type: chunker.TypeFunction, Content: "func Test() {}"})
+	engine := rag.NewEngine(mock, store)
+	handler := newServerHandler(t.TempDir(), engine)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/ask", strings.NewReader(`{"question":"What is test?"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, 200, rr.Code)
+	assert.Contains(t, rr.Body.String(), "This is the answer.")
+	assert.Contains(t, rr.Body.String(), "test.go")
+}
+
+func TestHandleAskAPIWithHistory(t *testing.T) {
+	mock := &mockAskProvider{answer: "Answer with history."}
+	store := vectorstore.New()
+	store.Upsert("c1", []float32{1, 0, 0}, &chunker.Chunk{ID: "c1", Filename: "test.go", Name: "Test", Type: chunker.TypeFunction, Content: "func Test() {}"})
+	engine := rag.NewEngine(mock, store)
+	handler := newServerHandler(t.TempDir(), engine)
+
+	body := `{"question":"Follow-up?","history":[{"question":"First?","answer":"Yes."}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/ask", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, 200, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Answer with history.")
+	assert.Contains(t, mock.lastPrompt, "Conversation History", "prompt should include conversation history when history is provided")
+}
+
+// mockAskProvider implements llm.Provider for ask API tests.
+type mockAskProvider struct {
+	answer     string
+	answerErr  error
+	lastPrompt string
+}
+
+func (m *mockAskProvider) Complete(ctx context.Context, prompt string) (string, error) {
+	m.lastPrompt = prompt
+	if m.answerErr != nil {
+		return "", m.answerErr
+	}
+	return m.answer, nil
+}
+
+func (m *mockAskProvider) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
+	m.lastPrompt = prompt
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		if m.answerErr != nil {
+			return
+		}
+		ch <- m.answer
+	}()
+	return ch, nil
+}
+
+func (m *mockAskProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	vecs := make([][]float32, len(texts))
+	for i := range texts {
+		vecs[i] = []float32{1, 0, 0}
+	}
+	return vecs, nil
 }
 
 func TestContentTypeFor(t *testing.T) {
@@ -231,6 +439,33 @@ func TestRunServeMissingWikiDir(t *testing.T) {
 	err := RunServe(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Wiki 目录未找到")
+}
+
+func TestServeIndexPageNoOverview(t *testing.T) {
+	tmpDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "00-overview.md"), []byte("# Test\n\nSome preview text.\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "01-what-it-does.md"), []byte("# What\n"), 0644))
+
+	rr := httptest.NewRecorder()
+	serveIndexPage(rr, tmpDir)
+
+	assert.Equal(t, 200, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "Some preview text")
+	assert.Contains(t, body, "项目概述")
+	assert.Contains(t, body, "项目能做什么")
+}
+
+func TestServeIndexPageMinimal(t *testing.T) {
+	tmpDir := t.TempDir()
+	// No files at all
+	rr := httptest.NewRecorder()
+	serveIndexPage(rr, tmpDir)
+
+	assert.Equal(t, 200, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "代码百科")
+	assert.NotContains(t, body, `class="index-preview"><p>`)
 }
 
 func TestRunConfigInteractive(t *testing.T) {
@@ -299,6 +534,26 @@ func TestRunConfigInteractiveOllamaNoKey(t *testing.T) {
 	assert.Equal(t, "qwen:32b", saved.Generation.Model)
 }
 
+func TestRunConfigInteractiveSeparateEmbedding(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+
+	// Simulate user selecting openai for generation + separate embedding config
+	input := strings.NewReader("openai\nsk-test\nhttps://api.openai.com/v1\ngpt-4o\nn\nollama\nhttp://localhost:11434\nnomic-embed-text\n")
+
+	cfg := &Config{ConfigPath: cfgPath}
+	err := runConfigInteractive(cfg, input)
+	require.NoError(t, err)
+
+	saved, err := llm.LoadAppConfig(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", saved.Generation.Provider)
+	assert.Equal(t, "sk-test", saved.Generation.APIKey)
+	assert.Equal(t, "gpt-4o", saved.Generation.Model)
+	assert.Equal(t, "ollama", saved.Embedding.Provider)
+	assert.Equal(t, "nomic-embed-text", saved.Embedding.Model)
+}
+
 func TestMaskKey(t *testing.T) {
 	assert.Equal(t, "(none)", maskKey(""))
 	assert.Equal(t, "****", maskKey("short"))
@@ -310,116 +565,22 @@ func TestReadLine(t *testing.T) {
 	assert.Equal(t, "hello", readLine(scanner))
 }
 
-func TestMarkdownToHTMLHeaders(t *testing.T) {
-	src := []byte("# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<h1>H1</h1>")
-	assert.Contains(t, string(html), "<h2>H2</h2>")
-	assert.Contains(t, string(html), "<h3>H3</h3>")
-	assert.Contains(t, string(html), "<h4>H4</h4>")
-	assert.Contains(t, string(html), "<h5>H5</h5>")
-	assert.Contains(t, string(html), "<h6>H6</h6>")
-}
-
-func TestMarkdownToHTMLCodeBlock(t *testing.T) {
-	src := []byte("```go\nfmt.Println(\"hello\")\n```\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<pre><code>")
-	assert.Contains(t, string(html), "fmt.Println")
-}
-
-func TestMarkdownToHTMLMermaidBlock(t *testing.T) {
-	src := []byte("```mermaid\ngraph TD\n```\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), `<div class="mermaid">`)
-	assert.Contains(t, string(html), "graph TD")
-}
-
-func TestMarkdownToHTMLUnorderedList(t *testing.T) {
-	src := []byte("- Item 1\n- Item 2\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<ul>")
-	assert.Contains(t, string(html), "<li>Item 1</li>")
-	assert.Contains(t, string(html), "<li>Item 2</li>")
-	assert.Contains(t, string(html), "</ul>")
-}
-
-func TestMarkdownToHTMLOrderedList(t *testing.T) {
-	src := []byte("1. First\n2. Second\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<ol>")
-	assert.Contains(t, string(html), "<li>First</li>")
-	assert.Contains(t, string(html), "<li>Second</li>")
-	assert.Contains(t, string(html), "</ol>")
-}
-
-func TestMarkdownToHTMLBlockquote(t *testing.T) {
-	src := []byte("> Quote text\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<blockquote>")
-	assert.Contains(t, string(html), "Quote text")
-}
-
-func TestMarkdownToHTMLHorizontalRule(t *testing.T) {
-	src := []byte("---\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<hr>")
-}
-
-func TestMarkdownToHTMLTable(t *testing.T) {
-	src := []byte("| A | B |\n|---|---|\n| 1 | 2 |\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<table>")
-	assert.Contains(t, string(html), "<th>A</th>")
-	assert.Contains(t, string(html), "<th>B</th>")
-	assert.Contains(t, string(html), "<td>1</td>")
-	assert.Contains(t, string(html), "<td>2</td>")
-}
-
-func TestMarkdownToHTMLParagraph(t *testing.T) {
-	src := []byte("Hello world\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<p>Hello world</p>")
-}
-
-func TestMarkdownToHTMLInlineBold(t *testing.T) {
-	src := []byte("**bold**\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<strong>bold</strong>")
-}
-
-func TestMarkdownToHTMLInlineItalic(t *testing.T) {
-	src := []byte("*italic*\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<em>italic</em>")
-}
-
-func TestMarkdownToHTMLInlineLink(t *testing.T) {
-	src := []byte("[link](https://example.com)\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), `<a href="https://example.com">link</a>`)
-}
-
-func TestMarkdownToHTMLInlineCode(t *testing.T) {
-	src := []byte("`code`\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<code>code</code>")
-}
-
-func TestMarkdownToHTMLEmpty(t *testing.T) {
-	html := markdownToHTML([]byte(""))
-	assert.Contains(t, string(html), "<body>")
-}
-
 func TestRunConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
 
 	// Simulate user input: provider=ollama, base_url=http://localhost:11434, model=qwen, use_same=y
-	input := strings.NewReader("ollama\nhttp://localhost:11434\nqwen\ny\n")
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	go func() {
+		w.WriteString("ollama\nhttp://localhost:11434\nqwen\ny\n")
+		w.Close()
+	}()
+	defer func() { os.Stdin = oldStdin }()
 
 	cfg := &Config{ConfigPath: cfgPath}
-	err := runConfigInteractive(cfg, input)
+	err := RunConfig(cfg)
 	require.NoError(t, err)
 
 	saved, err := llm.LoadAppConfig(cfgPath)
@@ -429,59 +590,39 @@ func TestRunConfig(t *testing.T) {
 	assert.Equal(t, "qwen", saved.Generation.Model)
 }
 
-func TestMarkdownToHTMLCombined(t *testing.T) {
-	src := []byte("# Title\n\nParagraph with **bold** and *italic*.\n\n```\ncode block\n```\n\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<h1>Title</h1>")
-	assert.Contains(t, string(html), "<strong>bold</strong>")
-	assert.Contains(t, string(html), "<em>italic</em>")
-	assert.Contains(t, string(html), "<pre><code>")
+func TestRunAskInvalidProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("provider: invalid\n"), 0644))
+
+	cfg := &Config{
+		SourceDir:  tmpDir,
+		ConfigPath: cfgPath,
+	}
+	err := RunAsk(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create LLM provider")
 }
 
-func TestRenderInlineLinkBoldItalicCode(t *testing.T) {
-	result := renderInline("[a](http://b) **c** *d* `e`")
-	assert.Contains(t, result, `<a href="http://b">a</a>`)
-	assert.Contains(t, result, "<strong>c</strong>")
-	assert.Contains(t, result, "<em>d</em>")
-	assert.Contains(t, result, "<code>e</code>")
-}
+func TestInitRAGEngine(t *testing.T) {
+	tmpDir := t.TempDir()
+	repoDir := filepath.Join(tmpDir, "repo")
+	require.NoError(t, os.MkdirAll(repoDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "main.py"), []byte("def main(): pass\n"), 0644))
 
-func TestHTMLEscape(t *testing.T) {
-	assert.Equal(t, "&lt;div&gt;", htmlEscape("<div>"))
-	assert.Equal(t, "&amp;", htmlEscape("&"))
-	assert.Equal(t, "&quot;", htmlEscape("\""))
-}
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("provider: ollama\nbase_url: http://localhost:11434\nmodel: qwen:14b\n"), 0644))
 
-func TestOrderedListMatch(t *testing.T) {
-	assert.True(t, orderedListMatch("1. item"))
-	assert.True(t, orderedListMatch("99. item"))
-	assert.False(t, orderedListMatch("abc"))
-	assert.False(t, orderedListMatch("1 item"))
-}
-
-func TestOrderedListItem(t *testing.T) {
-	assert.Equal(t, "item", orderedListItem("1. item"))
-	assert.Equal(t, "item", orderedListItem("99. item"))
-}
-
-func TestSplitTableCells(t *testing.T) {
-	cells := splitTableCells("| a | b |")
-	require.Len(t, cells, 2)
-	assert.Equal(t, " a ", cells[0])
-	assert.Equal(t, " b ", cells[1])
-}
-
-func TestIsTableSeparator(t *testing.T) {
-	assert.True(t, isTableSeparator("|---|---|"))
-	assert.True(t, isTableSeparator("| :-- | --: |"))
-	assert.False(t, isTableSeparator("| a | b |"))
-}
-
-func TestMarkdownToHTMLMultipleParagraphs(t *testing.T) {
-	src := []byte("First para.\n\nSecond para.\n")
-	html := markdownToHTML(src)
-	assert.Contains(t, string(html), "<p>First para.</p>")
-	assert.Contains(t, string(html), "<p>Second para.</p>")
+	_, err := initRAGEngine(repoDir, "python", cfgPath)
+	// May fail at various stages (Ollama not reachable, SQLite path issues).
+	// We just want to exercise the code path.
+	if err != nil {
+		assert.True(t,
+			strings.Contains(err.Error(), "create provider") ||
+				strings.Contains(err.Error(), "open vector store") ||
+				strings.Contains(err.Error(), "parse directory"),
+			"unexpected error: %v", err)
+	}
 }
 
 func TestRunSingleAsk(t *testing.T) {
@@ -533,21 +674,6 @@ func TestRunSingleAskWithSources(t *testing.T) {
 
 	err := runSingleAsk(engine, "What is this?")
 	require.NoError(t, err)
-}
-
-func TestRunAskInvalidProvider(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfgPath := filepath.Join(tmpDir, "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("provider: unknown\n"), 0644))
-
-	cfg := &Config{
-		SourceDir:  tmpDir,
-		Question:   "test",
-		ConfigPath: cfgPath,
-	}
-	err := RunAsk(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "create LLM provider")
 }
 
 func TestRunAskWithStore(t *testing.T) {

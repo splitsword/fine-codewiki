@@ -680,3 +680,241 @@ class OrderService:
 		}
 	}
 }
+
+func TestParseRust(t *testing.T) {
+	src := `use std::collections::HashMap;
+use crate::models::user::User;
+
+struct Config {
+    port: u32,
+    host: String,
+}
+
+fn main() {
+    println!("Hello");
+}
+
+fn parse_config(input: &str) -> Config {
+    Config { port: 8080, host: String::from("localhost") }
+}
+
+trait Repository {
+    fn find_by_id(&self, id: u64) -> Option<User>;
+    fn save(&mut self, user: User) -> bool;
+}
+
+impl Repository for Database {
+    fn find_by_id(&self, id: u64) -> Option<User> {
+        None
+    }
+
+    fn save(&mut self, user: User) -> bool {
+        true
+    }
+}
+`
+	result, err := ParseRust("main.rs", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Imports, 2)
+	assert.Equal(t, "HashMap", result.Imports[0].Name)
+	assert.Equal(t, "User", result.Imports[1].Name)
+
+	assert.Len(t, result.Classes, 3) // Config, Repository trait, Database impl
+	classNames := make(map[string]bool)
+	for _, c := range result.Classes {
+		classNames[c.Name] = true
+	}
+	assert.True(t, classNames["Config"])
+	assert.True(t, classNames["Repository"])
+	assert.True(t, classNames["Database"])
+
+	assert.Len(t, result.Functions, 2)
+	funcNames := make(map[string]bool)
+	for _, f := range result.Functions {
+		funcNames[f.Name] = true
+	}
+	assert.True(t, funcNames["main"])
+	assert.True(t, funcNames["parse_config"])
+
+	// Repository trait should have 2 methods
+	var repoClass *ClassInfo
+	for i := range result.Classes {
+		if result.Classes[i].Name == "Repository" {
+			repoClass = &result.Classes[i]
+			break
+		}
+	}
+	require.NotNil(t, repoClass)
+	assert.Len(t, repoClass.Methods, 2)
+
+	// Database impl should have 2 methods
+	var dbClass *ClassInfo
+	for i := range result.Classes {
+		if result.Classes[i].Name == "Database" {
+			dbClass = &result.Classes[i]
+			break
+		}
+	}
+	require.NotNil(t, dbClass)
+	assert.Len(t, dbClass.Methods, 2)
+}
+
+func TestParseCpp(t *testing.T) {
+	src := `#include <iostream>
+#include "models/user.h"
+
+class User : public BaseModel {
+public:
+    int id;
+    std::string name;
+
+    User(int id, std::string name) : id(id), name(name) {}
+
+    std::string greet() const {
+        return "Hello, " + name;
+    }
+};
+
+class OrderService {
+public:
+    Order* create_order(int user_id, std::vector<std::string> items) {
+        return new Order();
+    }
+
+    bool cancel_order(int order_id) {
+        return true;
+    }
+};
+
+Order* OrderService::find_order(int order_id) {
+    return nullptr;
+}
+
+void process_payment(double amount) {
+    std::cout << "Processing" << std::endl;
+}
+`
+	result, err := ParseCpp("main.cpp", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Imports, 2)
+	assert.Equal(t, "iostream", result.Imports[0].Name)
+	assert.Equal(t, "models/user.h", result.Imports[1].Name)
+
+	assert.Len(t, result.Classes, 2)
+	classNames := make(map[string]bool)
+	for _, c := range result.Classes {
+		classNames[c.Name] = true
+	}
+	assert.True(t, classNames["User"])
+	assert.True(t, classNames["OrderService"])
+
+	// User class should have constructor and greet
+	var userClass *ClassInfo
+	for i := range result.Classes {
+		if result.Classes[i].Name == "User" {
+			userClass = &result.Classes[i]
+			break
+		}
+	}
+	require.NotNil(t, userClass)
+	assert.Len(t, userClass.Methods, 2)
+	assert.Equal(t, "BaseModel", userClass.Bases[0])
+
+	// OrderService class should have 3 methods (create_order, cancel_order, find_order)
+	var orderClass *ClassInfo
+	for i := range result.Classes {
+		if result.Classes[i].Name == "OrderService" {
+			orderClass = &result.Classes[i]
+			break
+		}
+	}
+	require.NotNil(t, orderClass)
+	assert.Len(t, orderClass.Methods, 3)
+
+	// Global function
+	assert.Len(t, result.Functions, 1)
+	assert.Equal(t, "process_payment", result.Functions[0].Name)
+}
+
+func TestParseImportFromTextEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		nodeType string
+		wantMod  string
+		wantRel  bool
+	}{
+		{"JS require", `require("fs")`, "import_statement", "fs", false},
+		{"JS require relative", `require("./utils")`, "import_statement", "./utils", true},
+		{"C# using", `using System.IO;`, "using_declaration", "System.IO", false},
+		{"Rust use", `use std::collections::HashMap;`, "use_declaration", "std::collections::HashMap", false},
+		{"C include angle", `#include <stdio.h>`, "preproc_include", "stdio.h", false},
+		{"C include quote", `#include "config.h"`, "preproc_include", "config.h", false},
+		{"Python from", `from os.path import join`, "import_from_statement", "os.path", false},
+		{"Python relative from", `from .models import User`, "import_from_statement", ".models", true},
+		{"JS side-effect import", `import "polyfill";`, "import_statement", "polyfill", false},
+		{"JS export from", `export { foo } from "./bar";`, "export_statement", "./bar", true},
+		{"JS import backtick", "import { x } from `module`;", "import_statement", "module", false},
+		{"empty text", "", "import_statement", "", false},
+		{"no match", "random text here", "import_statement", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseImportFromText(tt.text, tt.nodeType)
+			assert.Equal(t, tt.wantMod, got.Module)
+			assert.Equal(t, tt.wantRel, got.IsRelative)
+		})
+	}
+}
+
+func TestExtractFromClauseEdgeCases(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{`import { A } from "module";`, "module"},
+		{`import { A } from 'module';`, "module"},
+		{"import { A } from `module`;", "module"},
+		{`import { A } from "./module";`, "./module"},
+		{`import { A } from "module"`, "module"},
+		{"nothing relevant", ""},
+		{"hello world", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := extractFromClause(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestExtractQuotedStringEdgeCases(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{`require("fs")`, "fs"},
+		{`require('fs')`, "fs"},
+		{`no quotes here`, ""},
+		{`unclosed "string`, ""},
+		{``, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := extractQuotedString(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestIsNodeInsideClassEdgeCases(t *testing.T) {
+	// nil nodes should return false
+	assert.False(t, isNodeInsideClass(nil, nil))
+}

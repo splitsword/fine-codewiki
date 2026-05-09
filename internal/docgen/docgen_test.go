@@ -1,6 +1,7 @@
 package docgen
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -34,13 +35,8 @@ func TestGenerateOverviewMarkdown(t *testing.T) {
 	assert.Contains(t, md, "类")
 	assert.Contains(t, md, "函数")
 
-	// Should contain module list
-	assert.Contains(t, md, "## 模块")
-
-	// Should contain module list
-	assert.Contains(t, md, "models/user")
-	assert.Contains(t, md, "services/user_service")
-	assert.Contains(t, md, "utils/logger")
+	// Should NOT contain flat module list (that belongs in project-structure.md)
+	assert.NotContains(t, md, "## 模块")
 }
 
 func TestGenerateOverviewMarkdownWithRoles(t *testing.T) {
@@ -61,13 +57,12 @@ func TestGenerateOverviewMarkdownWithRoles(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, md)
 
-	// Should contain role-based descriptions
-	assert.Contains(t, md, "核心领域")
-	assert.Contains(t, md, "入口层")
-	assert.Contains(t, md, "工具库")
-	assert.Contains(t, md, "`models/user`")
+	// Should contain entry-point description
+	assert.Contains(t, md, "项目入口点为")
 	assert.Contains(t, md, "`main`")
-	assert.Contains(t, md, "`utils/logger`")
+
+	// Should NOT contain flat module list
+	assert.NotContains(t, md, "## 模块")
 }
 
 func TestGenerateOverviewMarkdownEmptyProject(t *testing.T) {
@@ -97,7 +92,7 @@ func TestGenerateAPIReferenceMarkdown(t *testing.T) {
 	}
 	graph := grapher.BuildGraph(files)
 
-	md, err := GenerateAPIReferenceMarkdown(graph)
+	md, err := GenerateAPIReferenceMarkdown(graph, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, md)
 
@@ -134,7 +129,7 @@ func TestGenerateArchitectureMarkdown(t *testing.T) {
 	graph := grapher.BuildGraph(files)
 	archDSL := "graph TD\n    models_user --> models_base\n"
 
-	md, err := GenerateArchitectureMarkdown(graph, archDSL)
+	md, err := GenerateArchitectureMarkdown(graph, archDSL, "")
 	require.NoError(t, err)
 	require.NotEmpty(t, md)
 
@@ -152,29 +147,35 @@ func TestWriteWikiFiles(t *testing.T) {
 	wikiDir := filepath.Join(tmpDir, ".codewiki", "wiki")
 
 	wiki := &Wiki{
-		ProjectName:   "test-project",
-		Overview:      "# test-project\n",
-		APIReference:  "# API Reference\n",
-		Architecture:  "# Architecture\n",
-		ClassDiagram:  "classDiagram\n",
+		ProjectName:         "test-project",
+		Overview:            "# test-project\n\n项目概述。\n",
+		APIReference:        "# API 参考\n\nAPI 内容。\n",
+		Architecture:        "# 架构\n\n架构说明。\n",
+		ClassDiagram:        "classDiagram\n",
 		ArchitectureDiagram: "graph TD\n",
 	}
 
-	err := WriteWikiFiles(wikiDir, wiki)
+	err := WriteWikiFiles(wikiDir, wiki, nil)
 	require.NoError(t, err)
 
 	// Verify files exist
-	assert.FileExists(t, filepath.Join(wikiDir, "overview.md"))
+	assert.FileExists(t, filepath.Join(wikiDir, "00-overview.md"))
 	assert.FileExists(t, filepath.Join(wikiDir, "api-reference.md"))
-	assert.FileExists(t, filepath.Join(wikiDir, "architecture.md"))
+	assert.FileExists(t, filepath.Join(wikiDir, "02-architecture.md"))
 	assert.FileExists(t, filepath.Join(wikiDir, "class-diagram.mmd"))
 	assert.FileExists(t, filepath.Join(wikiDir, "architecture.mmd"))
 	assert.FileExists(t, filepath.Join(wikiDir, "compilation.md"))
+	assert.FileExists(t, filepath.Join(wikiDir, "index.html"))
+	assert.FileExists(t, filepath.Join(wikiDir, "wiki.pdf"))
 
-	// Verify content
-	content, err := os.ReadFile(filepath.Join(wikiDir, "overview.md"))
+	// Verify content with frontmatter
+	content, err := os.ReadFile(filepath.Join(wikiDir, "00-overview.md"))
 	require.NoError(t, err)
-	assert.Equal(t, "# test-project\n", string(content))
+	assert.Contains(t, string(content), "---")
+	assert.Contains(t, string(content), `title: "项目概述"`)
+	assert.Contains(t, string(content), `project: "test-project"`)
+	assert.Contains(t, string(content), "source_modules:")
+	assert.Contains(t, string(content), "# test-project\n\n项目概述。\n")
 
 	// Verify compilation contains all sections
 	compContent, err := os.ReadFile(filepath.Join(wikiDir, "compilation.md"))
@@ -183,8 +184,21 @@ func TestWriteWikiFiles(t *testing.T) {
 	assert.Contains(t, comp, "# test-project Wiki 合辑")
 	assert.Contains(t, comp, "## 目录")
 	assert.Contains(t, comp, "## test-project")
-	assert.Contains(t, comp, "## Architecture")
+	assert.Contains(t, comp, "## 架构")
 	assert.Contains(t, comp, "## API 参考")
+
+	// Verify static HTML
+	htmlContent, err := os.ReadFile(filepath.Join(wikiDir, "index.html"))
+	require.NoError(t, err)
+	html := string(htmlContent)
+	assert.Contains(t, html, "<!DOCTYPE html>")
+	assert.Contains(t, html, "test-project Wiki")
+	assert.Contains(t, html, "<section id=\"overview\">")
+	assert.Contains(t, html, "<section id=\"architecture\">")
+	assert.Contains(t, html, "<section id=\"api-reference\">")
+	assert.Contains(t, html, `<a href="#overview">项目概述</a>`)
+	assert.Contains(t, html, `<div class="mermaid">`)
+	assert.Contains(t, html, "graph TD")
 }
 
 func TestMarkdownEscape(t *testing.T) {
@@ -240,6 +254,12 @@ func (m *mockProvider) Complete(ctx context.Context, prompt string) (string, err
 	return m.response, m.err
 }
 
+func (m *mockProvider) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
+	ch := make(chan string)
+	go func() { defer close(ch) }()
+	return ch, nil
+}
+
 func (m *mockProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	return nil, nil
 }
@@ -251,7 +271,7 @@ func TestGenerateWikiWithLLM(t *testing.T) {
 	graph := grapher.BuildGraph(files)
 
 	mock := &mockProvider{response: "This is an AI-enhanced project overview."}
-	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "", "ai-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n")
+	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "", "ai-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "")
 
 	require.NoError(t, err)
 	require.NotNil(t, wiki)
@@ -271,7 +291,7 @@ func TestGenerateWikiWithLLMFallback(t *testing.T) {
 
 	// LLM returns error — should fall back to static generation
 	mock := &mockProvider{err: errors.New("llm unavailable")}
-	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "", "fallback-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n")
+	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "", "fallback-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "")
 
 	require.NoError(t, err)
 	require.NotNil(t, wiki)
@@ -279,8 +299,107 @@ func TestGenerateWikiWithLLMFallback(t *testing.T) {
 	// Should still contain static content, no panic
 	assert.Contains(t, wiki.Overview, "fallback-project")
 	assert.Contains(t, wiki.Overview, "models/user")
-	// Should NOT contain enhanced header format since LLM failed
-	assert.False(t, strings.Contains(wiki.Overview, "---"))
+	// Should NOT start with YAML frontmatter (addFrontmatter is applied later in WriteWikiFiles)
+	assert.False(t, strings.HasPrefix(wiki.Overview, "---"))
+}
+
+func TestGenerateWikiEnhancedWithMaxFunctions(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "models/user.py", Classes: []analyzer.ClassInfo{{Name: "User"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	mock := &mockProvider{response: "This is an AI-enhanced project overview."}
+
+	// maxLLMFunctions = -1 (auto) should behave the same as GenerateWikiEnhanced
+	wiki, err := GenerateWikiEnhancedWithMaxFunctions(context.Background(), mock, graph, "", "test-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "", -1)
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+	assert.Contains(t, wiki.Overview, "AI-enhanced project overview")
+
+	// maxLLMFunctions = 0 should skip function-level LLM enhancement but still allow overview enhancement
+	wiki2, err := GenerateWikiEnhancedWithMaxFunctions(context.Background(), mock, graph, "", "test-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "", 0)
+	require.NoError(t, err)
+	require.NotNil(t, wiki2)
+	assert.Contains(t, wiki2.Overview, "AI-enhanced project overview")
+}
+
+func TestGenerateKeyConceptsFallback(t *testing.T) {
+	// Build graph with edges so InferModuleRoles produces meaningful roles.
+	files := []*analyzer.FileResult{
+		{Filename: "core/engine.py", Classes: []analyzer.ClassInfo{{Name: "Engine"}}, Imports: []analyzer.ImportInfo{{Module: "utils.helpers"}}},
+		{Filename: "api/server.py", Functions: []analyzer.FunctionInfo{{Name: "run_server"}}, Imports: []analyzer.ImportInfo{{Module: "utils.helpers"}, {Module: "core.engine"}}},
+		{Filename: "utils/helpers.py", Functions: []analyzer.FunctionInfo{{Name: "helper"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	md := GenerateKeyConceptsFallback(graph, "test-project")
+	require.NotEmpty(t, md)
+	assert.Contains(t, md, "# test-project 关键设计决策")
+	assert.Contains(t, md, "模块职责分层")
+	assert.Contains(t, md, "核心领域模块")
+	assert.Contains(t, md, "`utils/helpers`")
+	assert.Contains(t, md, "入口层模块")
+	assert.Contains(t, md, "`api/server`")
+	assert.Contains(t, md, "关键抽象与依赖流向")
+	assert.Contains(t, md, "入口与交互模式")
+}
+
+func TestGenerateKeyConceptsFallbackEmpty(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{})
+	md := GenerateKeyConceptsFallback(graph, "empty")
+	assert.Empty(t, md)
+}
+
+func TestGenerateWikiWithLLMKeyConceptsFallback(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "core/engine.py", Classes: []analyzer.ClassInfo{{Name: "Engine"}}},
+		{Filename: "api/server.py", Functions: []analyzer.FunctionInfo{{Name: "run_server"}}, Imports: []analyzer.ImportInfo{{Module: "core.engine"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// LLM returns error — keyConcepts should fall back to static analysis
+	mock := &mockProvider{err: errors.New("llm unavailable")}
+	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "", "fallback-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+	assert.NotEmpty(t, wiki.KeyConcepts)
+	assert.Contains(t, wiki.KeyConcepts, "关键设计决策")
+	assert.Contains(t, wiki.KeyConcepts, "模块职责分层")
+}
+
+func TestGenerateWikiWithLLMLearningPathSuccess(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "app.py", Functions: []analyzer.FunctionInfo{{Name: "main"}}},
+		{Filename: "lib/utils.py", Functions: []analyzer.FunctionInfo{{Name: "helper"}}},
+		{Filename: "lib/config.py", Functions: []analyzer.FunctionInfo{{Name: "load"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	mock := &mockProvider{response: "## 快速上手\n\n第一步，阅读 app.py 了解入口。\n\n## 深度理解\n\n第二步，理解整体架构。"}
+	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "", "test-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+	assert.Contains(t, wiki.LearningPath, "test-project 学习路径")
+	assert.Contains(t, wiki.LearningPath, "快速上手")
+	assert.Contains(t, wiki.LearningPath, "app.py")
+}
+
+func TestGenerateWikiWithLLMLearningPathFallback(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "app.py", Functions: []analyzer.FunctionInfo{{Name: "main"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	mock := &mockProvider{err: errors.New("llm unavailable")}
+	wiki, err := GenerateWikiEnhanced(context.Background(), mock, graph, "", "fallback-project", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+	assert.Contains(t, wiki.LearningPath, "fallback-project 学习路径")
+	assert.Contains(t, wiki.LearningPath, "快速上手")
 }
 
 func TestGenerateOverviewMarkdownSingleFile(t *testing.T) {
@@ -347,9 +466,29 @@ func TestDescribeFunction(t *testing.T) {
 }
 
 func TestDescribeFunctionUnknown(t *testing.T) {
-	desc := describeFunction("foobar", []string{}, "")
+	// 有参数时走默认推断路径
+	desc := describeFunction("foobar", []string{"x"}, "")
 	assert.Contains(t, desc, "foobar")
 	assert.Contains(t, desc, "执行")
+}
+
+func TestDescribeFunctionEmpty(t *testing.T) {
+	desc := describeFunction("placeholder", []string{}, "")
+	assert.Equal(t, "占位函数，待实现具体逻辑", desc)
+
+	desc = describeFunction("placeholder", []string{}, "None")
+	assert.Equal(t, "占位函数，待实现具体逻辑", desc)
+
+	desc = describeFunction("placeholder", []string{}, "void")
+	assert.Equal(t, "占位函数，待实现具体逻辑", desc)
+}
+
+func TestDescribeFunctionAbstract(t *testing.T) {
+	desc := describeFunction("abstract_process", []string{}, "")
+	assert.Equal(t, "抽象方法，需子类实现", desc)
+
+	desc = describeFunction("AbstractHandler", []string{}, "void")
+	assert.Equal(t, "抽象方法，需子类实现", desc)
 }
 
 func TestGenerateAPIReferenceWithDescriptions(t *testing.T) {
@@ -364,7 +503,7 @@ func TestGenerateAPIReferenceWithDescriptions(t *testing.T) {
 	}
 	graph := grapher.BuildGraph(files)
 
-	md, err := GenerateAPIReferenceMarkdown(graph)
+	md, err := GenerateAPIReferenceMarkdown(graph, nil)
 	require.NoError(t, err)
 
 	// 应该包含函数签名
@@ -403,6 +542,7 @@ func TestGenerateMarkdownCompilation(t *testing.T) {
 		ArchitectureDiagram: "graph TD\n    A --> B\n",
 		ClassDiagram:        "classDiagram\n    class A\n",
 		SequenceDiagram:     "sequenceDiagram\n    A->>B: msg\n",
+		SequenceDescription: "触发条件：调用 A 的主流程执行；最终由 B 完成数据查询",
 	}
 
 	comp := GenerateMarkdownCompilation(wiki)
@@ -413,8 +553,11 @@ func TestGenerateMarkdownCompilation(t *testing.T) {
 	// 应该包含目录
 	assert.Contains(t, comp, "## 目录")
 	assert.Contains(t, comp, "1. [项目概述](#项目概述)")
-	assert.Contains(t, comp, "2. [架构说明](#架构说明)")
-	assert.Contains(t, comp, "3. [API 参考](#api-参考)")
+	assert.Contains(t, comp, "2. [项目能做什么](#项目能做什么)")
+	assert.Contains(t, comp, "3. [架构说明](#架构说明)")
+	assert.Contains(t, comp, "4. [项目结构](#项目结构)")
+	assert.Contains(t, comp, "6. [学习路径](#学习路径)")
+	assert.Contains(t, comp, "7. [API 参考](#api-参考)")
 
 	// 子文档标题应该被降级一级
 	assert.Contains(t, comp, "## demo")
@@ -437,4 +580,807 @@ func TestGenerateMarkdownCompilation(t *testing.T) {
 	assert.Contains(t, comp, "## 类图")
 	assert.Contains(t, comp, "## 时序图")
 	assert.Contains(t, comp, "```mermaid")
+
+	// 应该包含时序图场景描述
+	assert.Contains(t, comp, "> 触发条件：调用 A 的主流程执行；最终由 B 完成数据查询")
+}
+
+func TestGenerateStaticHTML(t *testing.T) {
+	wiki := &Wiki{
+		ProjectName:         "html-demo",
+		Overview:            "# html-demo\n\n项目概述内容。\n",
+		Architecture:        "# 架构\n\n架构说明内容。\n\n```mermaid\ngraph TD\n    A --> B\n```\n",
+		APIReference:        "# API 参考\n\nAPI 内容。\n",
+		ArchitectureDiagram: "graph TD\n    A --> B\n",
+		ClassDiagram:        "classDiagram\n    class A\n",
+		SequenceDiagram:     "sequenceDiagram\n    A->>B: msg\n",
+		SequenceDescription: "触发条件：调用 A 的主流程执行；最终由 B 完成数据查询",
+	}
+
+	html := GenerateStaticHTML(wiki)
+
+	// 基本结构
+	assert.Contains(t, html, "<!DOCTYPE html>")
+	assert.Contains(t, html, `<html lang="zh-CN">`)
+	assert.Contains(t, html, "html-demo Wiki")
+
+	// 导航锚点
+	assert.Contains(t, html, `<a href="#overview">项目概述</a>`)
+	assert.Contains(t, html, `<a href="#architecture">架构说明</a>`)
+	assert.Contains(t, html, `<a href="#api-reference">API 参考</a>`)
+	assert.Contains(t, html, `<a href="#architecture-diagram">架构图</a>`)
+	assert.Contains(t, html, `<a href="#class-diagram">类图</a>`)
+	assert.Contains(t, html, `<a href="#sequence-diagram">时序图</a>`)
+
+	// 内容区块
+	assert.Contains(t, html, `<section id="overview">`)
+	assert.Contains(t, html, `<section id="architecture">`)
+	assert.Contains(t, html, `<section id="api-reference">`)
+	assert.Contains(t, html, `<section id="architecture-diagram">`)
+	assert.Contains(t, html, `<section id="class-diagram">`)
+	assert.Contains(t, html, `<section id="sequence-diagram">`)
+
+	// Markdown 已渲染为 HTML
+	assert.Contains(t, html, "<h1>html-demo</h1>")
+	assert.Contains(t, html, "<h1>架构</h1>")
+	assert.Contains(t, html, "<h1>API 参考</h1>")
+
+	// Mermaid 图表嵌入
+	assert.Contains(t, html, `<div class="mermaid">`)
+	assert.Contains(t, html, "graph TD")
+	assert.Contains(t, html, "classDiagram")
+	assert.Contains(t, html, "sequenceDiagram")
+
+	// Mermaid.js CDN
+	assert.Contains(t, html, "cdn.jsdelivr.net/npm/mermaid")
+
+	// Mermaid interactive configuration
+	assert.Contains(t, html, "securityLevel: 'loose'", "should enable loose security for click handlers")
+	assert.Contains(t, html, "window.navigateToModule", "should inject navigateToModule helper")
+
+	// 时序图场景描述
+	assert.Contains(t, html, "<strong>场景描述：</strong>触发条件：调用 A 的主流程执行；最终由 B 完成数据查询")
+}
+
+func TestGeneratePDF(t *testing.T) {
+	wiki := &Wiki{
+		ProjectName:         "pdf-test",
+		Overview:            "# 概述\n\n这是一个测试项目。\n",
+		Architecture:        "## 架构\n\n模块A -> 模块B\n",
+		APIReference:        "## API\n\n`getUser()`\n",
+		ArchitectureDiagram: "graph TD\n    A --> B\n",
+		ClassDiagram:        "classDiagram\n    class A\n",
+		SequenceDiagram:     "sequenceDiagram\n    A->>B: msg\n",
+		SequenceDescription: "触发条件：调用 A 的主流程执行；最终由 B 完成数据查询",
+	}
+
+	pdfBytes, err := GeneratePDF(wiki)
+	if err != nil {
+		if strings.Contains(err.Error(), "无法加载中文字体") || strings.Contains(err.Error(), "未找到系统 CJK 字体") {
+			t.Skip("跳过 PDF 测试：系统未安装 CJK 字体")
+		}
+		t.Fatalf("生成 PDF 失败: %v", err)
+	}
+
+	require.NotNil(t, pdfBytes)
+	assert.Greater(t, len(pdfBytes), 0)
+	assert.True(t, bytes.HasPrefix(pdfBytes, []byte("%PDF")))
+}
+
+func TestLanguagePromptHint(t *testing.T) {
+	tests := []struct {
+		lang string
+		want string
+	}{
+		{"python", "Python"},
+		{"go", "Go"},
+		{"golang", "Go"},
+		{"javascript", "JavaScript"},
+		{"js", "JavaScript"},
+		{"typescript", "JavaScript"},
+		{"ts", "JavaScript"},
+		{"java", "Java"},
+		{"rust", "Rust"},
+		{"c++", "C++"},
+		{"cpp", "C++"},
+		{"", ""},
+		{"unknown", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.lang, func(t *testing.T) {
+			got := languagePromptHint(tt.lang)
+			if tt.want == "" {
+				assert.Equal(t, "", got)
+			} else {
+				assert.Contains(t, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSelectTopFunctions(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "main.py",
+			Functions: []analyzer.FunctionInfo{
+				{Name: "main", Params: []string{}, ReturnType: "int"},
+				{Name: "setup", Params: []string{}, ReturnType: "None"},
+			},
+			Imports: []analyzer.ImportInfo{{Module: "services.api", Name: "Api"}},
+		},
+		{
+			Filename: "services/api.py",
+			Classes: []analyzer.ClassInfo{
+				{
+					Name:    "Api",
+					Methods: []analyzer.FunctionInfo{{Name: "get", Params: []string{"self", "path"}, ReturnType: "Response"}},
+				},
+			},
+			Imports: []analyzer.ImportInfo{{Module: "models.user", Name: "User"}},
+		},
+		{
+			Filename:  "utils/logger.py",
+			Functions: []analyzer.FunctionInfo{{Name: "get_logger", Params: []string{"name"}, ReturnType: "Logger"}},
+		},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// maxN=0 should return empty
+	assert.Len(t, selectTopFunctions(graph, nil, 0), 0)
+
+	// maxN=2 should cap at 2
+	top2 := selectTopFunctions(graph, nil, 2)
+	assert.Len(t, top2, 2)
+
+	// maxN=10 with 4 total funcs should return all (target auto-computed as 4)
+	all := selectTopFunctions(graph, nil, 10)
+	assert.Len(t, all, 4)
+}
+
+func TestGenerateModuleDocs(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "services/api.py",
+			Classes: []analyzer.ClassInfo{
+				{
+					Name:    "Api",
+					Bases:   []string{"BaseHandler"},
+					Methods: []analyzer.FunctionInfo{{Name: "get", Params: []string{"self", "path"}, ReturnType: "Response"}},
+				},
+			},
+			Functions: []analyzer.FunctionInfo{{Name: "create_app", Params: []string{}, ReturnType: "App"}},
+			Imports:   []analyzer.ImportInfo{{Module: "models.user", Name: "User"}},
+		},
+		{
+			Filename:  "models/user.py",
+			Classes:   []analyzer.ClassInfo{{Name: "User", Methods: []analyzer.FunctionInfo{{Name: "save", Params: []string{"self"}, ReturnType: "bool"}}}},
+			Imports:   []analyzer.ImportInfo{{Module: "db.connection", Name: "Connection"}},
+		},
+	}
+	graph := grapher.BuildGraph(files)
+
+	docs := GenerateModuleDocs(graph)
+	require.NotNil(t, docs)
+	require.Len(t, docs, 2)
+
+	// api.py doc (moduleNameFromFilename strips extension)
+	apiDoc := docs["services/api"]
+	assert.Contains(t, apiDoc, "# services/api")
+	assert.Contains(t, apiDoc, "**难度级别**")
+	assert.Contains(t, apiDoc, "## 职责说明")
+	assert.Contains(t, apiDoc, "## 类定义")
+	assert.Contains(t, apiDoc, "### Api")
+	assert.Contains(t, apiDoc, "BaseHandler")
+	assert.Contains(t, apiDoc, "## 函数列表")
+	assert.Contains(t, apiDoc, "create_app")
+	assert.Contains(t, apiDoc, "## 依赖模块")
+	assert.Contains(t, apiDoc, "models/user")
+	// user.py doc — models/user is depended on by services/api
+	userDoc := docs["models/user"]
+	assert.Contains(t, userDoc, "# models/user")
+	assert.Contains(t, userDoc, "**难度级别**")
+	assert.Contains(t, userDoc, "### User")
+	assert.Contains(t, userDoc, "## 被依赖模块")
+	assert.Contains(t, userDoc, "services/api")
+}
+
+func TestInferModuleDifficulty(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename:  "services/api.py",
+			Classes:   []analyzer.ClassInfo{{Name: "Api", Methods: []analyzer.FunctionInfo{{Name: "get"}}}},
+			Functions: []analyzer.FunctionInfo{{Name: "create_app"}},
+			Imports:   []analyzer.ImportInfo{{Module: "models.user", Name: "User"}},
+		},
+		{
+			Filename: "models/user.py",
+			Classes:  []analyzer.ClassInfo{{Name: "User", Methods: []analyzer.FunctionInfo{{Name: "save"}}}},
+			Imports:  []analyzer.ImportInfo{{Module: "db.connection", Name: "Connection"}},
+		},
+		{
+			Filename:  "utils/logger.py",
+			Functions: []analyzer.FunctionInfo{{Name: "log"}},
+		},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// models/user is depended on by services/api → higher centrality → deeper difficulty
+	userDiff := inferModuleDifficulty(graph.Nodes[1], graph)
+	assert.True(t, userDiff == "⭐⭐⭐ 深入" || userDiff == "⭐⭐ 进阶", "models/user should be intermediate or advanced due to being depended on")
+
+	// utils/logger is isolated → should be on the easier side
+	loggerDiff := inferModuleDifficulty(graph.Nodes[2], graph)
+	assert.True(t, loggerDiff == "⭐ 入门" || loggerDiff == "⭐⭐ 进阶", "isolated utility should not be advanced")
+}
+
+func TestWriteWikiFilesModuleDocs(t *testing.T) {
+	tmpDir := t.TempDir()
+	wiki := &Wiki{
+		ProjectName:      "test",
+		Overview:         "# Overview\n",
+		WhatItDoes:       "# What\n",
+		ProjectStructure: "# Structure\n",
+		LearningPath:     "# Path\n",
+		APIReference:     "# API\n",
+		Architecture:     "# Arch\n",
+		ModuleDocs: map[string]string{
+			"app.py":      "# app.py\n",
+			"models/user": "# models/user\n",
+		},
+	}
+
+	err := WriteWikiFiles(tmpDir, wiki, nil)
+	require.NoError(t, err)
+
+	assert.FileExists(t, filepath.Join(tmpDir, "00-overview.md"))
+	assert.FileExists(t, filepath.Join(tmpDir, "modules", "app.py.md"))
+	assert.FileExists(t, filepath.Join(tmpDir, "modules", "models_user.md"))
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "modules", "models_user.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# models/user")
+}
+
+func TestGroupModulesByTheme(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "cmd/main.py", Functions: []analyzer.FunctionInfo{{Name: "main"}}},
+		{Filename: "api/router.py", Functions: []analyzer.FunctionInfo{{Name: "route"}}},
+		{Filename: "services/user_service.py", Functions: []analyzer.FunctionInfo{{Name: "get_user"}}},
+		{Filename: "models/user.py", Classes: []analyzer.ClassInfo{{Name: "User"}}},
+		{Filename: "repositories/user_repo.py", Functions: []analyzer.FunctionInfo{{Name: "find"}}},
+		{Filename: "config/settings.py", Functions: []analyzer.FunctionInfo{{Name: "load"}}},
+		{Filename: "utils/helpers.py", Functions: []analyzer.FunctionInfo{{Name: "helper"}}},
+		{Filename: "tests/test_user.py", Functions: []analyzer.FunctionInfo{{Name: "test_user"}}},
+		{Filename: "views/index.html", Functions: []analyzer.FunctionInfo{{Name: "render"}}},
+		{Filename: "legacy/old.py", Functions: []analyzer.FunctionInfo{{Name: "old"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	groups := groupModulesByTheme(graph)
+
+	assert.Contains(t, groups, "入口与命令行")
+	assert.Contains(t, groups, "接口与路由")
+	assert.Contains(t, groups, "业务逻辑与服务")
+	assert.Contains(t, groups, "数据模型与实体")
+	assert.Contains(t, groups, "数据访问与存储")
+	assert.Contains(t, groups, "配置与基础设施")
+	assert.Contains(t, groups, "工具与辅助函数")
+	assert.Contains(t, groups, "测试与验证")
+	assert.Contains(t, groups, "视图与 UI")
+	assert.Contains(t, groups, "其他")
+
+	// Verify specific assignments
+	var cmdNames []string
+	for _, n := range groups["入口与命令行"] {
+		cmdNames = append(cmdNames, n.Name)
+	}
+	assert.Contains(t, cmdNames, "cmd/main")
+
+	var modelNames []string
+	for _, n := range groups["数据模型与实体"] {
+		modelNames = append(modelNames, n.Name)
+	}
+	assert.Contains(t, modelNames, "models/user")
+
+	// Verify stable sorting within groups
+	for _, nodes := range groups {
+		for i := 1; i < len(nodes); i++ {
+			assert.True(t, nodes[i-1].Name <= nodes[i].Name, "nodes within theme should be sorted by name")
+		}
+	}
+}
+
+func TestWriteWikiFilesModuleIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := []*analyzer.FileResult{
+		{Filename: "cmd/main.py", Functions: []analyzer.FunctionInfo{{Name: "main"}}},
+		{Filename: "models/user.py", Classes: []analyzer.ClassInfo{{Name: "User"}}},
+		{Filename: "utils/helpers.py", Functions: []analyzer.FunctionInfo{{Name: "helper"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	wiki := &Wiki{
+		ProjectName:      "test",
+		Overview:         "# Overview\n",
+		WhatItDoes:       "# What\n",
+		ProjectStructure: "# Structure\n",
+		LearningPath:     "# Path\n",
+		APIReference:     "# API\n",
+		Architecture:     "# Arch\n",
+		ModuleDocs: map[string]string{
+			"cmd/main":    "# cmd/main\n",
+			"models/user": "# models/user\n",
+			"utils/helpers": "# utils/helpers\n",
+		},
+		ModuleThemes: map[string][]string{
+			"入口与命令行":   {"cmd/main"},
+			"数据模型与实体":  {"models/user"},
+			"工具与辅助函数": {"utils/helpers"},
+		},
+	}
+
+	err := WriteWikiFiles(tmpDir, wiki, graph)
+	require.NoError(t, err)
+
+	// Should generate modules/README.md
+	idxPath := filepath.Join(tmpDir, "modules", "README.md")
+	assert.FileExists(t, idxPath)
+
+	content, err := os.ReadFile(idxPath)
+	require.NoError(t, err)
+	idx := string(content)
+
+	assert.Contains(t, idx, "# 模块索引")
+	assert.Contains(t, idx, "## 入口与命令行")
+	assert.Contains(t, idx, "## 数据模型与实体")
+	assert.Contains(t, idx, "## 工具与辅助函数")
+	assert.Contains(t, idx, "| 模块 | 难度 | 职责 |")
+	assert.Contains(t, idx, "[cmd/main](cmd_main.md)")
+	assert.Contains(t, idx, "[models/user](models_user.md)")
+	assert.Contains(t, idx, "[utils/helpers](utils_helpers.md)")
+}
+
+func TestGenerateStaticHTMLWithThemes(t *testing.T) {
+	wiki := &Wiki{
+		ProjectName:         "html-demo",
+		Overview:            "# html-demo\n\n项目概述内容。\n",
+		Architecture:        "# 架构\n\n架构说明内容。\n",
+		APIReference:        "# API 参考\n\nAPI 内容。\n",
+		ModuleDocs: map[string]string{
+			"cmd/main":    "# cmd/main\n",
+			"models/user": "# models/user\n",
+		},
+		ModuleThemes: map[string][]string{
+			"入口与命令行":  {"cmd/main"},
+			"数据模型与实体": {"models/user"},
+		},
+	}
+
+	html := GenerateStaticHTML(wiki)
+
+	// Should contain theme sections in sidebar
+	assert.Contains(t, html, "入口与命令行")
+	assert.Contains(t, html, "数据模型与实体")
+	assert.Contains(t, html, `<a href="#module-cmd_main">cmd/main</a>`)
+	assert.Contains(t, html, `<a href="#module-models_user">models/user</a>`)
+}
+
+func TestGenerateMarkdownCompilationWithThemes(t *testing.T) {
+	wiki := &Wiki{
+		ProjectName:         "demo",
+		Overview:            "# demo\n\n项目概述内容。\n",
+		Architecture:        "# 架构\n\n架构说明内容。\n",
+		APIReference:        "# API 参考\n\nAPI 内容。\n",
+		ModuleDocs: map[string]string{
+			"cmd/main":    "# cmd/main\n",
+			"models/user": "# models/user\n",
+		},
+		ModuleThemes: map[string][]string{
+			"入口与命令行":  {"cmd/main"},
+			"数据模型与实体": {"models/user"},
+		},
+	}
+
+	comp := GenerateMarkdownCompilation(wiki)
+
+	assert.Contains(t, comp, "## 模块主题索引")
+	assert.Contains(t, comp, "### 入口与命令行")
+	assert.Contains(t, comp, "### 数据模型与实体")
+	assert.Contains(t, comp, "- `cmd/main`")
+	assert.Contains(t, comp, "- `models/user`")
+}
+
+func TestBuildFunctionDescriptionPrompt(t *testing.T) {
+	funcs := []funcRef{
+		{Module: "main", Name: "main", Params: []string{}, ReturnType: "int"},
+		{Module: "services/api", Name: "Api.get", Params: []string{"self", "path"}, ReturnType: "Response", IsMethod: true},
+	}
+	prompt := buildFunctionDescriptionPrompt(funcs)
+	assert.Contains(t, prompt, "2 个关键函数")
+	assert.Contains(t, prompt, "main()")
+	assert.Contains(t, prompt, "services/api")
+	assert.Contains(t, prompt, "Api.get")
+}
+
+func TestParseFunctionDescriptions(t *testing.T) {
+	funcs := []funcRef{
+		{Module: "main", Name: "main"},
+		{Module: "services/api", Name: "Api.get"},
+	}
+
+	// Normal response
+	response := "main: 程序入口，执行主逻辑\nApi.get: 处理 HTTP GET 请求"
+	result := parseFunctionDescriptions(response, funcs)
+	assert.Equal(t, "程序入口，执行主逻辑", result["main#main"])
+	assert.Equal(t, "处理 HTTP GET 请求", result["services/api#Api.get"])
+
+	// Response with dash prefix and extra spaces
+	response2 := "- main: 描述1\n  - Api.get: 描述2"
+	result2 := parseFunctionDescriptions(response2, funcs)
+	assert.Equal(t, "描述1", result2["main#main"])
+	assert.Equal(t, "描述2", result2["services/api#Api.get"])
+
+	// Response with missing colon should be ignored
+	response3 := "main 没有冒号\nApi.get: 描述2"
+	result3 := parseFunctionDescriptions(response3, funcs)
+	assert.NotContains(t, result3, "main#main")
+	assert.Equal(t, "描述2", result3["services/api#Api.get"])
+
+	// Chinese colon
+	responseCn := "main：程序入口\nApi.get：处理 GET"
+	resultCn := parseFunctionDescriptions(responseCn, funcs)
+	assert.Equal(t, "程序入口", resultCn["main#main"])
+	assert.Equal(t, "处理 GET", resultCn["services/api#Api.get"])
+
+	// Numbered list with markdown bold/code
+	responseNum := "1. **main**: 描述1\n2. `Api.get`: 描述2"
+	resultNum := parseFunctionDescriptions(responseNum, funcs)
+	assert.Equal(t, "描述1", resultNum["main#main"])
+	assert.Equal(t, "描述2", resultNum["services/api#Api.get"])
+
+	// Empty response
+	result4 := parseFunctionDescriptions("", funcs)
+	assert.Empty(t, result4)
+}
+
+func TestDescribeFunctionMorePatterns(t *testing.T) {
+	tests := []struct {
+		name       string
+		params     []string
+		returnType string
+		want       string
+	}{
+		{"__str__", []string{"self"}, "str", "返回对象的字符串表示"},
+		{"__repr__", []string{"self"}, "str", "返回对象的正式字符串表示"},
+		{"register", []string{"username", "password"}, "User", "用户注册，创建新账户"},
+		{"signup", []string{"email"}, "User", "用户注册，创建新账户"},
+		{"logout", []string{}, "None", "用户登出，终止当前会话"},
+		{"start", []string{}, "None", "程序入口，执行主逻辑"},
+		{"execute", []string{"cmd"}, "int", "程序入口，执行主逻辑"},
+		{"set_config", []string{"key", "value"}, "None", "设置config，参数：key, value"},
+		{"add_item", []string{"item"}, "None", "创建item，参数：item"},
+		{"new_user", []string{"name"}, "User", "创建user，参数：name，返回 User"},
+		{"modify_data", []string{"data"}, "None", "更新data，参数：data"},
+		{"remove_item", []string{"id"}, "bool", "删除item，参数：id，返回 bool"},
+		{"drop_table", []string{}, "None", "删除table"},
+		{"check_status", []string{}, "bool", "验证status，返回 bool"},
+		{"verify_token", []string{"token"}, "bool", "验证token，参数：token，返回 bool"},
+		{"extract_data", []string{"source"}, "dict", "解析data，参数：source，返回 dict"},
+		{"format_string", []string{"s"}, "str", "格式化string，参数：s，返回 str"},
+		{"recv_msg", []string{}, "bytes", "接收msg，返回 bytes"},
+		{"handle_request", []string{"req"}, "Response", "处理request，参数：req，返回 Response"},
+		{"read_file", []string{"path"}, "str", "读取file，参数：path，返回 str"},
+		{"store_data", []string{"data"}, "None", "保存data，参数：data"},
+		{"write_log", []string{"msg"}, "None", "保存log，参数：msg"},
+		{"search_user", []string{"query"}, "[]User", "查找user，参数：query，返回 []User"},
+		{"lookup_key", []string{"key"}, "string", "查找key，参数：key，返回 string"},
+		{"build_image", []string{"config"}, "Image", "生成image，参数：config，返回 Image"},
+		{"make_request", []string{"url"}, "Response", "生成request，参数：url，返回 Response"},
+		{"generate_report", []string{}, "Report", "生成report，返回 Report"},
+		{"transform_data", []string{"input"}, "Output", "转换data，参数：input，返回 Output"},
+		{"serialize", []string{"obj"}, "str", "序列化对象为结构化数据"},
+		{"from_json", []string{"s"}, "Obj", "从结构化数据反序列化对象"},
+		{"to_xml", []string{"obj"}, "str", "转换为xml，参数：obj，返回 str"},
+		{"from_yaml", []string{"s"}, "Obj", "从yaml 解析/构建，参数：s，返回 Obj"},
+		{"is_active", []string{}, "bool", "判断active 状态，返回 bool"},
+		{"has_permission", []string{"user"}, "bool", "判断是否具备 permission，参数：user，返回 bool"},
+		{"can_edit", []string{"user"}, "bool", "判断是否可 edit，参数：user，返回 bool"},
+		{"render_page", []string{"template"}, "HTML", "渲染page，参数：template，返回 HTML"},
+		{"draw_circle", []string{"x", "y", "r"}, "None", "渲染circle，参数：x, y, r"},
+		{"display_info", []string{}, "None", "渲染info"},
+		{"encode_base64", []string{"data"}, "str", "编解码base64，参数：data，返回 str"},
+		{"decode_base64", []string{"s"}, "bytes", "编解码base64，参数：s，返回 bytes"},
+		{"user_service", []string{"user_id"}, "User", "处理 user_service 相关逻辑"},
+		{"api_handler", []string{"req"}, "Response", "处理 api_handler 相关逻辑"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := describeFunction(tt.name, tt.params, tt.returnType)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDetectHallucination(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Classes:  []analyzer.ClassInfo{{Name: "User"}},
+			Functions: []analyzer.FunctionInfo{
+				{Name: "get_user", Params: []string{"id"}, ReturnType: "User"},
+			},
+		},
+		{
+			Filename: "services/api.py",
+			Classes: []analyzer.ClassInfo{
+				{
+					Name:    "Api",
+					Methods: []analyzer.FunctionInfo{{Name: "get", Params: []string{"self", "path"}}},
+				},
+			},
+		},
+	})
+
+	// No hallucination — all quoted names exist
+	text1 := "项目使用 `User` 类并通过 `Api` 提供服务。"
+	hallucinated, hasIt := detectHallucination(text1, graph)
+	assert.False(t, hasIt, "所有引用的标识符均存在，不应判定为幻觉")
+	assert.Empty(t, hallucinated)
+
+	// 2 hallucinations out of 3 quoted ids (66%) — but sample ≤3, so NOT triggered
+	text2 := "项目使用 `User` 类并通过 `FakeService` 和 `FakeModule` 提供服务。"
+	hallucinated, hasIt = detectHallucination(text2, graph)
+	assert.False(t, hasIt, "3 个样本以内不应触发，避免单个缩写误报")
+	assert.Contains(t, hallucinated, "FakeService")
+	assert.Contains(t, hallucinated, "FakeModule")
+
+	// 3 hallucinations out of 5 quoted ids (60%) — not >60%, so NOT triggered
+	text2b := "`User`、`Api`、`get_user`、`FakeService` 和 `FakeModule`。"
+	hallucinated, hasIt = detectHallucination(text2b, graph)
+	assert.False(t, hasIt, "3/5 幻觉占比 60% 不超过 60% 阈值，不应触发")
+	assert.Contains(t, hallucinated, "FakeService")
+
+	// 4 hallucinations out of 5 quoted ids (80%) > 60% → triggers
+	text2c := "`User`、`FakeA`、`FakeB`、`FakeC` 和 `FakeD`。"
+	hallucinated, hasIt = detectHallucination(text2c, graph)
+	assert.True(t, hasIt, "4/5 幻觉占比 80% 超过 60% 阈值，应触发")
+
+	// 2 hallucinations out of 5 quoted ids (40%) < 60% → NOT triggered
+	text3 := "项目使用 `User`、`Api`、`FakeA` 和 `FakeB`。"
+	hallucinated, hasIt = detectHallucination(text3, graph)
+	assert.False(t, hasIt, "2/4 幻觉占比 50% 不超过 60% 阈值，不应触发")
+	assert.Len(t, hallucinated, 2)
+
+	// Hallucination — 8 fake identifiers should trigger absolute threshold
+	text3b := "`FakeA`、`FakeB`、`FakeC`、`FakeD`、`FakeE`、`FakeF`、`FakeG` 和 `FakeH`。"
+	hallucinated, hasIt = detectHallucination(text3b, graph)
+	assert.True(t, hasIt, "8 处幻觉应达到阈值")
+	assert.Len(t, hallucinated, 8)
+
+	// Bold markdown is intentionally ignored (design-pattern terms are OK)
+	text4 := "**User** 是核心类，**NonExistent** 负责调度。"
+	hallucinated, hasIt = detectHallucination(text4, graph)
+	assert.False(t, hasIt, "加粗文本不再参与幻觉检测")
+	assert.Empty(t, hallucinated)
+
+	// Empty graph should not panic and return no hallucination
+	hallucinated, hasIt = detectHallucination("`Foo`", nil)
+	assert.False(t, hasIt)
+	assert.Empty(t, hallucinated)
+}
+
+func TestExtractQuotedIdentifiers(t *testing.T) {
+	// Backticks
+	ids1 := extractQuotedIdentifiers("使用 `User` 和 `get_user` 方法")
+	assert.ElementsMatch(t, []string{"User", "get_user"}, ids1)
+
+	// Bold is intentionally ignored
+	ids2 := extractQuotedIdentifiers("**Api** 类包含 **get** 方法")
+	assert.Empty(t, ids2)
+
+	// Mixed — only backticks count
+	ids3 := extractQuotedIdentifiers("`User` 和 **Api** 以及 `OrderService`")
+	assert.ElementsMatch(t, []string{"User", "OrderService"}, ids3)
+
+	// Empty
+	ids4 := extractQuotedIdentifiers("没有任何标识符")
+	assert.Empty(t, ids4)
+}
+
+func TestCollectRealIdentifiers(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Classes:  []analyzer.ClassInfo{{Name: "User"}},
+			Functions: []analyzer.FunctionInfo{
+				{Name: "get_user", Params: []string{"id"}},
+			},
+		},
+	})
+	ids := collectRealIdentifiers(graph)
+	assert.True(t, ids["models/user"])
+	assert.True(t, ids["User"])
+	assert.True(t, ids["get_user"])
+	assert.False(t, ids["Fake"])
+}
+
+func TestCollectRealIdentifiersWithExtensionlessPaths(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{
+		{Filename: "src/commands/chat.ts", Classes: []analyzer.ClassInfo{{Name: "Chat"}}},
+		{Filename: "utils/logger.js", Functions: []analyzer.FunctionInfo{{Name: "log"}}},
+	})
+	ids := collectRealIdentifiers(graph)
+	// Node.Name is already extension-less (moduleNameFromFilename strips it)
+	assert.True(t, ids["src/commands/chat"], "extension-less TS path should be registered")
+	assert.True(t, ids["utils/logger"], "extension-less JS path should be registered")
+	// Class and function names still present
+	assert.True(t, ids["Chat"])
+	assert.True(t, ids["log"])
+}
+
+func TestExtractQuotedIdentifiersFiltersChinese(t *testing.T) {
+	// Chinese technical terms wrapped in backticks should be ignored
+	ids := extractQuotedIdentifiers("项目采用 `命令模式` 和 `依赖注入` 设计")
+	assert.Empty(t, ids, "纯中文概念不应被当作代码标识符")
+
+	// Mixed Chinese and code should only keep the code part
+	ids2 := extractQuotedIdentifiers("`User` 类实现 `单例模式`")
+	assert.ElementsMatch(t, []string{"User"}, ids2)
+
+	// English identifiers and paths still work
+	ids3 := extractQuotedIdentifiers("调用 `get_user` 和 `services/api`")
+	assert.ElementsMatch(t, []string{"get_user", "services/api"}, ids3)
+}
+
+func TestDetectHallucinationWithPathFragments(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{
+		{Filename: "src/commands/chat.ts", Classes: []analyzer.ClassInfo{{Name: "Chat"}}},
+		{Filename: "src/utils/logger.ts", Functions: []analyzer.FunctionInfo{{Name: "log"}}},
+	})
+
+	// LLM uses a shorter path suffix — should NOT be flagged
+	text := "`commands/chat` 是核心模块，通过 `log` 记录日志。"
+	hallucinated, hasIt := detectHallucination(text, graph)
+	assert.False(t, hasIt, "路径后缀匹配不应触发幻觉")
+	assert.Empty(t, hallucinated)
+
+	// Genuine hallucination should still be caught (4 fakes out of 4 = 100% > 60%)
+	text2 := "`FakeModule`、`FakeService`、`FakeController` 和 `FakeHelper` 提供服务。"
+	hallucinated2, hasIt2 := detectHallucination(text2, graph)
+	assert.True(t, hasIt2, "真实幻觉应被检测到")
+	assert.Contains(t, hallucinated2, "FakeModule")
+	assert.Contains(t, hallucinated2, "FakeService")
+}
+
+func TestIsRealIdentifierWithPaths(t *testing.T) {
+	realIDs := map[string]bool{
+		"D:/project/src/commands/chat": true,
+		"D:/project/examples/demo":     true,
+		"User":                         true,
+	}
+
+	// Exact match
+	assert.True(t, isRealIdentifier("User", realIDs))
+
+	// Path substring
+	assert.True(t, isRealIdentifier("src/commands/chat", realIDs))
+	assert.True(t, isRealIdentifier("commands/chat", realIDs))
+	assert.True(t, isRealIdentifier("examples/demo", realIDs))
+
+	// Wildcard pattern matching prefix
+	assert.True(t, isRealIdentifier("examples/*", realIDs))
+
+	// Non-existent path
+	assert.False(t, isRealIdentifier("src/admin", realIDs))
+
+	// Non-existent identifier
+	assert.False(t, isRealIdentifier("FakeUser", realIDs))
+}
+
+func TestGenerateWhatItDoesMarkdown(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{
+		{Filename: "main.py", Functions: []analyzer.FunctionInfo{{Name: "main"}}, Imports: []analyzer.ImportInfo{{Module: "services.api", Name: "Api"}}},
+		{Filename: "services/api.py", Classes: []analyzer.ClassInfo{{Name: "Api", Methods: []analyzer.FunctionInfo{{Name: "get"}}}}, Imports: []analyzer.ImportInfo{{Module: "models.user", Name: "User"}}},
+		{Filename: "models/user.py", Classes: []analyzer.ClassInfo{{Name: "User", Methods: []analyzer.FunctionInfo{{Name: "authenticate"}}}}, Imports: []analyzer.ImportInfo{{Module: "utils.logger", Name: "get_logger"}}},
+		{Filename: "utils/logger.py", Functions: []analyzer.FunctionInfo{{Name: "get_logger"}}},
+	})
+
+	got := GenerateWhatItDoesMarkdown(graph, "test-project")
+
+	// Should contain narrative sections, not just module lists
+	assert.Contains(t, got, "## 项目定位")
+	assert.Contains(t, got, "## 核心能力")
+	assert.Contains(t, got, "| 能力 | 说明 | 涉及模块 |")
+
+	// Should NOT contain old-style flat module lists
+	assert.NotContains(t, got, "### 核心领域")
+	assert.NotContains(t, got, "### 基础设施")
+
+	// Should contain some inferred capabilities (exact names depend on PageRank roles)
+	assert.Contains(t, got, "test-project")
+}
+
+func TestInferCapabilityFromName(t *testing.T) {
+	tests := []struct {
+		name, role, wantCap, wantDesc string
+	}{
+		{"api_router", "入口层", "API 服务", "接收并分发外部请求"},
+		{"cli_tool", "入口层", "命令行交互", "提供终端命令接口"},
+		{"models/user", "核心领域", "用户与认证", "管理用户身份"},
+		{"services/order", "核心领域", "交易与订单", "处理订单生命周期"},
+		{"utils/helpers", "工具库", "通用工具", "提供跨模块复用"},
+		{"cache_redis", "工具库", "缓存加速", "提供数据缓存"},
+		{"unknown_module", "", "功能模块", "提供特定领域的功能实现"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			capName, capDesc := inferCapabilityFromName(tt.name, tt.role)
+			assert.Equal(t, tt.wantCap, capName)
+			assert.Contains(t, capDesc, tt.wantDesc)
+		})
+	}
+}
+
+func TestBuildWhereToGoNext(t *testing.T) {
+	assert.Contains(t, buildWhereToGoNext("00-overview.md", true), "项目能做什么")
+	assert.Contains(t, buildWhereToGoNext("01-what-it-does.md", true), "架构说明")
+	assert.Contains(t, buildWhereToGoNext("02-architecture.md", true), "项目结构")
+
+	// With key concepts
+	assert.Contains(t, buildWhereToGoNext("03-project-structure.md", true), "核心概念")
+	// Without key concepts
+	assert.Contains(t, buildWhereToGoNext("03-project-structure.md", false), "学习路径")
+
+	assert.Contains(t, buildWhereToGoNext("04-key-concepts.md", true), "学习路径")
+	assert.Contains(t, buildWhereToGoNext("05-learning-path.md", true), "API 参考")
+	assert.Contains(t, buildWhereToGoNext("api-reference.md", true), "阅读完成")
+
+	// Unknown file returns empty
+	assert.Empty(t, buildWhereToGoNext("unknown.md", true))
+}
+
+func TestGenerateWikiEnhancedWithWhereToGoNext(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{
+		{Filename: "main.py", Functions: []analyzer.FunctionInfo{{Name: "main"}}},
+	})
+
+	wiki, err := generateWikiEnhanced(context.Background(), nil, graph, "", "test-project", "", "", "", "", 0)
+	require.NoError(t, err)
+
+	// Each narrative article should end with a "next reading" navigation
+	assert.Contains(t, wiki.Overview, "下一步阅读", "overview should have where-to-go-next")
+	assert.Contains(t, wiki.WhatItDoes, "下一步阅读", "what-it-does should have where-to-go-next")
+	assert.Contains(t, wiki.Architecture, "下一步阅读", "architecture should have where-to-go-next")
+	assert.Contains(t, wiki.ProjectStructure, "下一步阅读", "project-structure should have where-to-go-next")
+	assert.Contains(t, wiki.LearningPath, "下一步阅读", "learning-path should have where-to-go-next")
+	assert.Contains(t, wiki.APIReference, "阅读完成", "api-reference should have completion message")
+}
+
+func TestBuildSourcesFooterFileLevel(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{
+		{
+			Filename:  "models/user.py",
+			Classes:   []analyzer.ClassInfo{{Name: "User", StartLine: 5}},
+			Functions: []analyzer.FunctionInfo{{Name: "get_user", StartLine: 12}},
+		},
+		{
+			Filename:  "services/api.py",
+			Functions: []analyzer.FunctionInfo{{Name: "handle", StartLine: 3}},
+		},
+	})
+
+	footer := buildSourcesFooter(graph, 10)
+	// Node with both functions and classes uses function line (functions checked first)
+	assert.Contains(t, footer, "`models/user.py:12`", "footer should cite filename with function line number when functions exist")
+	assert.Contains(t, footer, "`services/api.py:3`", "footer should cite filename with function line number")
+	assert.Contains(t, footer, "models/user）", "footer should still include module name in parentheses")
+	assert.Contains(t, footer, "services/api）", "footer should still include module name in parentheses")
+
+	// Node with only classes (no functions) uses class line
+	graph2 := grapher.BuildGraph([]*analyzer.FileResult{
+		{Filename: "models/order.py", Classes: []analyzer.ClassInfo{{Name: "Order", StartLine: 7}}},
+	})
+	footer2 := buildSourcesFooter(graph2, 10)
+	assert.Contains(t, footer2, "`models/order.py:7`", "footer should cite filename with class line when no functions")
 }

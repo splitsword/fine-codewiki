@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+- 2026-05-10 — feat(cli, docgen, diagram): 完成第一批与第二批 PRD 差距修复 (6c1040c)
+
+- 2026-05-08 — feat(analyzer): tree-sitter grammar 捆绑（`gotreesitter/grammars`），tags query 提取 class/function，AST walk 提取 import，regex 兜底回退
+- 2026-05-08 — feat(docgen): LLM 幻觉检测，检查反引号/加粗标识符是否真实存在于代码库，阈值 ≥2 处或 >30% 时回退到静态描述
+- 2026-05-08 — feat(llm): Ollama 连接拒绝时返回友好提示，引导用户检查服务状态
+- 2026-05-08 — feat(llm): OpenAI JSON 解析失败时返回包含原始响应的错误信息
+- 2026-05-08 — feat(analyzer): Rust / C++ AST 正则解析支持（struct、trait、impl、class、#include、方法等）
+- 2026-05-08 — fix(docgen): 修复 `transform_` 前缀动词推断时截断错误（`name[11:]` 修正为 `name[10:]`）
+- 2026-05-08 — test(docgen): 新增 `languagePromptHint`、`selectTopFunctions`、`buildFunctionDescriptionPrompt`、`parseFunctionDescriptions` 单元测试
+- 2026-05-08 — test(docgen): 补充 35+ 动词模式覆盖（`__str__`、`register`、`logout`、`encode_` 等），覆盖率从 73.6% 提升至 83.6%
+- 2026-05-08 — docs(PRD_COVERAGE): 修复 Prompt 快照回归、mmdc 语法校验、增量索引、覆盖率基准等状态不一致
+- 2026-05-08 — feat(docgen): 按语言定制 LLM prompt 模板（Python/Go/JS/Java/Rust/C++）
+- 2026-05-08 — feat(docgen): LLM batch prompt 为前 5 个关键函数生成语义描述并注入 API Reference
+- 2026-05-08 — feat(docgen): 空函数/抽象函数自动降级描述（"占位函数" / "抽象方法"）
+- 2026-05-08 — feat(diagram): 为依赖图添加基础静态 `%%` 语义注释
+- 2026-05-08 — fix(docgen): architecture LLM 增强添加 `isChecklistLike` 检测，避免清单化输出
+- 2026-05-08 — docs: 建立覆盖率基准文件 `coverage-baseline.md`
+- 2026-05-08 — docs(cli): 补全 `--help` 中缺失的 Ask flags
 - 2026-05-08 — feat(docgen): 实现 Wiki Markdown 合辑导出 (f31cf8b)
 
 - 2026-05-08 — docs(PRD_COVERAGE): 更新 M3-3.1 和 M3-3.3 静态层完成状态 (86639cd)

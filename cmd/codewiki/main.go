@@ -7,12 +7,15 @@ import (
 	"path/filepath"
 
 	"github.com/splitsword/fine-codewiki/internal/cli"
+	"github.com/splitsword/fine-codewiki/internal/llm"
 )
+
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
+		printWelcome()
+		os.Exit(0)
 	}
 
 	cmd := os.Args[1]
@@ -25,6 +28,8 @@ func main() {
 		runAsk(os.Args[2:])
 	case "config":
 		runConfig(os.Args[2:])
+	case "version", "-v", "--version":
+		fmt.Printf("codewiki version %s\n", version)
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -34,19 +39,66 @@ func main() {
 	}
 }
 
+func printWelcome() {
+	exe := filepath.Base(os.Args[0])
+	fmt.Println("CodeWiki — 将任意代码仓库转化为交互式学习百科")
+	fmt.Println()
+
+	// Detect local wiki
+	wikiDir := filepath.Join(".", ".codewiki", "wiki")
+	hasWiki := false
+	if _, err := os.Stat(filepath.Join(wikiDir, "index.html")); err == nil {
+		hasWiki = true
+	}
+
+	// Detect config
+	hasConfig := false
+	if _, err := os.Stat(llm.DefaultConfigPath()); err == nil {
+		hasConfig = true
+	}
+
+	fmt.Println("快速开始：")
+	fmt.Println()
+	if !hasConfig {
+		fmt.Printf("  1. 配置 LLM      %s config\n", exe)
+		fmt.Printf("     （支持 OpenAI / Ollama，也可跳过此步骤使用静态生成）\n")
+		fmt.Println()
+	}
+	fmt.Printf("  %s. 生成文档      %s generate\n", stepNum(2, !hasConfig), exe)
+	fmt.Printf("  %s. 本地预览      %s serve\n", stepNum(3, !hasConfig), exe)
+	fmt.Printf("  %s. 智能问答      %s ask \"这个项目是做什么的？\"\n", stepNum(4, !hasConfig), exe)
+	fmt.Println()
+
+	if hasWiki {
+		fmt.Printf("检测到当前目录已有 Wiki，直接运行 `%s serve` 即可预览。\n", exe)
+		fmt.Println()
+	}
+
+	fmt.Printf("查看完整帮助：%s help\n", exe)
+}
+
+func stepNum(n int, configSkipped bool) string {
+	if configSkipped {
+		return fmt.Sprintf("%d", n-1)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
 func runGenerate(args []string) {
 	fs := flag.NewFlagSet("generate", flag.ExitOnError)
 	sourceDir := fs.String("source", ".", "Source code directory to analyze")
 	outputDir := fs.String("output", "", "Output directory for wiki files (default: <source>/.codewiki/wiki)")
 	lang := fs.String("lang", "", "Language filter: python, javascript (empty = auto-detect)")
 	name := fs.String("name", "", "Project name (default: directory name)")
+	maxFunctions := fs.Int("max-functions", -1, "Max functions for LLM semantic description: -1=auto (30%%), 0=skip, N=cap")
 	fs.Parse(args)
 
 	cfg := &cli.Config{
-		SourceDir:   *sourceDir,
-		OutputDir:   *outputDir,
-		Language:    *lang,
-		ProjectName: *name,
+		SourceDir:       *sourceDir,
+		OutputDir:       *outputDir,
+		Language:        *lang,
+		ProjectName:     *name,
+		MaxLLMFunctions: *maxFunctions,
 	}
 
 	if err := cli.RunGenerate(cfg); err != nil {
@@ -59,9 +111,11 @@ func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	dir := fs.String("dir", "", "Wiki directory to serve (default: ./.codewiki/wiki)")
 	port := fs.Int("port", 8080, "HTTP server port")
+	source := fs.String("source", "", "Source directory for RAG Q&A (optional)")
 	fs.Parse(args)
 
 	cfg := &cli.Config{
+		SourceDir: *source,
 		OutputDir: *dir,
 		Port:      *port,
 	}
@@ -135,6 +189,10 @@ Generate flags:
 Serve flags:
   -dir string      Wiki directory to serve (default "./.codewiki/wiki")
   -port int        HTTP server port (default 8080)
+
+Ask flags:
+  -source string   Source code directory (default ".")
+  -interactive     Enter interactive Q&A session
 
 Config flags:
   -path string     Config file path

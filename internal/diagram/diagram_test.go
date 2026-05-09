@@ -87,6 +87,10 @@ func TestGenerateArchitectureDiagram(t *testing.T) {
 	assert.Contains(t, dsl, "models_user --> models_base")
 	assert.Contains(t, dsl, "services_user_service --> models_user")
 	assert.Contains(t, dsl, "main --> services_user_service")
+
+	// Should contain click handlers for interactive navigation
+	assert.Contains(t, dsl, "click models_user \"javascript:navigateToModule('models/user')\"")
+	assert.Contains(t, dsl, "click main \"javascript:navigateToModule('main')\"")
 }
 
 func TestGenerateArchitectureDiagramEmpty(t *testing.T) {
@@ -305,7 +309,7 @@ func TestGenerateDependencyDiagram(t *testing.T) {
 	require.NotEmpty(t, dsl)
 
 	// Must be valid Mermaid graph LR
-	assert.True(t, strings.HasPrefix(dsl, "graph LR"), "should start with 'graph LR'")
+	assert.True(t, strings.Contains(dsl, "graph LR"), "should contain 'graph LR'")
 
 	// Should contain node declarations
 	assert.Contains(t, dsl, "models_user[models/user]")
@@ -322,7 +326,7 @@ func TestGenerateDependencyDiagramEmpty(t *testing.T) {
 	graph := grapher.BuildGraph([]*analyzer.FileResult{})
 	dsl, err := GenerateDependencyDiagram(graph)
 	require.NoError(t, err)
-	assert.Equal(t, "graph LR\n", dsl)
+	assert.Equal(t, "%% 依赖图：展示模块间的完整导入依赖关系\ngraph LR\n", dsl)
 }
 
 func TestGenerateDependencyDiagramCircularDeps(t *testing.T) {

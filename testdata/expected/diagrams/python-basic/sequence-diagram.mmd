@@ -1,0 +1,8 @@
+%% 时序图：展示关键调用链路的交互顺序
+sequenceDiagram
+    % 触发条件：调用 main 的 主流程执行；经过 3 个模块协作；最终由 models 完成 User.create 操作
+    participant main as main
+    participant services_user_service as services/user_service
+    participant models_user as models/user
+    main->>services_user_service: UserService.register
+    services_user_service->>models_user: User.create

@@ -6,7 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"sort"
 	"strings"
+	"sync"
 )
 
 // ImportInfo represents a single import statement.
@@ -602,78 +605,385 @@ func parseJavaParams(paramsStr string) []string {
 	return params
 }
 
+// ---------- Rust Parser ----------
+
+var (
+	rustFnRegex     = regexp.MustCompile(`^fn\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*([^{]+))?\s*\{?`)
+	rustStructRegex = regexp.MustCompile(`^struct\s+(\w+)(?:\s*<[^>]*>)?(?:\s*\{)?`)
+	rustImplRegex   = regexp.MustCompile(`^impl\s+(?:\w+\s+for\s+)?(\w+)(?:\s*<[^>]*>)?\s*\{?`)
+	rustTraitRegex  = regexp.MustCompile(`^trait\s+(\w+)(?:\s*<[^>]*>)?\s*\{?`)
+	rustUseRegex    = regexp.MustCompile(`^use\s+(.+);`)
+)
+
+func ParseRust(filename, source string) (*FileResult, error) {
+	result := &FileResult{Filename: filename}
+	lines := strings.Split(source, "\n")
+	var currentClass *ClassInfo
+	var braceDepth int
+	var classBraceDepth int
+
+	for i, line := range lines {
+		stripped := strings.TrimSpace(line)
+		if stripped == "" || strings.HasPrefix(stripped, "//") || strings.HasPrefix(stripped, "/*") || strings.HasPrefix(stripped, "*") {
+			continue
+		}
+
+		braceDepth += strings.Count(stripped, "{")
+		braceDepth -= strings.Count(stripped, "}")
+
+		if currentClass != nil && braceDepth <= classBraceDepth {
+			currentClass = nil
+		}
+
+		if m := rustUseRegex.FindStringSubmatch(stripped); m != nil {
+			mod := strings.TrimSpace(m[1])
+			name := mod
+			if idx := strings.LastIndex(mod, "::"); idx >= 0 {
+				name = mod[idx+2:]
+			}
+			result.Imports = append(result.Imports, ImportInfo{Module: mod, Name: name})
+			continue
+		}
+
+		if m := rustStructRegex.FindStringSubmatch(stripped); m != nil {
+			cls := ClassInfo{Name: m[1], Methods: []FunctionInfo{}, StartLine: i + 1}
+			result.Classes = append(result.Classes, cls)
+			currentClass = &result.Classes[len(result.Classes)-1]
+			classBraceDepth = braceDepth - 1
+			continue
+		}
+
+		if m := rustTraitRegex.FindStringSubmatch(stripped); m != nil {
+			cls := ClassInfo{Name: m[1], Methods: []FunctionInfo{}, StartLine: i + 1}
+			result.Classes = append(result.Classes, cls)
+			currentClass = &result.Classes[len(result.Classes)-1]
+			classBraceDepth = braceDepth - 1
+			continue
+		}
+
+		if m := rustImplRegex.FindStringSubmatch(stripped); m != nil {
+			implName := m[1]
+			var found bool
+			for i := range result.Classes {
+				if result.Classes[i].Name == implName {
+					currentClass = &result.Classes[i]
+					found = true
+					break
+				}
+			}
+			if !found {
+				result.Classes = append(result.Classes, ClassInfo{Name: implName, Methods: []FunctionInfo{}, StartLine: i + 1})
+				currentClass = &result.Classes[len(result.Classes)-1]
+			}
+			classBraceDepth = braceDepth - 1
+			continue
+		}
+
+		if m := rustFnRegex.FindStringSubmatch(stripped); m != nil {
+			fn := FunctionInfo{
+				Name:       m[1],
+				Params:     parseRustParams(m[2]),
+				ReturnType: strings.TrimSpace(m[3]),
+				StartLine:  i + 1,
+			}
+			if currentClass != nil {
+				currentClass.Methods = append(currentClass.Methods, fn)
+			} else {
+				result.Functions = append(result.Functions, fn)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func parseRustParams(paramsStr string) []string {
+	var params []string
+	if paramsStr == "" {
+		return params
+	}
+	for _, p := range strings.Split(paramsStr, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if idx := strings.Index(p, ":"); idx >= 0 {
+			params = append(params, strings.TrimSpace(p[:idx]))
+		} else {
+			params = append(params, p)
+		}
+	}
+	return params
+}
+
+// ---------- C++ Parser ----------
+
+var (
+	cppClassRegex   = regexp.MustCompile(`^(?:class|struct)\s+(\w+)(?:\s*:\s*(?:public|protected|private)\s+(\w+))?\s*\{?`)
+	cppFuncRegex    = regexp.MustCompile(`^(?:([\w:*&]+(?:\s*<[^>]*>)?)\s+)?(\w+)\s*\(([^)]*)\)`)
+	cppMethodRegex  = regexp.MustCompile(`^(?:([\w:*&]+(?:\s*<[^>]*>)?)\s+)?(\w+)::(\w+)\s*\(([^)]*)\)`)
+	cppIncludeRegex = regexp.MustCompile(`^#include\s*[<"]([^>"]+)[>"]`)
+)
+
+func ParseCpp(filename, source string) (*FileResult, error) {
+	result := &FileResult{Filename: filename}
+	lines := strings.Split(source, "\n")
+	var currentClass *ClassInfo
+	var braceDepth int
+	var classBraceDepth int
+
+	for i, line := range lines {
+		stripped := strings.TrimSpace(line)
+		if stripped == "" || strings.HasPrefix(stripped, "//") || strings.HasPrefix(stripped, "/*") || strings.HasPrefix(stripped, "*") || strings.HasPrefix(stripped, "#pragma") {
+			continue
+		}
+
+		braceDepth += strings.Count(stripped, "{")
+		braceDepth -= strings.Count(stripped, "}")
+
+		if currentClass != nil && braceDepth <= classBraceDepth {
+			currentClass = nil
+		}
+
+		if m := cppIncludeRegex.FindStringSubmatch(stripped); m != nil {
+			result.Imports = append(result.Imports, ImportInfo{Module: m[1], Name: m[1]})
+			continue
+		}
+
+		if m := cppClassRegex.FindStringSubmatch(stripped); m != nil {
+			cls := ClassInfo{Name: m[1], Methods: []FunctionInfo{}, StartLine: i + 1}
+			if m[2] != "" {
+				cls.Bases = []string{m[2]}
+			}
+			result.Classes = append(result.Classes, cls)
+			currentClass = &result.Classes[len(result.Classes)-1]
+			classBraceDepth = braceDepth - 1
+			continue
+		}
+
+		if m := cppMethodRegex.FindStringSubmatch(stripped); m != nil {
+			className := m[2]
+			methodName := m[3]
+			var targetClass *ClassInfo
+			for i := range result.Classes {
+				if result.Classes[i].Name == className {
+					targetClass = &result.Classes[i]
+					break
+				}
+			}
+			fn := FunctionInfo{
+				Name:       methodName,
+				Params:     parseCppParams(m[4]),
+				ReturnType: strings.TrimSpace(m[1]),
+				StartLine:  i + 1,
+			}
+			if targetClass != nil {
+				targetClass.Methods = append(targetClass.Methods, fn)
+			} else {
+				result.Functions = append(result.Functions, fn)
+			}
+			continue
+		}
+
+		if m := cppFuncRegex.FindStringSubmatch(stripped); m != nil {
+			fn := FunctionInfo{
+				Name:       m[2],
+				Params:     parseCppParams(m[3]),
+				ReturnType: strings.TrimSpace(m[1]),
+				StartLine:  i + 1,
+			}
+			if currentClass != nil {
+				currentClass.Methods = append(currentClass.Methods, fn)
+			} else {
+				result.Functions = append(result.Functions, fn)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func parseCppParams(paramsStr string) []string {
+	var params []string
+	if paramsStr == "" {
+		return params
+	}
+	for _, p := range strings.Split(paramsStr, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if idx := strings.Index(p, "="); idx >= 0 {
+			p = p[:idx]
+		}
+		p = strings.TrimSpace(p)
+		parts := strings.Fields(p)
+		if len(parts) >= 2 {
+			params = append(params, parts[len(parts)-1])
+		} else if len(parts) == 1 {
+			params = append(params, parts[0])
+		}
+	}
+	return params
+}
+
 // ---------- Directory Parser ----------
 
 // ParseDirectory recursively parses all source files in a directory.
-func ParseDirectory(dir string, lang string) ([]*FileResult, error) {
-	var results []*FileResult
-
-	exts := map[string]bool{
+// Files are parsed concurrently using a worker pool for better performance
+// on large codebases.
+// sourceExts returns the supported source extensions for the given language filter.
+func sourceExts(lang string) map[string]bool {
+	return map[string]bool{
 		".py":   lang == "python" || lang == "",
 		".js":   lang == "javascript" || lang == "",
 		".ts":   lang == "javascript" || lang == "",
 		".tsx":  lang == "javascript" || lang == "",
 		".go":   lang == "go" || lang == "",
 		".java": lang == "java" || lang == "",
+		".rs":   lang == "rust" || lang == "",
+		".cpp":  lang == "c++" || lang == "cpp" || lang == "",
+		".cc":   lang == "c++" || lang == "cpp" || lang == "",
+		".h":    lang == "c++" || lang == "cpp" || lang == "",
+		".hpp":  lang == "c++" || lang == "cpp" || lang == "",
+		".c":    lang == "c++" || lang == "cpp" || lang == "",
 	}
+}
 
-	file, err := os.Open(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	entries, err := file.Readdir(-1)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, entry := range entries {
-		name := entry.Name()
-		path := filepath.Join(dir, name)
-
-		if entry.IsDir() {
-			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "__pycache__" || name == "vendor" {
-				continue
-			}
-			subResults, err := ParseDirectory(path, lang)
-			if err != nil {
-				return nil, fmt.Errorf("parse %s: %w", path, err)
-			}
-			results = append(results, subResults...)
-			continue
+// WalkSourceFiles traverses a directory and returns paths of all supported
+// source files, skipping common build/output directories.
+func WalkSourceFiles(dir string, lang string) ([]string, error) {
+	exts := sourceExts(lang)
+	var paths []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
-
+		if info.IsDir() {
+			name := filepath.Base(path)
+			if path != dir && (strings.HasPrefix(name, ".") || name == "node_modules" || name == "__pycache__" || name == "vendor" || name == "dist" || name == "build" || name == "out") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := filepath.Base(path)
+		if strings.HasSuffix(name, ".d.ts") || strings.HasSuffix(name, ".js.map") || strings.HasSuffix(name, ".d.ts.map") {
+			return nil
+		}
 		ext := filepath.Ext(path)
 		if !exts[ext] {
-			continue
+			return nil
 		}
+		paths = append(paths, path)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk %s: %w", dir, err)
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
 
-		src, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", path, err)
-		}
-
-		var result *FileResult
-		var parseErr error
-		switch ext {
-		case ".py":
-			result, parseErr = ParsePython(path, string(src))
-		case ".js", ".ts", ".tsx":
-			result, parseErr = ParseJavaScript(path, string(src))
-		case ".go":
-			result, parseErr = ParseGo(path, string(src))
-		case ".java":
-			result, parseErr = ParseJava(path, string(src))
-		}
-
-		if parseErr != nil {
-			return nil, fmt.Errorf("parse %s: %w", path, parseErr)
-		}
-		results = append(results, result)
+// ParseDirectory parses all source files in a directory.
+func ParseDirectory(dir string, lang string) ([]*FileResult, error) {
+	paths, err := WalkSourceFiles(dir, lang)
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 {
+		return nil, nil
 	}
 
+	// Read source files.
+	type fileJob struct {
+		idx  int
+		path string
+		ext  string
+		src  string
+	}
+	jobs := make([]fileJob, len(paths))
+	for i, p := range paths {
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", p, err)
+		}
+		jobs[i] = fileJob{idx: i, path: p, ext: filepath.Ext(p), src: string(src)}
+	}
+
+	// Parse concurrently with a worker pool.
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(jobs) {
+		workers = len(jobs)
+	}
+	results := make([]*FileResult, len(jobs))
+	var errs []error
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	jobCh := make(chan fileJob, len(jobs))
+	for _, j := range jobs {
+		jobCh <- j
+	}
+	close(jobCh)
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobCh {
+				res, perr := ParseFile(job.path, job.src)
+				mu.Lock()
+				if perr != nil {
+					errs = append(errs, fmt.Errorf("parse %s: %w", job.path, perr))
+				} else {
+					results[job.idx] = res
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+
+	// Deterministic ordering by path.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Filename < results[j].Filename
+	})
 	return results, nil
+}
+
+// ParseFile parses a single source file based on its extension.
+func ParseFile(filename, source string) (*FileResult, error) {
+	ext := filepath.Ext(filename)
+	if lang, _, ok := GetLanguageForFile(filename); ok {
+		parser := NewTreeSitterParser(lang, func(filename, source string) (*FileResult, error) {
+			return parseWithRegex(filename, source, ext)
+		})
+		return parser.Parse(filename, source)
+	}
+	return parseWithRegex(filename, source, ext)
+}
+
+// parseWithRegex falls back to the regex-based parsers for the given extension.
+func parseWithRegex(path, src, ext string) (*FileResult, error) {
+	switch ext {
+	case ".py":
+		return ParsePython(path, src)
+	case ".js", ".ts", ".tsx":
+		return ParseJavaScript(path, src)
+	case ".go":
+		return ParseGo(path, src)
+	case ".java":
+		return ParseJava(path, src)
+	case ".rs":
+		return ParseRust(path, src)
+	case ".cpp", ".cc", ".h", ".hpp", ".c":
+		return ParseCpp(path, src)
+	}
+	return nil, fmt.Errorf("unsupported extension: %s", ext)
 }
 
 // ---------- Utilities ----------

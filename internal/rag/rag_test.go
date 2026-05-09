@@ -29,6 +29,18 @@ func (m *mockRAGProvider) Complete(ctx context.Context, prompt string) (string, 
 	return m.answer, nil
 }
 
+func (m *mockRAGProvider) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		if m.answerErr != nil {
+			return
+		}
+		ch <- m.answer
+	}()
+	return ch, nil
+}
+
 func (m *mockRAGProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	m.embedCalls++
 	if m.embedErr != nil {
@@ -249,6 +261,48 @@ func TestAskPromptContainsSources(t *testing.T) {
 	assert.Contains(t, capturedPrompt, "hello.py")
 }
 
+func TestAskStreamBasic(t *testing.T) {
+	store := vectorstore.New()
+	store.Upsert("chunk-1", []float32{1, 0, 0}, &chunker.Chunk{
+		ID: "chunk-1", Type: chunker.TypeFunction, Content: "func hello()", Filename: "hello.py", Name: "hello",
+	})
+
+	mock := &mockRAGProvider{
+		embedVecs: [][]float32{{1, 0, 0}},
+		answer:    "Hello world",
+	}
+
+	engine := NewEngine(mock, store)
+	textCh, ans, err := engine.AskStream(context.Background(), "What?")
+	require.NoError(t, err)
+	require.NotNil(t, ans)
+
+	var tokens []string
+	for token := range textCh {
+		tokens = append(tokens, token)
+	}
+	assert.Equal(t, []string{"Hello world"}, tokens)
+	assert.Len(t, ans.Sources, 1)
+	assert.Equal(t, "hello.py", ans.Sources[0].Filename)
+}
+
+func TestAskStreamNoProvider(t *testing.T) {
+	store := vectorstore.New()
+	engine := NewEngine(nil, store)
+	_, _, err := engine.AskStream(context.Background(), "What?")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no LLM provider")
+}
+
+func TestAskStreamEmptyStore(t *testing.T) {
+	store := vectorstore.New()
+	mock := &mockRAGProvider{}
+	engine := NewEngine(mock, store)
+	_, _, err := engine.AskStream(context.Background(), "What?")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "vector store is empty")
+}
+
 type promptCapture struct {
 	llm.Provider
 	prompt *string
@@ -257,4 +311,9 @@ type promptCapture struct {
 func (p *promptCapture) Complete(ctx context.Context, prompt string) (string, error) {
 	*p.prompt = prompt
 	return p.Provider.Complete(ctx, prompt)
+}
+
+func (p *promptCapture) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
+	*p.prompt = prompt
+	return p.Provider.CompleteStream(ctx, prompt)
 }

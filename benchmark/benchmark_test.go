@@ -114,7 +114,7 @@ func BenchmarkEndToEndSmall(b *testing.B) {
 		} else {
 			seqDSL = "sequenceDiagram\n"
 		}
-		_, err = docgen.GenerateWikiEnhanced(context.Background(), nil, graph, sourceDir, "bench", archDSL, classDSL, seqDSL)
+		_, err = docgen.GenerateWikiEnhanced(context.Background(), nil, graph, sourceDir, "bench", archDSL, classDSL, seqDSL, "")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -141,7 +141,7 @@ func BenchmarkEndToEnd10K(b *testing.B) {
 		} else {
 			seqDSL = "sequenceDiagram\n"
 		}
-		_, err = docgen.GenerateWikiEnhanced(context.Background(), nil, graph, sourceDir, "bench", archDSL, classDSL, seqDSL)
+		_, err = docgen.GenerateWikiEnhanced(context.Background(), nil, graph, sourceDir, "bench", archDSL, classDSL, seqDSL, "")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -168,7 +168,34 @@ func BenchmarkEndToEnd50K(b *testing.B) {
 		} else {
 			seqDSL = "sequenceDiagram\n"
 		}
-		_, err = docgen.GenerateWikiEnhanced(context.Background(), nil, graph, sourceDir, "bench", archDSL, classDSL, seqDSL)
+		_, err = docgen.GenerateWikiEnhanced(context.Background(), nil, graph, sourceDir, "bench", archDSL, classDSL, seqDSL, "")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkEndToEnd100K benchmarks the full pipeline on a ~100k line synthetic project.
+func BenchmarkEndToEnd100K(b *testing.B) {
+	sourceDir := generateSyntheticPythonProject(b, 400) // ~400 files * ~250 lines = ~100k lines
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		files, err := analyzer.ParseDirectory(sourceDir, "")
+		if err != nil {
+			b.Fatal(err)
+		}
+		graph := grapher.BuildGraph(files)
+		archDSL, _ := diagram.GenerateArchitectureDiagram(graph)
+		classDSL, _ := diagram.GenerateClassDiagram(graph)
+		callEdges, _ := sequencer.BuildCallGraph(sourceDir, files)
+		sequences := sequencer.FindSequences(callEdges, 2)
+		var seqDSL string
+		if len(sequences) > 0 {
+			seqDSL = sequencer.GenerateSequenceDiagram(sequences[0])
+		} else {
+			seqDSL = "sequenceDiagram\n"
+		}
+		_, err = docgen.GenerateWikiEnhanced(context.Background(), nil, graph, sourceDir, "bench", archDSL, classDSL, seqDSL, "")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -214,7 +241,7 @@ func BenchmarkGenerateWiki10K(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := docgen.GenerateWikiEnhanced(context.Background(), nil, graph, sourceDir, "bench", archDSL, classDSL, "sequenceDiagram\n")
+		_, err := docgen.GenerateWikiEnhanced(context.Background(), nil, graph, sourceDir, "bench", archDSL, classDSL, "sequenceDiagram\n", "")
 		if err != nil {
 			b.Fatal(err)
 		}

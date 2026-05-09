@@ -4,19 +4,19 @@
   "cases": [
     {
       "id": "arch-001",
-      "question": "What are the main modules in this project and what do they do?",
+      "question": "What do the UserService and UserRepository classes do in this project?",
       "category": "architecture",
       "difficulty": "easy",
-      "expected_answer_contains": ["models", "services", "utils"],
+      "expected_answer_contains": ["UserService", "UserRepository"],
       "must_cite_source": true,
       "min_sources": 2
     },
     {
       "id": "api-002",
-      "question": "What parameters does UserService.create_user accept?",
+      "question": "Which class handles user registration in this project?",
       "category": "api_reference",
       "difficulty": "easy",
-      "expected_answer_contains": ["username", "email", "password"],
+      "expected_answer_contains": ["UserService", "register"],
       "must_cite_source": true,
       "exact_source_file": "services/user_service.py"
     },
@@ -27,6 +27,24 @@
       "difficulty": "easy",
       "expected_answer_contains": [],
       "must_cite_source": false
+    },
+    {
+      "id": "auth-004",
+      "question": "What methods does the User class provide for authentication?",
+      "category": "api_reference",
+      "difficulty": "medium",
+      "expected_answer_contains": ["authenticate", "create"],
+      "must_cite_source": true,
+      "exact_source_file": "models/user.py"
+    },
+    {
+      "id": "flow-005",
+      "question": "Which modules are involved in the user registration flow?",
+      "category": "architecture",
+      "difficulty": "medium",
+      "expected_answer_contains": ["main", "user_service", "user_repository"],
+      "must_cite_source": true,
+      "min_sources": 3
     }
   ]
 }

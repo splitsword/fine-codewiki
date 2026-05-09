@@ -3,15 +3,20 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/splitsword/fine-codewiki/internal/analyzer"
+	"github.com/splitsword/fine-codewiki/internal/cache"
 	"github.com/splitsword/fine-codewiki/internal/chunker"
 	"github.com/splitsword/fine-codewiki/internal/diagram"
 	"github.com/splitsword/fine-codewiki/internal/docgen"
@@ -25,14 +30,15 @@ import (
 
 // Config holds CLI configuration.
 type Config struct {
-	SourceDir   string
-	OutputDir   string
-	Language    string
-	ProjectName string
-	Port        int
-	Interactive bool
-	Question    string
-	ConfigPath  string
+	SourceDir       string
+	OutputDir       string
+	Language        string
+	ProjectName     string
+	MaxLLMFunctions int
+	Port            int
+	Interactive     bool
+	Question        string
+	ConfigPath      string
 }
 
 // RunGenerate executes the full generate pipeline: parse → graph → diagram → doc.
@@ -45,10 +51,90 @@ func RunGenerate(cfg *Config) error {
 	}
 
 	fmt.Printf("正在解析 %s 中的源文件...\n", cfg.SourceDir)
-	files, err := analyzer.ParseDirectory(cfg.SourceDir, cfg.Language)
+
+	// Setup AST + graph cache
+	cachePath := filepath.Join(cfg.SourceDir, ".codewiki", "cache.json")
+	c := cache.New(cachePath)
+	_ = c.Load()
+
+	// Walk source files
+	paths, err := analyzer.WalkSourceFiles(cfg.SourceDir, cfg.Language)
 	if err != nil {
-		return fmt.Errorf("parse directory: %w", err)
+		return fmt.Errorf("walk source files: %w", err)
 	}
+
+	// Determine which files need parsing vs cache hit
+	type parseJob struct {
+		path string
+		src  string
+	}
+	var jobs []parseJob
+	var files []*analyzer.FileResult
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if fr, ok := c.GetAST(p, info.ModTime().Unix(), info.Size()); ok {
+			files = append(files, fr)
+		} else {
+			src, err := os.ReadFile(p)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", p, err)
+			}
+			jobs = append(jobs, parseJob{path: p, src: string(src)})
+		}
+	}
+	c.Prune(paths)
+
+	astChanged := len(jobs) > 0
+	if astChanged {
+		fmt.Printf("发现 %d 个新/变更文件需要解析（%d 个来自缓存）\n", len(jobs), len(files))
+		results := make([]*analyzer.FileResult, len(jobs))
+		var parseErrs []error
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+
+		workers := runtime.GOMAXPROCS(0)
+		if workers > len(jobs) {
+			workers = len(jobs)
+		}
+		jobCh := make(chan int, len(jobs))
+		for i := range jobs {
+			jobCh <- i
+		}
+		close(jobCh)
+
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range jobCh {
+					job := jobs[i]
+					fr, err := analyzer.ParseFile(job.path, job.src)
+					if err != nil {
+						mu.Lock()
+						parseErrs = append(parseErrs, fmt.Errorf("parse %s: %w", job.path, err))
+						mu.Unlock()
+						continue
+					}
+					info, _ := os.Stat(job.path)
+					if info != nil {
+						c.PutAST(job.path, info.ModTime().Unix(), info.Size(), fr)
+					}
+					results[i] = fr
+				}
+			}()
+		}
+		wg.Wait()
+		if len(parseErrs) > 0 {
+			return parseErrs[0]
+		}
+		files = append(files, results...)
+	} else {
+		fmt.Printf("所有 %d 个源文件均来自缓存\n", len(files))
+	}
+
 	fmt.Printf("找到 %d 个源文件\n", len(files))
 
 	// Normalize filenames: strip source directory prefix so module names are relative to project root
@@ -70,8 +156,20 @@ func RunGenerate(cfg *Config) error {
 	}
 
 	fmt.Println("正在构建依赖图...")
-	graph := grapher.BuildGraph(files)
+	var graph *grapher.Graph
+	if !astChanged {
+		graph = c.GetGraph()
+	}
+	if graph == nil {
+		graph = grapher.BuildGraph(files)
+		c.PutGraph(graph)
+		fmt.Println("图谱已重新构建并缓存")
+	}
 	fmt.Printf("图谱：%d 个节点，%d 条边\n", len(graph.Nodes), len(graph.Edges))
+
+	if err := c.Save(); err != nil {
+		fmt.Printf("警告：保存缓存失败 (%v)\n", err)
+	}
 
 	fmt.Println("正在生成图表...")
 	archDSL, err := diagram.GenerateArchitectureDiagram(graph)
@@ -92,8 +190,10 @@ func RunGenerate(cfg *Config) error {
 	fmt.Printf("找到 %d 个序列模式\n", len(sequences))
 
 	var seqDSL string
+	var seqDesc string
 	if len(sequences) > 0 {
 		seqDSL = sequencer.GenerateSequenceDiagram(sequences[0])
+		seqDesc = sequences[0].Description
 	} else {
 		seqDSL = "sequenceDiagram\n"
 	}
@@ -115,13 +215,17 @@ func RunGenerate(cfg *Config) error {
 		}
 	}
 
-	wiki, err := docgen.GenerateWikiEnhanced(context.Background(), provider, graph, cfg.SourceDir, cfg.ProjectName, archDSL, classDSL, seqDSL)
+	// 整个文档生成总体超时 30 分钟，防止 LLM 阶段 hung 住拖垮整个流程
+	docCtx, docCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer docCancel()
+	wiki, err := docgen.GenerateWikiEnhancedWithMaxFunctions(docCtx, provider, graph, cfg.SourceDir, cfg.ProjectName, archDSL, classDSL, seqDSL, cfg.Language, cfg.MaxLLMFunctions)
 	if err != nil {
 		return fmt.Errorf("generate wiki: %w", err)
 	}
+	wiki.SequenceDescription = seqDesc
 
 	fmt.Printf("正在将 Wiki 写入 %s...\n", cfg.OutputDir)
-	if err := docgen.WriteWikiFiles(cfg.OutputDir, wiki); err != nil {
+	if err := docgen.WriteWikiFiles(cfg.OutputDir, wiki, graph); err != nil {
 		return fmt.Errorf("write wiki files: %w", err)
 	}
 
@@ -130,6 +234,7 @@ func RunGenerate(cfg *Config) error {
 }
 
 // RunServe starts a local HTTP server to preview the generated wiki.
+// If cfg.SourceDir is provided, also enables the /ask RAG Q&A endpoint.
 func RunServe(cfg *Config) error {
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = filepath.Join(".", ".codewiki", "wiki")
@@ -139,31 +244,114 @@ func RunServe(cfg *Config) error {
 		return fmt.Errorf("Wiki 目录未找到：%s（请先运行 'generate'）", cfg.OutputDir)
 	}
 
+	var engine *rag.Engine
+	if cfg.SourceDir != "" {
+		var err error
+		engine, err = initRAGEngine(cfg.SourceDir, cfg.Language, cfg.ConfigPath)
+		if err != nil {
+			fmt.Printf("警告：RAG 引擎初始化失败，/ask 端点不可用 (%v)\n", err)
+		} else {
+			fmt.Printf("RAG 引擎已就绪，访问 http://localhost:%d/ask 进行问答\n", cfg.Port)
+		}
+	}
+
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	fmt.Printf("正在从 %s 提供 Wiki 服务，访问 http://localhost%s\n", cfg.OutputDir, addr)
 	fmt.Println("按 Ctrl+C 停止")
 
-	handler := newWikiHandler(cfg.OutputDir)
+	handler := newServerHandler(cfg.OutputDir, engine)
 	return http.ListenAndServe(addr, handler)
 }
 
-// wikiHandler serves wiki files with appropriate content types.
-type wikiHandler struct {
-	root string
-}
-
-func newWikiHandler(root string) http.Handler {
-	return &wikiHandler{root: root}
-}
-
-func (h *wikiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := filepath.FromSlash(r.URL.Path)
-	if path == "/" || path == "\\" {
-		path = "overview.md"
-	} else {
-		path = strings.TrimPrefix(path, "/")
-		path = strings.TrimPrefix(path, "\\")
+// initRAGEngine sets up the RAG engine for the web Q&A endpoint.
+func initRAGEngine(sourceDir, language, configPath string) (*rag.Engine, error) {
+	if configPath == "" {
+		configPath = llm.DefaultConfigPath()
 	}
+	appCfg, err := llm.LoadAppConfig(configPath)
+	if err != nil || appCfg == nil {
+		return nil, fmt.Errorf("未找到 LLM 配置")
+	}
+
+	provider, err := llm.NewEmbeddingProvider(appCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create provider: %w", err)
+	}
+
+	vectorPath := filepath.Join(sourceDir, ".codewiki", "vectors.db")
+	store, err := vectorstore.NewSQLite(vectorPath)
+	if err != nil {
+		return nil, fmt.Errorf("open vector store: %w", err)
+	}
+	defer store.Close()
+
+	files, err := analyzer.ParseDirectory(sourceDir, language)
+	if err != nil {
+		return nil, fmt.Errorf("parse directory: %w", err)
+	}
+
+	var changedFiles []*analyzer.FileResult
+	currentPaths := make([]string, 0, len(files))
+	for _, f := range files {
+		currentPaths = append(currentPaths, f.Filename)
+		info, err := os.Stat(f.Filename)
+		if err != nil {
+			continue
+		}
+		if store.ShouldIndexFile(f.Filename, info.ModTime().Unix(), info.Size()) {
+			changedFiles = append(changedFiles, f)
+		}
+	}
+	store.PruneFiles(currentPaths)
+
+	if len(changedFiles) > 0 {
+		chunks := chunker.New().ChunkFiles(changedFiles)
+		emb := embedder.New(provider, store)
+		if err := emb.EmbedChunks(context.Background(), chunks); err != nil {
+			return nil, fmt.Errorf("embed chunks: %w", err)
+		}
+		for _, f := range changedFiles {
+			info, err := os.Stat(f.Filename)
+			if err != nil {
+				continue
+			}
+			store.MarkFileIndexed(f.Filename, info.ModTime().Unix(), info.Size())
+		}
+	}
+
+	return rag.NewEngine(provider, store), nil
+}
+
+// serverHandler serves wiki files and optionally the /ask RAG Q&A endpoint.
+type serverHandler struct {
+	root   string
+	engine *rag.Engine
+}
+
+func newServerHandler(root string, engine *rag.Engine) http.Handler {
+	return &serverHandler{root: root, engine: engine}
+}
+
+func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Route matching uses raw URL path (cross-platform)
+	rawPath := r.URL.Path
+
+	// RAG endpoints
+	if rawPath == "/ask" && r.Method == http.MethodGet {
+		serveAskPage(w, h.engine != nil)
+		return
+	}
+	if rawPath == "/api/ask" && r.Method == http.MethodPost {
+		h.handleAskAPI(w, r)
+		return
+	}
+
+	if rawPath == "/" {
+		serveIndexPage(w, h.root)
+		return
+	}
+	path := strings.TrimPrefix(rawPath, "/")
+	path = filepath.FromSlash(path)
 
 	fullPath := filepath.Join(h.root, path)
 	fullPath = filepath.Clean(fullPath)
@@ -193,22 +381,297 @@ func (h *wikiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if ext == ".md" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		body := renderMarkdownBody(data)
+		body := docgen.RenderMarkdownBody(data)
 		title := strings.TrimSuffix(filepath.Base(path), ext)
-		w.Write(buildWikiPage(title, body, navItems, path))
+		w.Write(docgen.BuildWikiPage(title, body, navItems, path))
 		return
 	}
 
 	if ext == ".mmd" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		filename := strings.TrimSuffix(filepath.Base(path), ext)
-		body := fmt.Sprintf("<h2>%s</h2>\n<div class=\"mermaid\">\n%s\n</div>\n", htmlEscape(filename), string(data))
-		w.Write(buildWikiPage(filename, body, navItems, path))
+		body := fmt.Sprintf("<h2>%s</h2>\n<div class=\"mermaid\">\n%s\n</div>\n", docgen.HTMLEscape(filename), string(data))
+		w.Write(docgen.BuildWikiPage(filename, body, navItems, path))
 		return
 	}
 
 	w.Header().Set("Content-Type", contentTypeFor(path))
 	w.Write(data)
+}
+
+// serveAskPage renders the interactive Q&A HTML page.
+func serveAskPage(w http.ResponseWriter, enabled bool) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if !enabled {
+		w.Write([]byte(`<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>问答</title></head>
+<body><h1>问答终端</h1><p>使用 <code>--source</code> 启动 serve 以启用 RAG 问答。</p></body></html>`))
+		return
+	}
+	w.Write([]byte(askPageHTML))
+}
+
+// handleAskAPI processes a Q&A request and returns a JSON answer.
+func (h *serverHandler) handleAskAPI(w http.ResponseWriter, r *http.Request) {
+	if h.engine == nil {
+		http.Error(w, `{"error":"RAG 引擎未启用"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		Question string `json:"question"`
+		History  []struct {
+			Question string `json:"question"`
+			Answer   string `json:"answer"`
+		} `json:"history"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"请求格式错误"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Question == "" {
+		http.Error(w, `{"error":"问题不能为空"}`, http.StatusBadRequest)
+		return
+	}
+
+	var session *rag.Session
+	if len(req.History) > 0 {
+		session = rag.NewSession()
+		for _, turn := range req.History {
+			session.AddTurn(turn.Question, turn.Answer)
+		}
+	}
+
+	textCh, ans, err := h.engine.AskStreamWithSession(r.Context(), req.Question, session)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	var textParts []string
+	for token := range textCh {
+		textParts = append(textParts, token)
+	}
+
+	resp := struct {
+		Text    string       `json:"text"`
+		Sources []rag.Source `json:"sources"`
+	}{
+		Text:    strings.Join(textParts, ""),
+		Sources: ans.Sources,
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// askPageHTML is the interactive Q&A web UI.
+const askPageHTML = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CodeWiki 问答终端</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; background: #f5f5f5; color: #333; }
+.container { max-width: 800px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; height: 100vh; }
+header { text-align: center; margin-bottom: 16px; }
+header h1 { margin: 0; font-size: 1.5em; }
+header p { margin: 4px 0 0; color: #666; font-size: 0.9em; }
+.chat { flex: 1; overflow-y: auto; background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.message { margin-bottom: 12px; }
+.message.user { text-align: right; }
+.message.user .bubble { background: #0969da; color: #fff; display: inline-block; padding: 10px 14px; border-radius: 16px; max-width: 80%; word-break: break-word; }
+.message.assistant .bubble { background: #f0f0f0; color: #333; display: inline-block; padding: 10px 14px; border-radius: 16px; max-width: 80%; word-break: break-word; }
+.message.assistant .sources { margin-top: 6px; font-size: 0.85em; color: #555; }
+.message.assistant .sources span { display: block; margin: 2px 0; }
+.input-area { display: flex; gap: 8px; margin-top: 12px; }
+.input-area input { flex: 1; padding: 12px 16px; border: 1px solid #d0d7de; border-radius: 24px; font-size: 1em; outline: none; }
+.input-area input:focus { border-color: #0969da; }
+.input-area button { padding: 12px 24px; background: #0969da; color: #fff; border: none; border-radius: 24px; font-size: 1em; cursor: pointer; }
+.input-area button:hover { background: #0550ae; }
+.input-area button:disabled { background: #8ec2f7; cursor: not-allowed; }
+.loading { color: #666; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="container">
+<header><h1>CodeWiki 问答终端</h1><p>基于项目代码库的 RAG 智能问答</p></header>
+<div class="chat" id="chat">
+  <div class="message assistant"><div class="bubble">你好！我是你的项目代码助手。请提出关于代码库的问题。</div></div>
+</div>
+<div class="input-area">
+  <input type="text" id="question" placeholder="输入你的问题..." onkeydown="if(event.key==='Enter') send()" />
+  <button id="sendBtn" onclick="send()">发送</button>
+</div>
+</div>
+<script>
+const chat = document.getElementById('chat');
+const input = document.getElementById('question');
+const btn = document.getElementById('sendBtn');
+let history = [];
+function appendBubble(role, text) {
+  const div = document.createElement('div');
+  div.className = 'message ' + role;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  div.appendChild(bubble);
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+function appendSources(div, sources) {
+  if (!sources || sources.length === 0) return;
+  const sdiv = document.createElement('div');
+  sdiv.className = 'sources';
+  sdiv.innerHTML = '<strong>引用来源：</strong>';
+  sources.forEach(s => {
+    const span = document.createElement('span');
+    span.textContent = s.filename + (s.startLine > 0 ? ':' + s.startLine : '') + '（' + s.type + '：' + s.name + '）';
+    sdiv.appendChild(span);
+  });
+  div.appendChild(sdiv);
+  chat.scrollTop = chat.scrollHeight;
+}
+async function send() {
+  const q = input.value.trim();
+  if (!q) return;
+  appendBubble('user', q);
+  input.value = '';
+  btn.disabled = true;
+  const loading = appendBubble('assistant', '正在思考...');
+  try {
+    const res = await fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q, history: history })
+    });
+    loading.remove();
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: '请求失败' }));
+      appendBubble('assistant', '错误：' + err.error);
+      return;
+    }
+    const data = await res.json();
+    const div = appendBubble('assistant', data.text);
+    appendSources(div, data.sources);
+    history.push({ question: q, answer: data.text });
+  } catch (e) {
+    loading.remove();
+    appendBubble('assistant', '网络错误：' + e.message);
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+</script>
+</body>
+</html>`
+
+// serveIndexPage renders the wiki index/landing page.
+func serveIndexPage(w http.ResponseWriter, root string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Read overview content if available for embedding
+	var overviewPreview string
+	if data, err := os.ReadFile(filepath.Join(root, "00-overview.md")); err == nil {
+		lines := strings.Split(string(data), "\n")
+		var previewLines []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "-") {
+				continue
+			}
+			previewLines = append(previewLines, trimmed)
+			if len(previewLines) >= 3 {
+				break
+			}
+		}
+		overviewPreview = strings.Join(previewLines, " ")
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div class="index-page">
+<h1>📚 代码百科</h1>
+<p class="tagline">交互式代码库学习指南 — 从理解到深入</p>
+`)
+
+	if overviewPreview != "" {
+		b.WriteString(fmt.Sprintf(`<div class="index-preview"><p>%s</p></div>`, docgen.HTMLEscape(overviewPreview)))
+	}
+
+	// Learning Guide section
+	b.WriteString(`<div class="index-section">
+<h2>📖 学习指南</h2>
+<p>如果你是第一次接触这个项目，建议按顺序阅读以下文档：</p>
+<ul>
+`)
+	learningFiles := []struct{ file, title, desc string }{
+		{"00-overview.md", "项目概述", "项目定位、规模统计、模块概览"},
+		{"01-what-it-does.md", "项目能做什么", "核心能力、使用场景、目标用户"},
+		{"02-architecture.md", "架构说明", "系统分层、设计模式、模块关系"},
+		{"03-project-structure.md", "项目结构", "目录组织、模块职责、依赖关系"},
+		{"04-key-concepts.md", "核心概念", "关键设计决策与架构思想"},
+		{"05-learning-path.md", "学习路径", "按目标选择阅读路径"},
+	}
+	for _, item := range learningFiles {
+		if _, err := os.Stat(filepath.Join(root, item.file)); err == nil {
+			b.WriteString(fmt.Sprintf(`<li><a href="%s"><strong>%s</strong></a> — %s</li>`, item.file, item.title, item.desc))
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteString(`</ul>
+</div>
+`)
+
+	// Reference section
+	b.WriteString(`<div class="index-section">
+<h2>📋 参考手册</h2>
+<ul>
+`)
+	if _, err := os.Stat(filepath.Join(root, "api-reference.md")); err == nil {
+		b.WriteString(`<li><a href="api-reference.md"><strong>API 参考</strong></a> — 全部类、函数、方法的详细说明</li>` + "\n")
+	}
+	b.WriteString(`</ul>
+</div>
+`)
+
+	// Diagrams section
+	b.WriteString(`<div class="index-section">
+<h2>📊 可视化图表</h2>
+<ul>
+`)
+	diagramFiles := []struct{ file, title, desc string }{
+		{"architecture.mmd", "架构图", "模块依赖关系拓扑"},
+		{"class-diagram.mmd", "类图", "类与接口的继承实现关系"},
+		{"sequence-diagram.mmd", "时序图", "关键调用链的交互流程"},
+	}
+	for _, item := range diagramFiles {
+		if _, err := os.Stat(filepath.Join(root, item.file)); err == nil {
+			b.WriteString(fmt.Sprintf(`<li><a href="%s"><strong>%s</strong></a> — %s</li>`, item.file, item.title, item.desc))
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteString(`</ul>
+</div>
+`)
+
+	// Ask AI hint
+	b.WriteString(`<div class="index-section index-ask">
+<h2>💬 有具体问题？</h2>
+<p>在终端运行 <code>codewiki ask "你的问题"</code> 与 AI 对话，获取带源码引用的答案。</p>
+</div>
+</div>
+`)
+
+	navItems := listWikiFiles(root)
+	w.Write(docgen.BuildWikiPage("CodeWiki", b.String(), navItems, ""))
+}
+
+func buildIndexLink(file, title, desc string) string {
+	return fmt.Sprintf(`<li><a href="%s"><strong>%s</strong></a> — %s</li>`, file, title, desc)
 }
 
 // listWikiFiles returns sorted .md and .mmd filenames in the directory.
@@ -230,452 +693,6 @@ func listWikiFiles(root string) []string {
 	}
 	sort.Strings(files)
 	return files
-}
-
-// renderMarkdownBody converts Markdown to HTML body content (no html/head/body wrapper).
-func renderMarkdownBody(src []byte) string {
-	lines := strings.Split(string(src), "\n")
-	var body strings.Builder
-
-	var inCodeBlock bool
-	var codeLang string
-	var codeLines []string
-	var inUL, inOL bool
-	var inTable bool
-	var tableRows []string
-
-	flushCode := func() {
-		if !inCodeBlock {
-			return
-		}
-		if codeLang == "mermaid" {
-			body.WriteString("<div class=\"mermaid\">\n")
-			for _, cl := range codeLines {
-				body.WriteString(cl)
-				body.WriteByte('\n')
-			}
-			body.WriteString("</div>\n")
-		} else {
-			body.WriteString("<pre><code>")
-			for _, cl := range codeLines {
-				body.WriteString(htmlEscape(cl))
-				body.WriteByte('\n')
-			}
-			body.WriteString("</code></pre>\n")
-		}
-		inCodeBlock = false
-		codeLang = ""
-		codeLines = nil
-	}
-
-	flushList := func() {
-		if inUL {
-			body.WriteString("</ul>\n")
-			inUL = false
-		}
-		if inOL {
-			body.WriteString("</ol>\n")
-			inOL = false
-		}
-	}
-
-	flushTable := func() {
-		if !inTable || len(tableRows) == 0 {
-			return
-		}
-		body.WriteString("<table>\n")
-		for i, row := range tableRows {
-			body.WriteString("<tr>\n")
-			cells := splitTableCells(row)
-			for _, cell := range cells {
-				cell = strings.TrimSpace(cell)
-				if i == 0 {
-					body.WriteString("<th>")
-					body.WriteString(renderInline(cell))
-					body.WriteString("</th>\n")
-				} else if isTableSeparator(row) {
-					continue
-				} else {
-					body.WriteString("<td>")
-					body.WriteString(renderInline(cell))
-					body.WriteString("</td>\n")
-				}
-			}
-			body.WriteString("</tr>\n")
-		}
-		body.WriteString("</table>\n")
-		inTable = false
-		tableRows = nil
-	}
-
-	for i, line := range lines {
-		trimmed := strings.TrimRight(line, " \r\t")
-
-		// Code blocks
-		if strings.HasPrefix(trimmed, "```") {
-			flushList()
-			flushTable()
-			if !inCodeBlock {
-				inCodeBlock = true
-				codeLang = strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
-				codeLines = nil
-			} else {
-				flushCode()
-			}
-			continue
-		}
-		if inCodeBlock {
-			codeLines = append(codeLines, line)
-			continue
-		}
-
-		// Empty lines flush lists/tables
-		if trimmed == "" {
-			flushList()
-			flushTable()
-			continue
-		}
-
-		// Horizontal rule
-		if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-			flushList()
-			flushTable()
-			body.WriteString("<hr>\n")
-			continue
-		}
-
-		// Blockquote
-		if strings.HasPrefix(trimmed, "> ") {
-			flushList()
-			flushTable()
-			body.WriteString("<blockquote>")
-			body.WriteString(renderInline(strings.TrimPrefix(trimmed, "> ")))
-			body.WriteString("</blockquote>\n")
-			continue
-		}
-
-		// Table
-		if strings.HasPrefix(trimmed, "|") {
-			flushList()
-			inTable = true
-			tableRows = append(tableRows, trimmed)
-			continue
-		} else if inTable {
-			flushTable()
-		}
-
-		// Unordered list
-		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
-			flushTable()
-			if !inUL {
-				body.WriteString("<ul>\n")
-				inUL = true
-			}
-			item := strings.TrimPrefix(trimmed, "- ")
-			item = strings.TrimPrefix(item, "* ")
-			body.WriteString("<li>")
-			body.WriteString(renderInline(item))
-			body.WriteString("</li>\n")
-			continue
-		}
-
-		// Ordered list
-		if orderedListMatch(trimmed) {
-			flushTable()
-			if !inOL {
-				body.WriteString("<ol>\n")
-				inOL = true
-			}
-			item := orderedListItem(trimmed)
-			body.WriteString("<li>")
-			body.WriteString(renderInline(item))
-			body.WriteString("</li>\n")
-			continue
-		}
-
-		// Flush any open list if line is not a list item
-		flushList()
-
-		// Headers
-		if strings.HasPrefix(trimmed, "# ") {
-			body.WriteString("<h1>")
-			body.WriteString(renderInline(strings.TrimPrefix(trimmed, "# ")))
-			body.WriteString("</h1>\n")
-			continue
-		}
-		if strings.HasPrefix(trimmed, "## ") {
-			body.WriteString("<h2>")
-			body.WriteString(renderInline(strings.TrimPrefix(trimmed, "## ")))
-			body.WriteString("</h2>\n")
-			continue
-		}
-		if strings.HasPrefix(trimmed, "### ") {
-			body.WriteString("<h3>")
-			body.WriteString(renderInline(strings.TrimPrefix(trimmed, "### ")))
-			body.WriteString("</h3>\n")
-			continue
-		}
-		if strings.HasPrefix(trimmed, "#### ") {
-			body.WriteString("<h4>")
-			body.WriteString(renderInline(strings.TrimPrefix(trimmed, "#### ")))
-			body.WriteString("</h4>\n")
-			continue
-		}
-		if strings.HasPrefix(trimmed, "##### ") {
-			body.WriteString("<h5>")
-			body.WriteString(renderInline(strings.TrimPrefix(trimmed, "##### ")))
-			body.WriteString("</h5>\n")
-			continue
-		}
-		if strings.HasPrefix(trimmed, "###### ") {
-			body.WriteString("<h6>")
-			body.WriteString(renderInline(strings.TrimPrefix(trimmed, "###### ")))
-			body.WriteString("</h6>\n")
-			continue
-		}
-
-		// Paragraph (or continuation of previous paragraph)
-		if i > 0 && body.Len() > 0 && !strings.HasSuffix(body.String(), "\n") {
-			body.WriteByte(' ')
-			body.WriteString(renderInline(trimmed))
-		} else {
-			body.WriteString("<p>")
-			body.WriteString(renderInline(trimmed))
-			body.WriteString("</p>\n")
-		}
-	}
-
-	flushList()
-	flushTable()
-	flushCode()
-
-	return body.String()
-}
-
-// buildWikiPage assembles a full HTML page with optional sidebar navigation.
-func buildWikiPage(title, body string, navItems []string, current string) []byte {
-	var out strings.Builder
-	out.WriteString(`<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>`)
-	out.WriteString(htmlEscape(title))
-	out.WriteString(`</title>
-<style>
-* { box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; line-height: 1.6; color: #24292f; background: #ffffff; display: flex; }
-.sidebar { width: 260px; min-width: 260px; background: #f6f8fa; border-right: 1px solid #d0d7de; height: 100vh; position: fixed; overflow-y: auto; }
-.sidebar-header { padding: 16px; font-weight: 600; font-size: 16px; border-bottom: 1px solid #d0d7de; background: #ffffff; }
-.sidebar ul { list-style: none; padding: 0; margin: 0; }
-.sidebar li a { display: block; padding: 8px 16px; color: #24292f; text-decoration: none; font-size: 14px; border-bottom: 1px solid #eaeef2; }
-.sidebar li a:hover { background: #eaeef2; }
-.sidebar li a.active { background: #0969da; color: white; }
-.content { margin-left: 260px; padding: 24px 32px; max-width: 960px; width: 100%; }
-h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; color: #1f2328; }
-h1 { font-size: 2em; border-bottom: 1px solid #d0d7de; padding-bottom: .3em; }
-h2 { font-size: 1.5em; border-bottom: 1px solid #d0d7de; padding-bottom: .3em; }
-h3 { font-size: 1.25em; }
-a { color: #0969da; text-decoration: none; }
-a:hover { text-decoration: underline; }
-code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; background: rgba(175,184,193,0.2); padding: .2em .4em; border-radius: 6px; font-size: 85%; }
-pre { background: #1e1e1e; color: #d4d4d4; padding: 16px; overflow: auto; border-radius: 6px; }
-pre code { background: transparent; padding: 0; color: inherit; }
-blockquote { margin: 0; padding: 0 1em; color: #57606a; border-left: .25em solid #d0d7de; }
-ul, ol { padding-left: 2em; }
-li+li { margin-top: .25em; }
-table { border-collapse: collapse; width: 100%; margin: 16px 0; }
-th, td { border: 1px solid #d0d7de; padding: 6px 13px; }
-tr:nth-child(even) { background: #f6f8fa; }
-th { background: #f6f8fa; font-weight: 600; }
-hr { height: .25em; padding: 0; margin: 24px 0; background: #d0d7de; border: 0; }
-.mermaid { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow: auto; }
-</style>
-<script type="module">
-  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-  mermaid.initialize({ startOnLoad: true });
-</script>
-</head>
-<body>
-`)
-
-	if len(navItems) > 0 {
-		out.WriteString(`<nav class="sidebar">
-<div class="sidebar-header">CodeWiki</div>
-<ul>
-`)
-		for _, item := range navItems {
-			activeClass := ""
-			if item == current {
-				activeClass = ` class="active"`
-			}
-			out.WriteString(fmt.Sprintf(`<li><a href="%s"%s>%s</a></li>
-`, item, activeClass, item))
-		}
-		out.WriteString(`</ul>
-</nav>
-`)
-	}
-
-	out.WriteString(`<div class="content">
-`)
-	out.WriteString(body)
-	out.WriteString(`</div>
-</body>
-</html>
-`)
-	return []byte(out.String())
-}
-
-// markdownToHTML converts basic Markdown to a complete HTML page.
-func markdownToHTML(src []byte) []byte {
-	return buildWikiPage("CodeWiki", renderMarkdownBody(src), nil, "")
-}
-
-func renderInline(s string) string {
-	s = htmlEscape(s)
-	// Links: [text](url)
-	for {
-		start := strings.Index(s, "[")
-		if start == -1 {
-			break
-		}
-		mid := strings.Index(s[start:], "](")
-		if mid == -1 {
-			break
-		}
-		mid += start
-		end := strings.Index(s[mid:], ")")
-		if end == -1 {
-			break
-		}
-		end += mid
-		text := s[start+1 : mid]
-		url := s[mid+2 : end]
-		s = s[:start] + `<a href="` + url + `">` + text + `</a>` + s[end+1:]
-	}
-	// Bold: **text**
-	for {
-		start := strings.Index(s, "**")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(s[start+2:], "**")
-		if end == -1 {
-			break
-		}
-		end += start + 2
-		s = s[:start] + "<strong>" + s[start+2:end] + "</strong>" + s[end+2:]
-	}
-	// Italic: *text* (but not in already processed tags)
-	// Simple approach: process outside of tags
-	var result strings.Builder
-	inTag := false
-	for i := 0; i < len(s); i++ {
-		if s[i] == '<' {
-			inTag = true
-			result.WriteByte(s[i])
-			continue
-		}
-		if s[i] == '>' {
-			inTag = false
-			result.WriteByte(s[i])
-			continue
-		}
-		if !inTag && s[i] == '*' && i+1 < len(s) && s[i+1] != '*' && s[i+1] != ' ' {
-			end := strings.Index(s[i+1:], "*")
-			if end != -1 {
-				result.WriteString("<em>")
-				result.WriteString(s[i+1 : i+1+end])
-				result.WriteString("</em>")
-				i += end + 1
-				continue
-			}
-		}
-		result.WriteByte(s[i])
-	}
-	s = result.String()
-	// Inline code: `text`
-	for {
-		start := strings.Index(s, "`")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(s[start+1:], "`")
-		if end == -1 {
-			break
-		}
-		end += start + 1
-		s = s[:start] + "<code>" + s[start+1:end] + "</code>" + s[end+1:]
-	}
-	return s
-}
-
-func htmlEscape(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	s = strings.ReplaceAll(s, "\"", "&quot;")
-	return s
-}
-
-func orderedListMatch(s string) bool {
-	for i, c := range s {
-		if c >= '0' && c <= '9' {
-			continue
-		}
-		if i > 0 && c == '.' && i+1 < len(s) && s[i+1] == ' ' {
-			return true
-		}
-		return false
-	}
-	return false
-}
-
-func orderedListItem(s string) string {
-	for i, c := range s {
-		if c >= '0' && c <= '9' {
-			continue
-		}
-		if i > 0 && c == '.' && i+1 < len(s) && s[i+1] == ' ' {
-			return s[i+2:]
-		}
-		return s
-	}
-	return s
-}
-
-func splitTableCells(row string) []string {
-	row = strings.TrimSpace(row)
-	row = strings.TrimPrefix(row, "|")
-	row = strings.TrimSuffix(row, "|")
-	return strings.Split(row, "|")
-}
-
-func isTableSeparator(row string) bool {
-	row = strings.TrimSpace(row)
-	if !strings.HasPrefix(row, "|") {
-		return false
-	}
-	cells := splitTableCells(row)
-	for _, c := range cells {
-		c = strings.TrimSpace(c)
-		if c == "" {
-			continue
-		}
-		ok := true
-		for _, ch := range c {
-			if ch != '-' && ch != '|' && ch != ' ' && ch != ':' {
-				ok = false
-				break
-			}
-		}
-		if !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func contentTypeFor(path string) string {
@@ -795,11 +812,14 @@ func RunAsk(cfg *Config) error {
 
 func runSingleAsk(engine *rag.Engine, question string) error {
 	fmt.Printf("\n> %s\n\n", question)
-	ans, err := engine.Ask(context.Background(), question)
+	textCh, ans, err := engine.AskStream(context.Background(), question)
 	if err != nil {
 		return err
 	}
-	fmt.Println(ans.Text)
+	for token := range textCh {
+		fmt.Print(token)
+	}
+	fmt.Println()
 	if len(ans.Sources) > 0 {
 		fmt.Println("\n--- 引用来源 ---")
 		for _, s := range ans.Sources {
@@ -833,13 +853,18 @@ func runInteractiveAsk(engine *rag.Engine) error {
 			fmt.Println("再见！")
 			break
 		}
-		ans, err := engine.AskWithSession(context.Background(), line, session)
+		textCh, ans, err := engine.AskStreamWithSession(context.Background(), line, session)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "错误：%v\n", err)
 			continue
 		}
 		fmt.Println()
-		fmt.Println(ans.Text)
+		var fullText strings.Builder
+		for token := range textCh {
+			fmt.Print(token)
+			fullText.WriteString(token)
+		}
+		fmt.Println()
 		if len(ans.Sources) > 0 {
 			fmt.Println("\n--- 引用来源 ---")
 			for _, s := range ans.Sources {
@@ -851,7 +876,7 @@ func runInteractiveAsk(engine *rag.Engine) error {
 			}
 		}
 		fmt.Println()
-		session.AddTurn(line, ans.Text)
+		session.AddTurn(line, fullText.String())
 	}
 	return nil
 }

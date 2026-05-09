@@ -22,6 +22,39 @@
 
 ## 安装
 
+### 一键安装（推荐）
+
+**Linux / macOS：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/splitsword/fine-codewiki/main/scripts/install.sh | sh
+```
+
+**Windows（PowerShell）：**
+
+```powershell
+irm https://raw.githubusercontent.com/splitsword/fine-codewiki/main/scripts/install.ps1 | iex
+```
+
+### Homebrew（macOS / Linux）
+
+> 即将推出：需要创建 `splitsword/homebrew-tap` 仓库后方可使用。
+>
+> 当前请使用一键安装脚本或从 [Releases](https://github.com/splitsword/fine-codewiki/releases) 下载预编译二进制。
+
+<!--
+```bash
+brew tap splitsword/fine-codewiki
+brew install codewiki
+```
+-->
+
+### 使用 Go 安装
+
+```bash
+go install github.com/splitsword/fine-codewiki/cmd/codewiki@latest
+```
+
 ### 从源码编译
 
 ```bash
@@ -184,8 +217,8 @@ go tool cover -func=coverage.out
 
 - **M1**（已完成）：核心可行原型 —— AST 解析、文档生成、架构图/类图、本地 Web 预览
 - **M2**（已完成）：问答与图表增强 —— RAG 问答、时序图、本地 LLM 适配、增量索引、多轮对话
-- **M3**（规划中）：产品化打磨 —— 导出 HTML/PDF、性能优化、安装分发（Homebrew / npm / winget）
-- **M4**（规划中）：生态扩展 —— Rust / C++ 支持、插件系统、VS Code 扩展
+- **M3**（进行中）：产品化打磨 —— 导出 HTML/PDF、性能优化、按语言定制 prompt、函数级 LLM 语义描述
+- **M4**（规划中）：生态扩展 —— Rust / C++ 支持、插件系统、VS Code 扩展、安装分发（Homebrew / npm / winget）
 
 详见 [prd.md](prd.md)。
 
@@ -199,4 +232,4 @@ go tool cover -func=coverage.out
 
 <p align="center">Built with Go. Code stays local.</p>
 
-> 最后更新：2026-05-08
+> 最后更新：2026-05-10

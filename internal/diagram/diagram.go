@@ -59,6 +59,15 @@ func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 		}
 	}
 
+	// Add click handlers for interactive navigation
+	for _, n := range graph.Nodes {
+		nodeID := mermaidEscape(n.Name)
+		b.WriteString(fmt.Sprintf("    click %s \"javascript:navigateToModule('%s')\"\n", nodeID, n.Name))
+	}
+
+	// Inject semantic role-based styling
+	writeRoleStyling(&b, graph)
+
 	// Detect cycles for annotation
 	cycles := graph.DetectCycles()
 	cycleEdges := make(map[string]bool)
@@ -114,6 +123,19 @@ func GenerateClassDiagram(graph *grapher.Graph) (string, error) {
 		return b.String(), nil
 	}
 
+	// Deduplicate by class name, keeping the one with the most methods.
+	classMap := make(map[string]classRef)
+	for _, ref := range classes {
+		c := ref.class
+		if existing, ok := classMap[c.Name]; !ok || len(c.Methods) > len(existing.class.Methods) {
+			classMap[c.Name] = ref
+		}
+	}
+	classes = classes[:0]
+	for _, ref := range classMap {
+		classes = append(classes, ref)
+	}
+
 	// Sort classes by name for deterministic output
 	sort.Slice(classes, func(i, j int) bool {
 		return classes[i].class.Name < classes[j].class.Name
@@ -123,6 +145,9 @@ func GenerateClassDiagram(graph *grapher.Graph) (string, error) {
 	for _, ref := range classes {
 		c := ref.class
 		classID := mermaidEscape(c.Name)
+		if ref.node != nil {
+			b.WriteString("    %% " + c.Name + " 来自 " + ref.node.Name + " 模块\n")
+		}
 		b.WriteString(fmt.Sprintf("    class %s {\n", classID))
 		for _, m := range c.Methods {
 			params := strings.Join(m.Params, ", ")
@@ -161,6 +186,7 @@ func GenerateClassDiagram(graph *grapher.Graph) (string, error) {
 // showing the full import dependency graph without subgraphs.
 func GenerateDependencyDiagram(graph *grapher.Graph) (string, error) {
 	var b strings.Builder
+	b.WriteString("%% 依赖图：展示模块间的完整导入依赖关系\n")
 	b.WriteString("graph LR\n")
 
 	if len(graph.Nodes) == 0 {
@@ -179,6 +205,9 @@ func GenerateDependencyDiagram(graph *grapher.Graph) (string, error) {
 		nodeID := mermaidEscape(n.Name)
 		b.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID, n.Name))
 	}
+
+	// Inject semantic role-based styling
+	writeRoleStyling(&b, graph)
 
 	// Detect cycles for annotation
 	cycles := graph.DetectCycles()
@@ -214,6 +243,71 @@ func GenerateDependencyDiagram(graph *grapher.Graph) (string, error) {
 	return b.String(), nil
 }
 
+// roleStyleMap maps inferred module roles to Mermaid classDef names and CSS styles.
+var roleStyleMap = map[string]struct {
+	className string
+	style     string
+}{
+	"入口层":   {"entry", "fill:#e1f5fe,stroke:#01579b,stroke-width:2px"},
+	"核心领域": {"core", "fill:#fff3e0,stroke:#e65100,stroke-width:2px"},
+	"工具库":   {"util", "fill:#f3e5f5,stroke:#4a148c,stroke-width:1px"},
+	"支撑模块": {"support", "fill:#e8f5e9,stroke:#1b5e20,stroke-width:1px"},
+	"业务模块": {"business", "fill:#f5f5f5,stroke:#424242,stroke-width:1px"},
+	"独立模块": {"independent", "fill:#fffde7,stroke:#f57f17,stroke-width:1px"},
+}
+
+// writeRoleStyling appends Mermaid classDef / class statements that colour
+// nodes according to their inferred architectural role.
+func writeRoleStyling(b *strings.Builder, graph *grapher.Graph) {
+	roles := graph.InferModuleRoles()
+	if len(roles) == 0 {
+		return
+	}
+
+	seen := make(map[string]bool)
+	var assignments []struct{ nodeID, className string }
+	for _, r := range roles {
+		info, ok := roleStyleMap[r.Role]
+		if !ok {
+			continue
+		}
+		seen[info.className] = true
+		assignments = append(assignments, struct{ nodeID, className string }{
+			nodeID:    mermaidEscape(r.Name),
+			className: info.className,
+		})
+	}
+	if len(assignments) == 0 {
+		return
+	}
+
+	sort.Slice(assignments, func(i, j int) bool {
+		return assignments[i].nodeID < assignments[j].nodeID
+	})
+
+	b.WriteString("\n")
+	b.WriteString("    %% 节点角色标注：按模块职责着色\n")
+	for _, key := range []string{"entry", "core", "util", "support", "business", "independent"} {
+		if seen[key] {
+			fmt.Fprintf(b, "    classDef %s %s\n", key, roleStyleMap[classNameToRole(key)].style)
+		}
+	}
+	for _, a := range assignments {
+		fmt.Fprintf(b, "    class %s %s\n", a.nodeID, a.className)
+	}
+}
+
+// classNameToRole reverses the classDef name back to a role key so we can look
+// up its style string deterministically.
+func classNameToRole(name string) string {
+	for role, info := range roleStyleMap {
+		if info.className == name {
+			return role
+		}
+	}
+	return ""
+}
+
 // mermaidEscape sanitizes a string for use as a Mermaid node/class identifier.
 func mermaidEscape(s string) string {
 	// Replace characters that break Mermaid identifiers
@@ -222,6 +316,11 @@ func mermaidEscape(s string) string {
 	s = strings.ReplaceAll(s, ":", "_")
 	s = strings.ReplaceAll(s, "/", "_")
 	s = strings.ReplaceAll(s, "--", "__")
+	// TypeScript generics and type parameters
+	s = strings.ReplaceAll(s, "<", "_")
+	s = strings.ReplaceAll(s, ">", "_")
+	s = strings.ReplaceAll(s, ",", "_")
+	s = strings.ReplaceAll(s, ".", "_")
 	return s
 }
 

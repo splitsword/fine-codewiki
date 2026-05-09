@@ -1,0 +1,28 @@
+%% 类图：展示项目中类的定义、属性及继承/实现关系
+classDiagram
+    %% BaseModel 来自 models/base 模块
+    class BaseModel {
+        +to_dict() Dict[str, Any]
+        +validate() bool
+    }
+    %% User 来自 models/user 模块
+    class User {
+        +create(username, email, password) User
+        +authenticate(password) bool
+        +deactivate() None
+    }
+    %% UserRepository 来自 repositories/user_repository 模块
+    class UserRepository {
+        +save(user) None
+        +find_by_id(user_id) Optional[User]
+        +find_by_username(username) Optional[User]
+        +find_all() List[User]
+    }
+    %% UserService 来自 services/user_service 模块
+    class UserService {
+        +__init__(repository)
+        +register(username, email, password) User
+        +authenticate(username, password) Optional[User]
+        +list_users() List[User]
+    }
+    User --|> BaseModel

@@ -30,12 +30,17 @@ func (p *TreeSitterParser) Parse(filename, source string) (*FileResult, error) {
 		}
 		return nil, fmt.Errorf("no grammar loaded and no fallback provided for %s", filename)
 	}
-	// Tree-sitter parsing would go here when pure-Go grammar files are available.
-	// Currently, tree-sitter grammars are distributed as C/WASM libraries that
-	// require CGO or a WASM runtime. Until pure-Go grammars are bundled,
-	// we gracefully fall back to the proven regex-based parsers.
+	// Tree-sitter grammar is now bundled via gotreesitter/grammars.
+	// Attempt real tree-sitter parsing; fall back to regex on failure or empty result.
+	result, err := extractFromTreeSitter(p.language, []byte(source), filename)
+	if err == nil && result != nil && (len(result.Classes) > 0 || len(result.Functions) > 0 || len(result.Imports) > 0) {
+		return result, nil
+	}
 	if p.fallback != nil {
 		return p.fallback(filename, source)
 	}
-	return nil, fmt.Errorf("tree-sitter grammar not yet available for %s", filename)
+	if err != nil {
+		return nil, fmt.Errorf("tree-sitter parse failed for %s: %w", filename, err)
+	}
+	return result, nil
 }

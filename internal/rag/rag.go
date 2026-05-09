@@ -112,6 +112,62 @@ func (e *Engine) AskWithSession(ctx context.Context, question string, session *S
 	}
 
 	// 5. Collect sources
+	sources := collectSources(results)
+
+	return &Answer{
+		Text:    text,
+		Sources: sources,
+	}, nil
+}
+
+// AskStream returns a channel that streams answer tokens. The returned *Answer
+// contains sources and is safe to read once the channel is closed.
+func (e *Engine) AskStream(ctx context.Context, question string) (<-chan string, *Answer, error) {
+	return e.AskStreamWithSession(ctx, question, nil)
+}
+
+// AskStreamWithSession returns a channel that streams answer tokens with
+// optional conversation history.
+func (e *Engine) AskStreamWithSession(ctx context.Context, question string, session *Session) (<-chan string, *Answer, error) {
+	if e.provider == nil {
+		return nil, nil, fmt.Errorf("no LLM provider configured")
+	}
+	if e.store.Count() == 0 {
+		return nil, nil, fmt.Errorf("vector store is empty: run 'codewiki generate' first")
+	}
+
+	// 1. Embed the query
+	queryVecs, err := e.provider.Embed(ctx, []string{question})
+	if err != nil {
+		return nil, nil, fmt.Errorf("embed query: %w", err)
+	}
+	if len(queryVecs) == 0 {
+		return nil, nil, fmt.Errorf("empty embedding returned for query")
+	}
+
+	// 2. Retrieve top-K chunks
+	results := e.store.Search(queryVecs[0], e.topK)
+	if len(results) == 0 {
+		return nil, nil, fmt.Errorf("no relevant code found for the question")
+	}
+
+	// 3. Build context prompt
+	prompt := buildRAGPrompt(question, results, session)
+
+	// 4. Start streaming
+	textCh, err := e.provider.CompleteStream(ctx, prompt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate answer: %w", err)
+	}
+
+	// 5. Collect sources (available immediately)
+	sources := collectSources(results)
+	ans := &Answer{Sources: sources}
+
+	return textCh, ans, nil
+}
+
+func collectSources(results []vectorstore.SearchResult) []Source {
 	var sources []Source
 	seen := make(map[string]bool)
 	for _, r := range results {
@@ -130,11 +186,7 @@ func (e *Engine) AskWithSession(ctx context.Context, question string, session *S
 			StartLine: r.Record.Chunk.StartLine,
 		})
 	}
-
-	return &Answer{
-		Text:    text,
-		Sources: sources,
-	}, nil
+	return sources
 }
 
 func buildRAGPrompt(question string, results []vectorstore.SearchResult, session *Session) string {
