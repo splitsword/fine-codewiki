@@ -213,6 +213,7 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 	}
 
 	if len(edges) == 0 {
+		fmt.Printf("[诊断] sourceDir=%s\n", sourceDir)
 		fmt.Printf("[诊断] 已知函数索引：%d 个名称\n", len(knownFuncs))
 		fmt.Printf("[诊断] 无函数定义的文件：%d 个\n", diagNoDefs)
 		fmt.Printf("[诊断] 找到调用但无匹配目标的文件：%d 个\n", diagNoCalls)
@@ -224,9 +225,13 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 			if !langOk {
 				langStr = "unsupported"
 			}
-			msg := fmt.Sprintf("  %s | lang=%s defs=%d ts=%d matched=%d fb=%d", d.ext, langStr, d.funcDefs, d.tsCalls, d.matched, d.fallback)
+			msg := fmt.Sprintf("  %s | path=%s lang=%s defs=%d ts=%d matched=%d fb=%d", d.ext, d.path, langStr, d.funcDefs, d.tsCalls, d.matched, d.fallback)
 			if d.readErr != nil {
-				msg += fmt.Sprintf(" ERR=%v", d.readErr)
+				srcPath := d.path
+				if !filepath.IsAbs(srcPath) {
+					srcPath = filepath.Join(sourceDir, d.path)
+				}
+				msg += fmt.Sprintf(" ERR=%v (sourceDir=%s resolved=%s)", d.readErr, sourceDir, srcPath)
 			}
 			fmt.Println(msg)
 		}

@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-10 — feat(sequencer): 诊断输出增加 sourceDir、path 和 resolved 路径 (8bd29b5)
+
 - 2026-05-10 — fix(cli): 缓存中的相对路径 Filename 导致 BuildCallGraph 读取文件失败 (10a853f)
 
 - 2026-05-10 — feat(sequencer): 为 BuildCallGraph 添加逐文件诊断日志 (f3f3da0)
