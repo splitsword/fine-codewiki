@@ -69,12 +69,24 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 	diagNoDefs := 0
 	diagNoCalls := 0
 	diagMissCallee := 0
+	// Per-file diagnostics collected when edges == 0.
+	type fileDiag struct {
+		path       string
+		ext        string
+		funcDefs   int
+		tsCalls    int
+		matched    int
+		fallback   int
+		readErr    error
+	}
+	var fileDiags []fileDiag
 
 	var edges []CallEdge
 	seen := make(map[string]bool)
 
 	for _, f := range files {
 		mod := moduleNameFromFilename(f.Filename)
+		ext := filepath.Ext(f.Filename)
 
 		// Handle both relative and absolute filenames safely on Windows.
 		srcPath := f.Filename
@@ -83,6 +95,7 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 		}
 		src, err := os.ReadFile(srcPath)
 		if err != nil {
+			fileDiags = append(fileDiags, fileDiag{path: f.Filename, ext: ext, readErr: err})
 			continue // skip files we can't read
 		}
 
@@ -97,11 +110,15 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 		}
 		if len(funcDefs) == 0 {
 			diagNoDefs++
+			fileDiags = append(fileDiags, fileDiag{path: f.Filename, ext: ext, funcDefs: 0})
 			continue // nothing to attribute calls to
 		}
 
+		fd := fileDiag{path: f.Filename, ext: ext, funcDefs: len(funcDefs)}
+
 		// Try tree-sitter based call extraction first (more accurate).
 		tsCalls := analyzer.ExtractCallSites(src, f.Filename)
+		fd.tsCalls = len(tsCalls)
 		if len(tsCalls) > 0 {
 			matched := 0
 			for _, site := range tsCalls {
@@ -134,10 +151,13 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 			if matched == 0 && len(tsCalls) > 0 {
 				diagNoCalls++
 			}
+			fd.matched = matched
+			fileDiags = append(fileDiags, fd)
 			continue
 		}
 
 		// Fallback to line-based scanning for unsupported languages.
+		fallbackEdges := 0
 		for i, line := range lines {
 			stripped := strings.TrimSpace(line)
 			if stripped == "" || strings.HasPrefix(stripped, "#") || strings.HasPrefix(stripped, "//") {
@@ -184,9 +204,12 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 				if !seen[key] {
 					seen[key] = true
 					edges = append(edges, edge)
+					fallbackEdges++
 				}
 			}
 		}
+		fd.fallback = fallbackEdges
+		fileDiags = append(fileDiags, fd)
 	}
 
 	if len(edges) == 0 {
@@ -194,6 +217,19 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 		fmt.Printf("[诊断] 无函数定义的文件：%d 个\n", diagNoDefs)
 		fmt.Printf("[诊断] 找到调用但无匹配目标的文件：%d 个\n", diagNoCalls)
 		fmt.Printf("[诊断] 调用目标不在已知函数中的次数：%d 次\n", diagMissCallee)
+		fmt.Println("[诊断] 逐文件详情：")
+		for _, d := range fileDiags {
+			_, langName, langOk := analyzer.GetLanguageForFile(d.path)
+			langStr := langName
+			if !langOk {
+				langStr = "unsupported"
+			}
+			msg := fmt.Sprintf("  %s | lang=%s defs=%d ts=%d matched=%d fb=%d", d.ext, langStr, d.funcDefs, d.tsCalls, d.matched, d.fallback)
+			if d.readErr != nil {
+				msg += fmt.Sprintf(" ERR=%v", d.readErr)
+			}
+			fmt.Println(msg)
+		}
 	}
 
 	return edges, nil

@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-10 — feat(sequencer): 为 BuildCallGraph 添加逐文件诊断日志 (f3f3da0)
+
 - 2026-05-10 — feat(cli, sequencer): --force 强制重新解析 AST，添加调用链诊断日志 (4d75120)
 
 - 2026-05-10 — 修复 BuildCallGraph 返回 0 调用的问题 (476b1a5)
