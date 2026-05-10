@@ -156,6 +156,11 @@ func RunGenerate(cfg *Config) error {
 		absSource = cfg.SourceDir
 	}
 	for _, f := range files {
+		// If the cached filename is relative, resolve it against the source
+		// directory first so filepath.Abs doesn't use the current working dir.
+		if !filepath.IsAbs(f.Filename) {
+			f.Filename = filepath.Join(cfg.SourceDir, f.Filename)
+		}
 		absFile, err := filepath.Abs(f.Filename)
 		if err == nil {
 			f.Filename = absFile

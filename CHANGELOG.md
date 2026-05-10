@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-10 — fix(cli): 缓存中的相对路径 Filename 导致 BuildCallGraph 读取文件失败 (10a853f)
+
 - 2026-05-10 — feat(sequencer): 为 BuildCallGraph 添加逐文件诊断日志 (f3f3da0)
 
 - 2026-05-10 — feat(cli, sequencer): --force 强制重新解析 AST，添加调用链诊断日志 (4d75120)
