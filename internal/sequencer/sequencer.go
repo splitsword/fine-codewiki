@@ -79,8 +79,13 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 
 		lines := strings.Split(string(src), "\n")
 
-		// Find function definition lines in this file
-		funcDefs := findFunctionDefs(f, lines)
+		// Find function definition lines in this file.
+		// Prefer already-extracted metadata (e.g. from tree-sitter) so we
+		// don't rely on brittle regexes for languages like TypeScript.
+		funcDefs := buildFuncDefsFromResult(f, lines)
+		if len(funcDefs) == 0 {
+			funcDefs = findFunctionDefs(f, lines)
+		}
 
 		// Scan each line for calls to known functions
 		for i, line := range lines {
@@ -144,6 +149,47 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 	}
 
 	return edges, nil
+}
+
+// buildFuncDefsFromResult creates funcDefs from the metadata already extracted
+// by the analyzer (e.g. tree-sitter). This is much more reliable than regex
+// for languages like TypeScript where signatures span multiple lines or use
+// decorators.
+func buildFuncDefsFromResult(f *analyzer.FileResult, lines []string) []funcDef {
+	var defs []funcDef
+
+	for _, fn := range f.Functions {
+		if fn.StartLine <= 0 || fn.StartLine > len(lines) {
+			continue
+		}
+		lineIdx := fn.StartLine - 1
+		line := lines[lineIdx]
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		defs = append(defs, funcDef{Name: fn.Name, Line: lineIdx, Indent: indent})
+	}
+
+	for _, cls := range f.Classes {
+		for _, m := range cls.Methods {
+			if m.StartLine <= 0 || m.StartLine > len(lines) {
+				continue
+			}
+			lineIdx := m.StartLine - 1
+			line := lines[lineIdx]
+			indent := len(line) - len(strings.TrimLeft(line, " \t"))
+			name := m.Name
+			if cls.Name != "" {
+				name = cls.Name + "." + m.Name
+			}
+			defs = append(defs, funcDef{Name: name, Line: lineIdx, Indent: indent})
+		}
+	}
+
+	// Sort by line number for findNearestPrecedingFunc
+	sort.Slice(defs, func(i, j int) bool {
+		return defs[i].Line < defs[j].Line
+	})
+
+	return defs
 }
 
 // findFunctionDefs locates function definition lines in source.

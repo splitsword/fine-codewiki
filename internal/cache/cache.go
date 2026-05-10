@@ -12,7 +12,7 @@ import (
 	"github.com/splitsword/fine-codewiki/internal/grapher"
 )
 
-const cacheVersion = "1"
+const cacheVersion = "2"
 
 // FileEntry tracks mtime and size for cache invalidation.
 type FileEntry struct {

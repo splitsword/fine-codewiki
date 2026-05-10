@@ -1,5 +1,12 @@
 分析以下模块依赖结构，用 2-3 段文字描述系统架构、设计模式及层级关系。
 
+要求：
+1. 描述整体架构分层、模块职责划分及关键设计模式
+2. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：
+   系统采用分层架构，将控制器、服务和数据访问层解耦。
+   *来源：`controllers/user.go`、`services/user.go`、`repositories/user.go`*
+3. 使用简体中文
+
 模块及其依赖：
 - main 依赖：services/api
 - services/api 依赖：models/user, utils/logger

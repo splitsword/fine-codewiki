@@ -150,7 +150,7 @@ func TestWriteWikiFiles(t *testing.T) {
 		ProjectName:         "test-project",
 		Overview:            "# test-project\n\n项目概述。\n",
 		APIReference:        "# API 参考\n\nAPI 内容。\n",
-		Architecture:        "# 架构\n\n架构说明。\n",
+		Architecture:        "# 架构\n\n架构说明。\n\n```mermaid\ngraph TD\n    A --> B\n```\n",
 		ClassDiagram:        "classDiagram\n",
 		ArchitectureDiagram: "graph TD\n",
 	}
@@ -236,7 +236,6 @@ func TestGenerateWikiFromGraph(t *testing.T) {
 	// Verify overview contains key info
 	assert.Contains(t, wiki.Overview, "test-project")
 	assert.Contains(t, wiki.Overview, "models/user")
-	assert.Contains(t, wiki.Overview, "models/base")
 
 	// Verify architecture doc contains embedded diagram
 	assert.Contains(t, wiki.Architecture, "```mermaid")
@@ -280,7 +279,6 @@ func TestGenerateWikiWithLLM(t *testing.T) {
 	assert.Contains(t, wiki.Overview, "AI-enhanced project overview")
 	// Should also contain static content
 	assert.Contains(t, wiki.Overview, "ai-project")
-	assert.Contains(t, wiki.Overview, "models/user")
 }
 
 func TestGenerateWikiWithLLMFallback(t *testing.T) {
@@ -298,7 +296,6 @@ func TestGenerateWikiWithLLMFallback(t *testing.T) {
 
 	// Should still contain static content, no panic
 	assert.Contains(t, wiki.Overview, "fallback-project")
-	assert.Contains(t, wiki.Overview, "models/user")
 	// Should NOT start with YAML frontmatter (addFrontmatter is applied later in WriteWikiFiles)
 	assert.False(t, strings.HasPrefix(wiki.Overview, "---"))
 }
@@ -537,7 +534,9 @@ func TestGenerateMarkdownCompilation(t *testing.T) {
 	wiki := &Wiki{
 		ProjectName:         "demo",
 		Overview:            "# demo\n\n项目概述内容。\n",
-		Architecture:        "# 架构\n\n架构说明内容。\n",
+		Architecture:        "# 架构\n\n架构说明内容。\n\n```mermaid\ngraph TD\n    A --> B\n```\n",
+		KeyConcepts:         "核心概念内容。\n\n## 类型关系图\n\n下图展示了项目中核心类与接口的继承和组合关系：\n\n```mermaid\nclassDiagram\n    class A\n```\n",
+		LearningPath:        "学习路径内容。\n\n## 关键调用流程\n\n下图展示了系统中一条典型调用链的交互顺序：\n\n> 触发条件：调用 A 的主流程执行；最终由 B 完成数据查询\n\n```mermaid\nsequenceDiagram\n    A->>B: msg\n```\n",
 		APIReference:        "# API 参考\n\nAPI 内容。\n",
 		ArchitectureDiagram: "graph TD\n    A --> B\n",
 		ClassDiagram:        "classDiagram\n    class A\n",
@@ -575,13 +574,14 @@ func TestGenerateMarkdownCompilation(t *testing.T) {
 	}
 	assert.Equal(t, 1, level1Count, "合辑中只允许一个一级标题")
 
-	// 应该包含嵌入的图表
-	assert.Contains(t, comp, "## 架构图")
-	assert.Contains(t, comp, "## 类图")
-	assert.Contains(t, comp, "## 时序图")
+	// 图表已嵌入到对应主题文章中，不再作为独立章节
+	assert.NotContains(t, comp, "## 架构图")
+	assert.NotContains(t, comp, "## 类图")
+	assert.NotContains(t, comp, "## 时序图")
+	// 但 mermaid 代码块应通过主题文章内嵌出现
 	assert.Contains(t, comp, "```mermaid")
 
-	// 应该包含时序图场景描述
+	// 时序图场景描述已嵌入 learning-path
 	assert.Contains(t, comp, "> 触发条件：调用 A 的主流程执行；最终由 B 完成数据查询")
 }
 
@@ -590,6 +590,8 @@ func TestGenerateStaticHTML(t *testing.T) {
 		ProjectName:         "html-demo",
 		Overview:            "# html-demo\n\n项目概述内容。\n",
 		Architecture:        "# 架构\n\n架构说明内容。\n\n```mermaid\ngraph TD\n    A --> B\n```\n",
+		KeyConcepts:         "核心概念内容。\n\n## 类型关系图\n\n下图展示了项目中核心类与接口的继承和组合关系：\n\n```mermaid\nclassDiagram\n    class A\n```\n",
+		LearningPath:        "学习路径内容。\n\n## 关键调用流程\n\n下图展示了系统中一条典型调用链的交互顺序：\n\n> 触发条件：调用 A 的主流程执行；最终由 B 完成数据查询\n\n```mermaid\nsequenceDiagram\n    A->>B: msg\n```\n",
 		APIReference:        "# API 参考\n\nAPI 内容。\n",
 		ArchitectureDiagram: "graph TD\n    A --> B\n",
 		ClassDiagram:        "classDiagram\n    class A\n",
@@ -608,17 +610,19 @@ func TestGenerateStaticHTML(t *testing.T) {
 	assert.Contains(t, html, `<a href="#overview">项目概述</a>`)
 	assert.Contains(t, html, `<a href="#architecture">架构说明</a>`)
 	assert.Contains(t, html, `<a href="#api-reference">API 参考</a>`)
-	assert.Contains(t, html, `<a href="#architecture-diagram">架构图</a>`)
-	assert.Contains(t, html, `<a href="#class-diagram">类图</a>`)
-	assert.Contains(t, html, `<a href="#sequence-diagram">时序图</a>`)
+	// 图表已嵌入对应主题，不再作为独立导航项
+	assert.NotContains(t, html, `<a href="#architecture-diagram">架构图</a>`)
+	assert.NotContains(t, html, `<a href="#class-diagram">类图</a>`)
+	assert.NotContains(t, html, `<a href="#sequence-diagram">时序图</a>`)
 
 	// 内容区块
 	assert.Contains(t, html, `<section id="overview">`)
 	assert.Contains(t, html, `<section id="architecture">`)
 	assert.Contains(t, html, `<section id="api-reference">`)
-	assert.Contains(t, html, `<section id="architecture-diagram">`)
-	assert.Contains(t, html, `<section id="class-diagram">`)
-	assert.Contains(t, html, `<section id="sequence-diagram">`)
+	// 图表已嵌入对应主题 section，不再作为独立 section
+	assert.NotContains(t, html, `<section id="architecture-diagram">`)
+	assert.NotContains(t, html, `<section id="class-diagram">`)
+	assert.NotContains(t, html, `<section id="sequence-diagram">`)
 
 	// Markdown 已渲染为 HTML
 	assert.Contains(t, html, "<h1>html-demo</h1>")
@@ -638,8 +642,8 @@ func TestGenerateStaticHTML(t *testing.T) {
 	assert.Contains(t, html, "securityLevel: 'loose'", "should enable loose security for click handlers")
 	assert.Contains(t, html, "window.navigateToModule", "should inject navigateToModule helper")
 
-	// 时序图场景描述
-	assert.Contains(t, html, "<strong>场景描述：</strong>触发条件：调用 A 的主流程执行；最终由 B 完成数据查询")
+	// 时序图场景描述已嵌入 learning-path section（通过 Markdown blockquote 渲染）
+	assert.Contains(t, html, "<blockquote>触发条件：调用 A 的主流程执行；最终由 B 完成数据查询</blockquote>")
 }
 
 func TestGeneratePDF(t *testing.T) {

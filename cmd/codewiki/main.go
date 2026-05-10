@@ -91,6 +91,7 @@ func runGenerate(args []string) {
 	lang := fs.String("lang", "", "Language filter: python, javascript (empty = auto-detect)")
 	name := fs.String("name", "", "Project name (default: directory name)")
 	maxFunctions := fs.Int("max-functions", -1, "Max functions for LLM semantic description: -1=auto (30%%), 0=skip, N=cap")
+	force := fs.Bool("force", false, "Force full regeneration, ignore checkpoints")
 	fs.Parse(args)
 
 	cfg := &cli.Config{
@@ -99,6 +100,7 @@ func runGenerate(args []string) {
 		Language:        *lang,
 		ProjectName:     *name,
 		MaxLLMFunctions: *maxFunctions,
+		Force:           *force,
 	}
 
 	if err := cli.RunGenerate(cfg); err != nil {

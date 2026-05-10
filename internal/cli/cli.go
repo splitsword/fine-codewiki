@@ -39,6 +39,7 @@ type Config struct {
 	Interactive     bool
 	Question        string
 	ConfigPath      string
+	Force           bool
 }
 
 // RunGenerate executes the full generate pipeline: parse → graph → diagram → doc.
@@ -88,6 +89,12 @@ func RunGenerate(cfg *Config) error {
 	c.Prune(paths)
 
 	astChanged := len(jobs) > 0
+	if astChanged || cfg.Force {
+		docgen.ClearWikiCheckpoint(cfg.SourceDir)
+		if cfg.Force {
+			fmt.Println("--force 已指定，清除 checkpoint 并强制重新生成")
+		}
+	}
 	if astChanged {
 		fmt.Printf("发现 %d 个新/变更文件需要解析（%d 个来自缓存）\n", len(jobs), len(files))
 		results := make([]*analyzer.FileResult, len(jobs))

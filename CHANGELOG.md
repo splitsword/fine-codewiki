@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-10 — feat(docgen, cli): 完成第三批 Zread 体验对齐 (8297287)
+
 - 2026-05-10 — feat(cli, docgen, diagram): 完成第一批与第二批 PRD 差距修复 (6c1040c)
 
 - 2026-05-08 — feat(analyzer): tree-sitter grammar 捆绑（`gotreesitter/grammars`），tags query 提取 class/function，AST walk 提取 import，regex 兜底回退

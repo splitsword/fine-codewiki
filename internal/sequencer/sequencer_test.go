@@ -380,6 +380,78 @@ func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
+func TestBuildCallGraphTypeScriptWithMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// TypeScript with patterns that regex can't handle well:
+	// - decorator before method
+	// - multi-line signature
+	// - arrow function
+	writeFile(t, tmpDir, "service.ts", `
+class UserService {
+  @Log()
+  async createUser(
+    dto: CreateUserDto
+  ): Promise<User> {
+    this.validate(dto)
+    return this.save(dto)
+  }
+
+  validate(d: CreateUserDto): void {
+    // validation
+  }
+
+  save(d: CreateUserDto): User {
+    return new User()
+  }
+}
+`)
+	writeFile(t, tmpDir, "helper.ts", `
+export const formatName = (name: string): string => {
+  return name.trim()
+}
+`)
+
+	// FileResult with StartLine populated (as tree-sitter would provide)
+	files := []*analyzer.FileResult{
+		{
+			Filename: "service.ts",
+			Classes: []analyzer.ClassInfo{
+				{
+					Name:      "UserService",
+					StartLine: 1,
+					Methods: []analyzer.FunctionInfo{
+						{Name: "createUser", StartLine: 4},
+						{Name: "validate", StartLine: 10},
+						{Name: "save", StartLine: 14},
+					},
+				},
+			},
+		},
+		{
+			Filename:  "helper.ts",
+			Functions: []analyzer.FunctionInfo{{Name: "formatName", StartLine: 1}},
+		},
+	}
+
+	edges, err := BuildCallGraph(tmpDir, files)
+	require.NoError(t, err)
+	require.NotEmpty(t, edges, "should discover calls using FileResult metadata even when regex fails")
+
+	// Verify createUser -> validate and createUser -> save
+	var foundValidate, foundSave bool
+	for _, e := range edges {
+		if e.From.Name == "UserService.createUser" && e.To.Name == "UserService.validate" {
+			foundValidate = true
+		}
+		if e.From.Name == "UserService.createUser" && e.To.Name == "UserService.save" {
+			foundSave = true
+		}
+	}
+	assert.True(t, foundValidate, "expected createUser -> validate call")
+	assert.True(t, foundSave, "expected createUser -> save call")
+}
+
 func TestBuildCallGraphPythonBasic(t *testing.T) {
 	repoPath := filepath.Join("..", "..", "testdata", "repos", "python-basic")
 	files := []*analyzer.FileResult{

@@ -2,6 +2,7 @@ package docgen
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,6 +34,50 @@ type Wiki struct {
 	ModuleThemes        map[string][]string // theme -> sorted module names
 }
 
+// wikiCheckpoint persists partial LLM-enhanced results for resume support.
+type wikiCheckpoint struct {
+	Overview      string            `json:"overview,omitempty"`
+	WhatItDoes    string            `json:"what_it_does,omitempty"`
+	KeyConcepts   string            `json:"key_concepts,omitempty"`
+	LearningPath  string            `json:"learning_path,omitempty"`
+	ArchNarrative string            `json:"arch_narrative,omitempty"`
+	FuncDescMap   map[string]string `json:"func_desc_map,omitempty"`
+	Timestamp     time.Time         `json:"timestamp"`
+}
+
+func loadWikiCheckpoint(path string) *wikiCheckpoint {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return &wikiCheckpoint{FuncDescMap: make(map[string]string)}
+	}
+	var cp wikiCheckpoint
+	if err := json.Unmarshal(b, &cp); err != nil {
+		return &wikiCheckpoint{FuncDescMap: make(map[string]string)}
+	}
+	if cp.FuncDescMap == nil {
+		cp.FuncDescMap = make(map[string]string)
+	}
+	return &cp
+}
+
+func saveWikiCheckpoint(path string, cp *wikiCheckpoint) error {
+	cp.Timestamp = time.Now()
+	b, err := json.MarshalIndent(cp, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0644)
+}
+
+// ClearWikiCheckpoint removes the checkpoint so the next run starts fresh.
+func ClearWikiCheckpoint(sourceDir string) {
+	path := filepath.Join(sourceDir, ".codewiki", "checkpoint", "wiki.json")
+	_ = os.Remove(path)
+}
+
 // GenerateWiki produces a complete Wiki from analysis results and diagrams.
 func GenerateWiki(graph *grapher.Graph, projectName, archDSL, classDSL, seqDSL string) (*Wiki, error) {
 	return generateWikiEnhanced(context.Background(), nil, graph, "", projectName, archDSL, classDSL, seqDSL, "", 0)
@@ -54,6 +99,12 @@ func GenerateWikiEnhancedWithMaxFunctions(ctx context.Context, provider llm.Prov
 }
 
 func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *grapher.Graph, sourceDir, projectName, archDSL, classDSL, seqDSL, language string, maxLLMFunctions int) (*Wiki, error) {
+	cpPath := ""
+	if sourceDir != "" {
+		cpPath = filepath.Join(sourceDir, ".codewiki", "checkpoint", "wiki.json")
+	}
+	cp := loadWikiCheckpoint(cpPath)
+
 	readme := loadProjectReadme(sourceDir)
 
 	overview, err := GenerateOverviewMarkdown(graph, projectName)
@@ -64,25 +115,32 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	// LLM enhancement for overview: replace static list with narrative when successful.
 	staticOverview := overview
 	if provider != nil {
-		fmt.Println("[LLM] 正在生成项目概述...")
-		prompt := buildOverviewPrompt(graph, projectName, readme, language)
-		enhanced, err := provider.Complete(ctx, prompt)
-		if err != nil {
-			fmt.Printf("警告：LLM 生成项目概述失败 (%v)\n", err)
-			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
-				fmt.Println("提示：请求超时，请在 ~/.codewiki/config.yaml 中增加 timeout 值（例如 timeout: 300）")
-			}
-		} else if enhanced == "" {
-			fmt.Println("警告：LLM 返回了空的项目概述")
-		} else if isChecklistLike(enhanced, graph) {
-			fmt.Println("警告：LLM 返回的内容像是模块清单，已回退到静态描述")
+		if cp.Overview != "" {
+			fmt.Println("[Checkpoint] 恢复项目概述")
+			overview = cp.Overview
 		} else {
-			if hallucinated, hasHallucination := detectHallucination(enhanced, graph); hasHallucination {
-				fmt.Printf("提示：LLM 输出中发现 %d 处可能不存在的引用（%s），仍采用增强内容\n", len(hallucinated), strings.Join(hallucinated, ", "))
+			fmt.Println("[LLM] 正在生成项目概述...")
+			prompt := buildOverviewPrompt(graph, projectName, readme, language)
+			enhanced, err := provider.Complete(ctx, prompt)
+			if err != nil {
+				fmt.Printf("警告：LLM 生成项目概述失败 (%v)\n", err)
+				if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
+					fmt.Println("提示：请求超时，请在 ~/.codewiki/config.yaml 中增加 timeout 值（例如 timeout: 300）")
+				}
+			} else if enhanced == "" {
+				fmt.Println("警告：LLM 返回了空的项目概述")
+			} else if isChecklistLike(enhanced, graph) {
+				fmt.Println("警告：LLM 返回的内容像是模块清单，已回退到静态描述")
+			} else {
+				if hallucinated, hasHallucination := detectHallucination(enhanced, graph); hasHallucination {
+					fmt.Printf("提示：LLM 输出中发现 %d 处可能不存在的引用（%s），仍采用增强内容\n", len(hallucinated), strings.Join(hallucinated, ", "))
+				}
+				overview = fmt.Sprintf("# %s\n\n%s", projectName, enhanced)
 			}
-			overview = fmt.Sprintf("# %s\n\n%s", projectName, enhanced)
+			cp.Overview = overview
+			_ = saveWikiCheckpoint(cpPath, cp)
+			fmt.Println("[LLM] 项目概述生成完成")
 		}
-		fmt.Println("[LLM] 项目概述生成完成")
 	}
 	_ = staticOverview // retain for potential future use (e.g. compilation appendix)
 
@@ -90,15 +148,22 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	staticWhatItDoes := GenerateWhatItDoesMarkdown(graph, projectName)
 	whatItDoes := staticWhatItDoes
 	if provider != nil {
-		fmt.Println("[LLM] 正在生成项目核心能力说明...")
-		prompt := buildWhatItDoesPrompt(graph, projectName, readme, language)
-		enhanced, err := provider.Complete(ctx, prompt)
-		if err != nil {
-			fmt.Printf("警告：LLM 生成核心能力说明失败 (%v)\n", err)
-		} else if enhanced != "" && !isChecklistLike(enhanced, graph) {
-			whatItDoes = fmt.Sprintf("# %s 能做什么\n\n%s", projectName, enhanced)
+		if cp.WhatItDoes != "" {
+			fmt.Println("[Checkpoint] 恢复项目核心能力说明")
+			whatItDoes = cp.WhatItDoes
+		} else {
+			fmt.Println("[LLM] 正在生成项目核心能力说明...")
+			prompt := buildWhatItDoesPrompt(graph, projectName, readme, language)
+			enhanced, err := provider.Complete(ctx, prompt)
+			if err != nil {
+				fmt.Printf("警告：LLM 生成核心能力说明失败 (%v)\n", err)
+			} else if enhanced != "" && !isChecklistLike(enhanced, graph) {
+				whatItDoes = fmt.Sprintf("# %s 能做什么\n\n%s", projectName, enhanced)
+			}
+			cp.WhatItDoes = whatItDoes
+			_ = saveWikiCheckpoint(cpPath, cp)
+			fmt.Println("[LLM] 核心能力说明生成完成")
 		}
-		fmt.Println("[LLM] 核心能力说明生成完成")
 	}
 
 	// Generate project structure guide
@@ -106,7 +171,10 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 	// Generate key concepts / design decisions
 	keyConcepts := ""
-	if provider != nil {
+	if provider != nil && cp.KeyConcepts != "" {
+		fmt.Println("[Checkpoint] 恢复关键设计决策")
+		keyConcepts = cp.KeyConcepts
+	} else if provider != nil {
 		fmt.Println("[LLM] 正在生成关键设计决策...")
 		prompt := buildKeyConceptsPrompt(graph, projectName, language)
 		batchCtx, batchCancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -122,6 +190,8 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		} else {
 			keyConcepts = enhanced
 		}
+		cp.KeyConcepts = keyConcepts
+		_ = saveWikiCheckpoint(cpPath, cp)
 		fmt.Println("[LLM] 设计决策生成完成")
 	} else {
 		keyConcepts = GenerateKeyConceptsFallback(graph, projectName)
@@ -131,31 +201,41 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	staticLearningPath := GenerateLearningPathMarkdown(graph, projectName, keyConcepts != "")
 	learningPath := staticLearningPath
 	if provider != nil {
-		fmt.Println("[LLM] 正在生成学习路径...")
-		prompt := buildLearningPathPrompt(graph, projectName, language)
-		batchCtx, batchCancel := context.WithTimeout(ctx, 5*time.Minute)
-		enhanced, err := provider.Complete(batchCtx, prompt)
-		batchCancel()
-		if err != nil {
-			fmt.Printf("警告：LLM 生成学习路径失败 (%v)\n", err)
-			fmt.Println("[Fallback] 使用静态学习路径...")
-		} else if enhanced == "" || isChecklistLike(enhanced, graph) {
-			fmt.Println("警告：LLM 返回的学习路径内容无效，使用静态回退")
+		if cp.LearningPath != "" {
+			fmt.Println("[Checkpoint] 恢复学习路径")
+			learningPath = cp.LearningPath
 		} else {
-			learningPath = fmt.Sprintf("# %s 学习路径\n\n%s", projectName, enhanced)
+			fmt.Println("[LLM] 正在生成学习路径...")
+			prompt := buildLearningPathPrompt(graph, projectName, language)
+			batchCtx, batchCancel := context.WithTimeout(ctx, 5*time.Minute)
+			enhanced, err := provider.Complete(batchCtx, prompt)
+			batchCancel()
+			if err != nil {
+				fmt.Printf("警告：LLM 生成学习路径失败 (%v)\n", err)
+				fmt.Println("[Fallback] 使用静态学习路径...")
+			} else if enhanced == "" || isChecklistLike(enhanced, graph) {
+				fmt.Println("警告：LLM 返回的学习路径内容无效，使用静态回退")
+			} else {
+				learningPath = fmt.Sprintf("# %s 学习路径\n\n%s", projectName, enhanced)
+			}
+			cp.LearningPath = learningPath
+			_ = saveWikiCheckpoint(cpPath, cp)
+			fmt.Println("[LLM] 学习路径生成完成")
 		}
-		fmt.Println("[LLM] 学习路径生成完成")
 	}
 
-	// Append source attribution to narrative articles
-	sourcesFooter := buildSourcesFooter(graph, 10)
-	overview += sourcesFooter
-	whatItDoes += sourcesFooter
-	projectStructure += sourcesFooter
+	// Append source attribution to static-only articles (LLM-enhanced ones have inline per-paragraph attribution)
+	projectStructure += buildSourcesFooter(graph, 10)
 	if keyConcepts != "" {
-		keyConcepts += sourcesFooter
+		// Embed class diagram into key-concepts for thematic cohesion
+		if classDSL != "" {
+			keyConcepts += "\n## 类型关系图\n\n下图展示了项目中核心类与接口的继承和组合关系：\n\n```mermaid\n" + classDSL + "\n```\n"
+		}
 	}
-	learningPath += sourcesFooter
+	// Embed sequence diagram into learning-path for thematic cohesion
+	if seqDSL != "" {
+		learningPath += "\n## 关键调用流程\n\n下图展示了系统中一条典型调用链的交互顺序：\n\n```mermaid\n" + seqDSL + "\n```\n"
+	}
 
 	// Build call graph for richer function context
 	var callEdges []sequencer.CallEdge
@@ -169,7 +249,10 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 	// LLM enhancement for top function descriptions
 	var funcDescMap map[string]string
-	if provider != nil && maxLLMFunctions != 0 {
+	if provider != nil && maxLLMFunctions != 0 && len(cp.FuncDescMap) > 0 {
+		fmt.Printf("[Checkpoint] 恢复 %d 个函数语义描述\n", len(cp.FuncDescMap))
+		funcDescMap = cp.FuncDescMap
+	} else if provider != nil && maxLLMFunctions != 0 {
 		topFuncs := selectTopFunctions(graph, callEdges, maxLLMFunctions)
 		if len(topFuncs) > 0 {
 			funcDescMap = make(map[string]string)
@@ -214,6 +297,8 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			}
 			fmt.Printf("[LLM] 函数语义描述完成：%d/%d 个函数（覆盖率 %.0f%%）\n",
 				len(funcDescMap), totalFuncs, float64(len(funcDescMap))*100/float64(totalFuncs))
+			cp.FuncDescMap = funcDescMap
+			_ = saveWikiCheckpoint(cpPath, cp)
 		}
 	}
 
@@ -225,22 +310,29 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	// LLM enhancement for architecture
 	archNarrative := ""
 	if provider != nil {
-		fmt.Println("[LLM] 正在生成架构描述...")
-		prompt := buildArchitecturePrompt(graph, language)
-		enhanced, err := provider.Complete(ctx, prompt)
-		if err != nil {
-			fmt.Printf("警告：LLM 生成架构描述失败 (%v)\n", err)
-		} else if enhanced == "" {
-			fmt.Println("警告：LLM 返回了空的架构描述")
-		} else if isChecklistLike(enhanced, graph) {
-			fmt.Println("警告：LLM 返回的架构描述像是模块清单，已回退到静态描述")
+		if cp.ArchNarrative != "" {
+			fmt.Println("[Checkpoint] 恢复架构描述")
+			archNarrative = cp.ArchNarrative
 		} else {
-			if hallucinated, hasHallucination := detectHallucination(enhanced, graph); hasHallucination {
-				fmt.Printf("提示：LLM 架构描述中发现 %d 处可能不存在的引用（%s），仍采用增强内容\n", len(hallucinated), strings.Join(hallucinated, ", "))
+			fmt.Println("[LLM] 正在生成架构描述...")
+			prompt := buildArchitecturePrompt(graph, language)
+			enhanced, err := provider.Complete(ctx, prompt)
+			if err != nil {
+				fmt.Printf("警告：LLM 生成架构描述失败 (%v)\n", err)
+			} else if enhanced == "" {
+				fmt.Println("警告：LLM 返回了空的架构描述")
+			} else if isChecklistLike(enhanced, graph) {
+				fmt.Println("警告：LLM 返回的架构描述像是模块清单，已回退到静态描述")
+			} else {
+				if hallucinated, hasHallucination := detectHallucination(enhanced, graph); hasHallucination {
+					fmt.Printf("提示：LLM 架构描述中发现 %d 处可能不存在的引用（%s），仍采用增强内容\n", len(hallucinated), strings.Join(hallucinated, ", "))
+				}
+				archNarrative = enhanced
 			}
-			archNarrative = enhanced
+			cp.ArchNarrative = archNarrative
+			_ = saveWikiCheckpoint(cpPath, cp)
+			fmt.Println("[LLM] 架构描述生成完成")
 		}
-		fmt.Println("[LLM] 架构描述生成完成")
 	}
 
 	arch, err := GenerateArchitectureMarkdown(graph, archDSL, archNarrative)
@@ -271,6 +363,11 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	}
 	learningPath += buildWhereToGoNext("05-learning-path.md", hasConcepts)
 	apiRef += buildWhereToGoNext("api-reference.md", hasConcepts)
+
+	// 成功完成后清除 checkpoint，下次从头开始
+	if cpPath != "" {
+		_ = os.Remove(cpPath)
+	}
 
 	return &Wiki{
 		ProjectName:         projectName,
@@ -367,7 +464,9 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName, readme, language str
 	fmt.Fprintf(&b, "2. 概括整体架构风格（如 MVC、微服务、单体、工具库等）\n")
 	fmt.Fprintf(&b, "3. 说明关键模块的职责分工和协作方式\n")
 	fmt.Fprintf(&b, "4. 不要只是罗列模块名称和文件清单，要体现对代码逻辑的理解\n")
-	fmt.Fprintf(&b, "5. 在提到具体模块或设计决策时，请标注来源文件，格式为 `来源：filename`\n")
+	fmt.Fprintf(&b, "5. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：\n")
+	fmt.Fprintf(&b, "   本项目采用分层架构，将业务逻辑与数据访问解耦。\n")
+	fmt.Fprintf(&b, "   *来源：`services/user_service.py`、`repositories/user_repository.py`*\n")
 	fmt.Fprintf(&b, "6. 使用简体中文\n\n")
 
 	if readme != "" {
@@ -744,6 +843,12 @@ func buildAutoDescription(graph *grapher.Graph, projectName string, classCount, 
 func buildArchitecturePrompt(graph *grapher.Graph, language string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "分析以下模块依赖结构，用 2-3 段文字描述系统架构、设计模式及层级关系。\n\n")
+	fmt.Fprintf(&b, "要求：\n")
+	fmt.Fprintf(&b, "1. 描述整体架构分层、模块职责划分及关键设计模式\n")
+	fmt.Fprintf(&b, "2. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：\n")
+	fmt.Fprintf(&b, "   系统采用分层架构，将控制器、服务和数据访问层解耦。\n")
+	fmt.Fprintf(&b, "   *来源：`controllers/user.go`、`services/user.go`、`repositories/user.go`*\n")
+	fmt.Fprintf(&b, "3. 使用简体中文\n\n")
 	if language != "" {
 		fmt.Fprintf(&b, "编程语言：%s\n", language)
 	}
@@ -777,7 +882,9 @@ func buildWhatItDoesPrompt(graph *grapher.Graph, projectName, readme, language s
 	fmt.Fprintf(&b, "3. 用表格总结核心能力（至少3列：能力、说明、对应模块）\n")
 	fmt.Fprintf(&b, "4. 不要只是罗列模块名称，要体现\"用这些模块能完成什么任务\"\n")
 	fmt.Fprintf(&b, "5. 如果可能，提及设计哲学或独特之处\n")
-	fmt.Fprintf(&b, "6. 在提到具体模块或能力时，请标注来源文件，格式为 `来源：filename`\n")
+	fmt.Fprintf(&b, "6. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：\n")
+	fmt.Fprintf(&b, "   本项目提供用户认证与授权能力，支持多种登录方式。\n")
+	fmt.Fprintf(&b, "   *来源：`auth/service.py`、`oauth/providers.py`*\n")
 	fmt.Fprintf(&b, "7. 使用简体中文\n\n")
 
 	if readme != "" {
@@ -816,7 +923,9 @@ func buildKeyConceptsPrompt(graph *grapher.Graph, projectName, language string) 
 	fmt.Fprintf(&b, "1. 找出 3-5 个最关键的设计决策或架构概念\n")
 	fmt.Fprintf(&b, "2. 每个概念用一个小节说明：\"是什么\"、\"为什么这样设计\"、\"带来了什么好处/代价\"\n")
 	fmt.Fprintf(&b, "3. 不要罗列所有模块，只聚焦真正有设计深度的决策点\n")
-	fmt.Fprintf(&b, "4. 在提到具体模块或实现细节时，请标注来源文件，格式为 `来源：filename`\n")
+	fmt.Fprintf(&b, "4. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：\n")
+	fmt.Fprintf(&b, "   本项目采用命令模式将请求封装为对象，从而支持撤销和队列化操作。\n")
+	fmt.Fprintf(&b, "   *来源：`commands/base.py`、`invoker/remote.py`*\n")
 	fmt.Fprintf(&b, "5. 使用简体中文\n\n")
 	fmt.Fprintf(&b, "例如好的输出：\n")
 	fmt.Fprintf(&b, "## 命令行即 API 的设计哲学\n")
@@ -876,7 +985,9 @@ func buildLearningPathPrompt(graph *grapher.Graph, projectName, language string)
 	fmt.Fprintf(&b, "   - 功能开发路径（如何添加一个新功能）\n")
 	fmt.Fprintf(&b, "   - 深度理解路径（理解核心设计思想）\n")
 	fmt.Fprintf(&b, "3. 每条路径包含具体的步骤、预计时间、难度标签（入门 / 进阶 / 深入）\n")
-	fmt.Fprintf(&b, "4. 步骤中要引用具体的模块或文件，格式为 `来源：filename`\n")
+	fmt.Fprintf(&b, "4. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：\n")
+	fmt.Fprintf(&b, "   首先阅读入口模块，了解系统如何接收和分发请求。\n")
+	fmt.Fprintf(&b, "   *来源：`cmd/main.go`、`server/router.go`*\n")
 	fmt.Fprintf(&b, "5. 不要只是罗列文档链接，要体现为什么先读这个、再读那个的学习逻辑\n")
 	fmt.Fprintf(&b, "6. 使用简体中文\n\n")
 
@@ -1938,8 +2049,6 @@ func GenerateArchitectureMarkdown(graph *grapher.Graph, archDSL, narrative strin
 		b.WriteString("```\n\n")
 	}
 
-	b.WriteString(buildSourcesFooter(graph, 10))
-
 	return b.String(), nil
 }
 
@@ -1978,8 +2087,96 @@ func addFrontmatter(filename, content, projectName string, moduleCount int) stri
 	return fm + content
 }
 
+// backupWikiFiles archives existing wiki files before overwriting.
+func backupWikiFiles(outputDir string) error {
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	hasFiles := false
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "modules" {
+			hasFiles = true
+			break
+		}
+	}
+	if !hasFiles {
+		return nil
+	}
+
+	historyDir := filepath.Join(outputDir, "..", "history")
+	timestamp := time.Now().Format("20060102-150405")
+	backupDir := filepath.Join(historyDir, timestamp)
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return fmt.Errorf("create backup dir: %w", err)
+	}
+	if err := copyDir(outputDir, backupDir); err != nil {
+		return fmt.Errorf("backup files: %w", err)
+	}
+	if err := cleanupOldHistory(historyDir, 10); err != nil {
+		fmt.Printf("警告：清理旧版本历史失败 (%v)\n", err)
+	}
+	return nil
+}
+
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		dstPath := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(dstPath, info.Mode())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dstPath, data, info.Mode())
+	})
+}
+
+func cleanupOldHistory(historyDir string, keep int) error {
+	entries, err := os.ReadDir(historyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var versions []os.DirEntry
+	for _, e := range entries {
+		if e.IsDir() {
+			versions = append(versions, e)
+		}
+	}
+	if len(versions) <= keep {
+		return nil
+	}
+	sort.Slice(versions, func(i, j int) bool {
+		return versions[i].Name() < versions[j].Name()
+	})
+	for i := 0; i < len(versions)-keep; i++ {
+		oldDir := filepath.Join(historyDir, versions[i].Name())
+		if err := os.RemoveAll(oldDir); err != nil {
+			fmt.Printf("警告：删除旧版本 %s 失败 (%v)\n", oldDir, err)
+		}
+	}
+	return nil
+}
+
 // WriteWikiFiles writes all Wiki artifacts to the output directory.
 func WriteWikiFiles(outputDir string, wiki *Wiki, graph *grapher.Graph) error {
+	if err := backupWikiFiles(outputDir); err != nil {
+		fmt.Printf("警告：备份旧版本失败 (%v)\n", err)
+	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}
@@ -2131,35 +2328,9 @@ func GenerateStaticHTML(wiki *Wiki) string {
 		body.WriteString("</section>\n")
 	}
 
-	if wiki.ArchitectureDiagram != "" {
-		body.WriteString(`<section id="architecture-diagram">` + "\n")
-		body.WriteString("<h2>架构图</h2>\n")
-		body.WriteString("<div class=\"mermaid\">\n")
-		body.WriteString(wiki.ArchitectureDiagram)
-		body.WriteString("</div>\n")
-		body.WriteString("</section>\n")
-	}
-
-	if wiki.ClassDiagram != "" {
-		body.WriteString(`<section id="class-diagram">` + "\n")
-		body.WriteString("<h2>类图</h2>\n")
-		body.WriteString("<div class=\"mermaid\">\n")
-		body.WriteString(wiki.ClassDiagram)
-		body.WriteString("</div>\n")
-		body.WriteString("</section>\n")
-	}
-
-	if wiki.SequenceDiagram != "" {
-		body.WriteString(`<section id="sequence-diagram">` + "\n")
-		body.WriteString("<h2>时序图</h2>\n")
-		if wiki.SequenceDescription != "" {
-			body.WriteString(fmt.Sprintf("<p><strong>场景描述：</strong>%s</p>\n", HTMLEscape(wiki.SequenceDescription)))
-		}
-		body.WriteString("<div class=\"mermaid\">\n")
-		body.WriteString(wiki.SequenceDiagram)
-		body.WriteString("</div>\n")
-		body.WriteString("</section>\n")
-	}
+	// Diagrams are now embedded inside their thematic articles via Markdown
+	// mermaid code blocks, so RenderMarkdownBody already renders them inline.
+	// No standalone diagram sections needed.
 
 	// Module docs
 	if len(wiki.ModuleDocs) > 0 {
@@ -2187,15 +2358,7 @@ func GenerateStaticHTML(wiki *Wiki) string {
 		nav.WriteString(fmt.Sprintf(`<li><a href="#%s">%s</a></li>
 `, sec.id, sec.title))
 	}
-	if wiki.ArchitectureDiagram != "" {
-		nav.WriteString(`<li><a href="#architecture-diagram">架构图</a></li>` + "\n")
-	}
-	if wiki.ClassDiagram != "" {
-		nav.WriteString(`<li><a href="#class-diagram">类图</a></li>` + "\n")
-	}
-	if wiki.SequenceDiagram != "" {
-		nav.WriteString(`<li><a href="#sequence-diagram">时序图</a></li>` + "\n")
-	}
+	// Diagrams are now embedded inside their thematic sections, so no standalone nav links needed
 	if len(wiki.ModuleDocs) > 0 {
 		if len(wiki.ModuleThemes) > 0 {
 			for _, theme := range sortedThemeKeys(wiki.ModuleThemes) {
@@ -2261,8 +2424,9 @@ th, td { border: 1px solid #d0d7de; padding: 6px 13px; }
 tr:nth-child(even) { background: #f6f8fa; }
 th { background: #f6f8fa; font-weight: 600; }
 hr { height: .25em; padding: 0; margin: 24px 0; background: #d0d7de; border-0; }
-.mermaid { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow: auto; }
+.mermaid { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow: hidden; min-height: 200px; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
 <script type="module">
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
   mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' });
@@ -2270,6 +2434,13 @@ hr { height: .25em; padding: 0; margin: 24px 0; background: #d0d7de; border-0; }
     var safe = name.replace(/[\/\\:]/g, '_');
     window.location.href = 'modules/' + safe + '.md';
   };
+  window.addEventListener('load', function() {
+    if (typeof svgPanZoom === 'undefined') return;
+    document.querySelectorAll('.mermaid svg').forEach(function(svg) {
+      svg.style.maxWidth = 'none';
+      svgPanZoom(svg, { zoomEnabled: true, panEnabled: true, controlIconsEnabled: true, fit: true, center: true });
+    });
+  });
 </script>
 </head>
 <body>
@@ -2368,15 +2539,6 @@ func GenerateMarkdownCompilation(wiki *Wiki) string {
 	}
 	b.WriteString("6. [学习路径](#学习路径)\n")
 	b.WriteString("7. [API 参考](#api-参考)\n")
-	if wiki.ArchitectureDiagram != "" {
-		b.WriteString("8. [架构图](#架构图)\n")
-	}
-	if wiki.ClassDiagram != "" {
-		b.WriteString("9. [类图](#类图)\n")
-	}
-	if wiki.SequenceDiagram != "" {
-		b.WriteString("10. [时序图](#时序图)\n")
-	}
 	b.WriteString("\n---\n\n")
 
 	// Section 1: Overview
@@ -2410,28 +2572,9 @@ func GenerateMarkdownCompilation(wiki *Wiki) string {
 	b.WriteString(adjustHeadingLevel(wiki.APIReference, 1))
 	b.WriteString("\n\n---\n\n")
 
-	// Embedded diagrams (if available)
-	if wiki.ArchitectureDiagram != "" {
-		b.WriteString("## 架构图\n\n```mermaid\n")
-		b.WriteString(wiki.ArchitectureDiagram)
-		b.WriteString("```\n\n---\n\n")
-	}
-
-	if wiki.ClassDiagram != "" {
-		b.WriteString("## 类图\n\n```mermaid\n")
-		b.WriteString(wiki.ClassDiagram)
-		b.WriteString("```\n\n---\n\n")
-	}
-
-	if wiki.SequenceDiagram != "" {
-		b.WriteString("## 时序图\n\n")
-		if wiki.SequenceDescription != "" {
-			b.WriteString(fmt.Sprintf("> %s\n\n", wiki.SequenceDescription))
-		}
-		b.WriteString("```mermaid\n")
-		b.WriteString(wiki.SequenceDiagram)
-		b.WriteString("```\n\n---\n\n")
-	}
+	// Diagrams are now embedded inside their thematic articles via Markdown
+	// mermaid code blocks, so they automatically appear in the compilation
+	// under Architecture / Key Concepts / Learning Path sections.
 
 	// Module theme index
 	if len(wiki.ModuleDocs) > 0 && len(wiki.ModuleThemes) > 0 {

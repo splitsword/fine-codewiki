@@ -50,7 +50,7 @@ func defaultConfig() Config {
 		BaseURL:    "http://localhost:11434",
 		Model:      "qwen:14b",
 		MaxRetries: 3,
-		Timeout:    60,
+		Timeout:    120,
 	}
 }
 
@@ -230,7 +230,7 @@ type OpenAIProvider struct {
 func newOpenAIProvider(cfg *Config) *OpenAIProvider {
 	timeout := time.Duration(cfg.Timeout) * time.Second
 	if timeout == 0 {
-		timeout = 60 * time.Second
+		timeout = 120 * time.Second
 	}
 	return &OpenAIProvider{
 		BaseURL:    cfg.BaseURL,
@@ -356,7 +356,11 @@ func (p *OpenAIProvider) post(ctx context.Context, path string, reqBody, respBod
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * time.Second)
+			backoff := time.Duration(attempt*3) * time.Second
+			if isTimeout(lastErr) {
+				backoff = time.Duration(attempt*5) * time.Second
+			}
+			time.Sleep(backoff)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))

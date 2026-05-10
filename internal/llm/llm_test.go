@@ -242,7 +242,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	assert.Equal(t, "qwen:14b", cfg.Model)
 	assert.Equal(t, "http://localhost:11434", cfg.BaseURL) // default
 	assert.Equal(t, 3, cfg.MaxRetries)                     // default
-	assert.Equal(t, 60, cfg.Timeout)                       // default
+	assert.Equal(t, 120, cfg.Timeout)                      // default
 }
 
 func TestLoadConfigMissingFile(t *testing.T) {
