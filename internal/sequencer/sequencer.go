@@ -71,7 +71,12 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 
 	for _, f := range files {
 		mod := moduleNameFromFilename(f.Filename)
-		srcPath := filepath.Join(sourceDir, f.Filename)
+
+		// Handle both relative and absolute filenames safely on Windows.
+		srcPath := f.Filename
+		if !filepath.IsAbs(srcPath) {
+			srcPath = filepath.Join(sourceDir, f.Filename)
+		}
 		src, err := os.ReadFile(srcPath)
 		if err != nil {
 			continue // skip files we can't read
@@ -86,8 +91,42 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 		if len(funcDefs) == 0 {
 			funcDefs = findFunctionDefs(f, lines)
 		}
+		if len(funcDefs) == 0 {
+			continue // nothing to attribute calls to
+		}
 
-		// Scan each line for calls to known functions
+		// Try tree-sitter based call extraction first (more accurate).
+		tsCalls := analyzer.ExtractCallSites(src, f.Filename)
+		if len(tsCalls) > 0 {
+			for _, site := range tsCalls {
+				// Map 1-based line to 0-based index used by findNearestPrecedingFunc.
+				callerDef := findNearestPrecedingFunc(funcDefs, site.Line-1)
+				if callerDef.Name == "" {
+					continue
+				}
+				// Skip if this line is the definition of the caller itself.
+				if isDefinitionLine(strings.TrimSpace(lines[site.Line-1]), callerDef.Name, site.Callee) {
+					continue
+				}
+				refs, ok := knownFuncs[site.Callee]
+				if !ok {
+					continue
+				}
+				target := pickTarget(refs, callerDef.Name, mod)
+				edge := CallEdge{
+					From: FunctionRef{Module: mod, Name: callerDef.Name},
+					To:   target,
+				}
+				key := edge.From.String() + "->" + edge.To.String()
+				if !seen[key] {
+					seen[key] = true
+					edges = append(edges, edge)
+				}
+			}
+			continue
+		}
+
+		// Fallback to line-based scanning for unsupported languages.
 		for i, line := range lines {
 			stripped := strings.TrimSpace(line)
 			if stripped == "" || strings.HasPrefix(stripped, "#") || strings.HasPrefix(stripped, "//") {
@@ -106,19 +145,11 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 				continue
 			}
 
-			// Find caller for this line
 			callerDef := findNearestPrecedingFunc(funcDefs, i)
 			if callerDef.Name == "" {
 				continue
 			}
-			// If call line indent is not deeper than the function def indent,
-			// the call is at module/class level, not inside the function body.
-			callIndent := len(line) - len(strings.TrimLeft(line, " \t"))
-			if callIndent <= callerDef.Indent {
-				continue
-			}
 
-			// Look for calls to known functions (sort keys for determinism)
 			var knownNames []string
 			for name := range knownFuncs {
 				knownNames = append(knownNames, name)
@@ -132,7 +163,6 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 					continue
 				}
 
-				// Pick the best matching target
 				target := pickTarget(refs, callerDef.Name, mod)
 
 				edge := CallEdge{

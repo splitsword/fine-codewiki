@@ -152,3 +152,71 @@ func TestGetLanguageForFileSupported(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractCallSitesPython(t *testing.T) {
+	src := []byte(`
+def helper():
+    pass
+
+def main():
+    helper()
+    print("ok")
+`)
+	sites := ExtractCallSites(src, "main.py")
+	require.NotEmpty(t, sites)
+
+	var foundHelper bool
+	for _, s := range sites {
+		if s.Callee == "helper" {
+			foundHelper = true
+		}
+	}
+	assert.True(t, foundHelper, "expected to find call to helper")
+}
+
+func TestExtractCallSitesGo(t *testing.T) {
+	src := []byte(`
+package main
+
+func helper() {}
+
+func main() {
+	helper()
+	fmt.Println("ok")
+}
+`)
+	sites := ExtractCallSites(src, "main.go")
+	require.NotEmpty(t, sites)
+
+	var foundHelper, foundPrintln bool
+	for _, s := range sites {
+		if s.Callee == "helper" {
+			foundHelper = true
+		}
+		if s.Callee == "Println" {
+			foundPrintln = true
+		}
+	}
+	assert.True(t, foundHelper, "expected to find call to helper")
+	assert.True(t, foundPrintln, "expected to find call to Println")
+}
+
+func TestExtractCallSitesJava(t *testing.T) {
+	src := []byte(`
+public class Main {
+	public static void main(String[] args) {
+		Util.print();
+	}
+}
+`)
+	sites := ExtractCallSites(src, "Main.java")
+	require.NotEmpty(t, sites)
+	require.Len(t, sites, 1)
+	assert.Equal(t, "print", sites[0].Callee)
+}
+
+func TestExtractCallSitesUnsupportedExtension(t *testing.T) {
+	src := []byte(`call_me()`)
+	sites := ExtractCallSites(src, "script.unknown")
+	assert.Empty(t, sites)
+}

@@ -564,3 +564,85 @@ func TestSimplifyModuleName(t *testing.T) {
 	assert.Equal(t, "services", simplifyModuleName("services/api"))
 	assert.Equal(t, "main", simplifyModuleName("main"))
 }
+
+func TestBuildCallGraphGoMethodCall(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	writeFile(t, tmpDir, "service.go", `
+package main
+
+type UserService struct{}
+
+func (s *UserService) Register() {}
+func (s *UserService) Save() {}
+
+func run() {
+	s := &UserService{}
+	s.Register()
+	s.Save()
+}
+`)
+
+	files := []*analyzer.FileResult{
+		{
+			Filename: "service.go",
+			Classes: []analyzer.ClassInfo{
+				{
+					Name: "UserService",
+					Methods: []analyzer.FunctionInfo{
+						{Name: "Register"},
+						{Name: "Save"},
+					},
+				},
+			},
+			Functions: []analyzer.FunctionInfo{{Name: "run"}},
+		},
+	}
+
+	edges, err := BuildCallGraph(tmpDir, files)
+	require.NoError(t, err)
+	require.NotEmpty(t, edges, "should discover method calls via tree-sitter")
+
+	var foundRegister, foundSave bool
+	for _, e := range edges {
+		if e.From.Name == "run" && e.To.Name == "UserService.Register" {
+			foundRegister = true
+		}
+		if e.From.Name == "run" && e.To.Name == "UserService.Save" {
+			foundSave = true
+		}
+	}
+	assert.True(t, foundRegister, "expected run -> UserService.Register")
+	assert.True(t, foundSave, "expected run -> UserService.Save")
+}
+
+func TestBuildCallGraphAbsolutePath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	writeFile(t, tmpDir, "main.go", `
+package main
+
+func helper() {}
+
+func main() {
+	helper()
+}
+`)
+
+	files := []*analyzer.FileResult{
+		{
+			Filename: filepath.Join(tmpDir, "main.go"),
+			Functions: []analyzer.FunctionInfo{
+				{Name: "helper"},
+				{Name: "main"},
+			},
+		},
+	}
+
+	// Pass an empty sourceDir to prove absolute paths are handled correctly.
+	edges, err := BuildCallGraph("", files)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	assert.Equal(t, "main", edges[0].From.Name)
+	assert.Equal(t, "helper", edges[0].To.Name)
+}

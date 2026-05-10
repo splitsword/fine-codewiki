@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-10 — 修复 BuildCallGraph 返回 0 调用的问题 (476b1a5)
+
 - 2026-05-10 — feat(docgen, cli): 完成第三批 Zread 体验对齐 (8297287)
 
 - 2026-05-10 — feat(cli, docgen, diagram): 完成第一批与第二批 PRD 差距修复 (6c1040c)

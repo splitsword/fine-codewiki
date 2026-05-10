@@ -246,6 +246,128 @@ func extractQuotedString(text string) string {
 	return ""
 }
 
+// CallSite represents a function or method invocation discovered in source code.
+type CallSite struct {
+	Callee string // name of the called function or method
+	Line   int    // 1-based line number
+}
+
+// ExtractCallSites parses source with tree-sitter and returns all call sites.
+// It works for any language with a bundled grammar (Go, Python, JS/TS, Java,
+// Rust, C/C++, Ruby, C#).  Calls inside comments or strings are naturally
+// excluded because tree-sitter does not parse them as call nodes.
+func ExtractCallSites(source []byte, filename string) []CallSite {
+	entry := grammars.DetectLanguage(filename)
+	if entry == nil {
+		return nil
+	}
+	lang := entry.Language()
+	if lang == nil {
+		return nil
+	}
+
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		return nil
+	}
+
+	var sites []CallSite
+	gotreesitter.Walk(tree.RootNode(), func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		if isCallNode(node, lang) {
+			callee := extractCalleeName(node, lang, source)
+			if callee != "" {
+				line := int(node.StartPoint().Row) + 1
+				sites = append(sites, CallSite{Callee: callee, Line: line})
+			}
+		}
+		return gotreesitter.WalkContinue
+	})
+	return sites
+}
+
+func isCallNode(node *gotreesitter.Node, lang *gotreesitter.Language) bool {
+	if node == nil {
+		return false
+	}
+	t := node.Type(lang)
+	switch t {
+	case "call_expression", "call", "method_invocation", "function_call",
+		"macro_invocation", "command", "invocation_expression":
+		return true
+	}
+	return strings.Contains(t, "call") || strings.Contains(t, "invocation")
+}
+
+func extractCalleeName(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {
+	// Find the argument-list child; the callee expression is the meaningful
+	// child just before it (skipping separators like '.' or '::').
+	argIdx := -1
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child == nil {
+			continue
+		}
+		t := child.Type(lang)
+		if t == "argument_list" || t == "arguments" || t == "parameters" {
+			argIdx = i
+			break
+		}
+	}
+
+	var funcNode *gotreesitter.Node
+	if argIdx > 0 {
+		for i := argIdx - 1; i >= 0; i-- {
+			child := node.Child(i)
+			if child == nil {
+				continue
+			}
+			t := child.Type(lang)
+			if t == "." || t == "::" || t == "->" {
+				continue
+			}
+			funcNode = child
+			break
+		}
+	}
+	if funcNode == nil && node.ChildCount() > 0 {
+		funcNode = node.Child(0)
+	}
+	if funcNode == nil {
+		return ""
+	}
+	return extractNameFromNode(funcNode, lang, source)
+}
+
+func extractNameFromNode(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {
+	if node == nil {
+		return ""
+	}
+	t := node.Type(lang)
+	// These node types are the "rightmost" name in a member access.
+	switch t {
+	case "field_identifier", "property_identifier", "attribute_name":
+		return node.Text(source)
+	}
+	// For composite expressions, find the deepest identifier-like child.
+	var name string
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child == nil {
+			continue
+		}
+		n := extractNameFromNode(child, lang, source)
+		if n != "" {
+			name = n
+		}
+	}
+	// If no deeper name found, use this identifier's text.
+	if name == "" && t == "identifier" {
+		return node.Text(source)
+	}
+	return name
+}
+
 func hasClass(classes []ClassInfo, name string) bool {
 	for _, c := range classes {
 		if c.Name == name {
