@@ -1627,18 +1627,18 @@ func GenerateLearningPathMarkdown(graph *grapher.Graph, projectName string, hasC
 	fmt.Fprintf(&b, "适合新团队成员、代码评审者或想快速了解项目定位的读者。预计耗时 **%s**。\n\n", quickTime)
 	b.WriteString("1. [项目概述](overview.md) — 先建立全局认知\n")
 	b.WriteString("2. [项目能做什么](what-it-does.md) — 理解核心能力边界\n")
-	b.WriteString("3. [架构图](architecture.mmd) — 可视化模块关系\n")
+	b.WriteString("3. [架构说明](architecture.md) — 可视化模块关系\n")
 	b.WriteString("\n")
 
 	b.WriteString("### 分支二：深度理解 ⭐⭐ 进阶\n\n")
 	fmt.Fprintf(&b, "适合需要维护代码、排查问题或进行二次开发的开发者。预计耗时 **%s**。\n\n", deepTime)
 	b.WriteString("1. [项目结构](project-structure.md) — 掌握目录与模块职责\n")
 	if hasConcepts {
-		b.WriteString("2. [核心概念](key-concepts.md) — 理解关键设计决策\n")
+		b.WriteString("2. [核心概念](key-concepts.md) — 理解关键设计决策（含类图）\n")
 	} else {
 		b.WriteString("2. [架构说明](architecture.md) — 理解分层与设计思想\n")
 	}
-	b.WriteString("3. [时序图](sequence-diagram.mmd) — 追踪调用流程\n")
+	b.WriteString("3. [学习路径](learning-path.md) — 追踪调用流程（含时序图）\n")
 	b.WriteString("4. [API 参考](api-reference.md) — 掌握公开接口\n")
 	b.WriteString("\n")
 
@@ -2196,10 +2196,9 @@ func WriteWikiFiles(outputDir string, wiki *Wiki, graph *grapher.Graph) error {
 	// Reference files (lookup when needed)
 	files["api-reference.md"] = wiki.APIReference
 
-	// Diagrams
-	files["architecture.mmd"] = wiki.ArchitectureDiagram
-	files["class-diagram.mmd"] = wiki.ClassDiagram
-	files["sequence-diagram.mmd"] = wiki.SequenceDiagram
+	// Diagrams are now embedded inside their thematic articles
+	// (architecture.md, key-concepts.md, learning-path.md) via inline
+	// mermaid code blocks. No standalone .mmd files are written.
 
 	// Compilation and HTML
 	files["compilation.md"] = GenerateMarkdownCompilation(wiki)

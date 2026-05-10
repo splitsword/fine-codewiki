@@ -162,11 +162,13 @@ func TestWriteWikiFiles(t *testing.T) {
 	assert.FileExists(t, filepath.Join(wikiDir, "00-overview.md"))
 	assert.FileExists(t, filepath.Join(wikiDir, "api-reference.md"))
 	assert.FileExists(t, filepath.Join(wikiDir, "02-architecture.md"))
-	assert.FileExists(t, filepath.Join(wikiDir, "class-diagram.mmd"))
-	assert.FileExists(t, filepath.Join(wikiDir, "architecture.mmd"))
 	assert.FileExists(t, filepath.Join(wikiDir, "compilation.md"))
 	assert.FileExists(t, filepath.Join(wikiDir, "index.html"))
 	assert.FileExists(t, filepath.Join(wikiDir, "wiki.pdf"))
+	// Diagrams are embedded inside thematic articles; no standalone .mmd files
+	assert.NoFileExists(t, filepath.Join(wikiDir, "class-diagram.mmd"))
+	assert.NoFileExists(t, filepath.Join(wikiDir, "architecture.mmd"))
+	assert.NoFileExists(t, filepath.Join(wikiDir, "sequence-diagram.mmd"))
 
 	// Verify content with frontmatter
 	content, err := os.ReadFile(filepath.Join(wikiDir, "00-overview.md"))

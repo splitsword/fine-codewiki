@@ -656,25 +656,9 @@ func serveIndexPage(w http.ResponseWriter, root string) {
 </div>
 `)
 
-	// Diagrams section
-	b.WriteString(`<div class="index-section">
-<h2>📊 可视化图表</h2>
-<ul>
-`)
-	diagramFiles := []struct{ file, title, desc string }{
-		{"architecture.mmd", "架构图", "模块依赖关系拓扑"},
-		{"class-diagram.mmd", "类图", "类与接口的继承实现关系"},
-		{"sequence-diagram.mmd", "时序图", "关键调用链的交互流程"},
-	}
-	for _, item := range diagramFiles {
-		if _, err := os.Stat(filepath.Join(root, item.file)); err == nil {
-			b.WriteString(fmt.Sprintf(`<li><a href="%s"><strong>%s</strong></a> — %s</li>`, item.file, item.title, item.desc))
-			b.WriteByte('\n')
-		}
-	}
-	b.WriteString(`</ul>
-</div>
-`)
+	// Diagrams are now embedded inside their thematic articles
+	// (architecture, key-concepts, learning-path) via inline mermaid blocks.
+	// No standalone diagram links needed.
 
 	// Ask AI hint
 	b.WriteString(`<div class="index-section index-ask">

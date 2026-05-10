@@ -102,16 +102,17 @@ func TestGenerateCommand(t *testing.T) {
 	assert.FileExists(t, filepath.Join(outDir, "00-overview.md"))
 	assert.FileExists(t, filepath.Join(outDir, "api-reference.md"))
 	assert.FileExists(t, filepath.Join(outDir, "02-architecture.md"))
-	assert.FileExists(t, filepath.Join(outDir, "architecture.mmd"))
-	assert.FileExists(t, filepath.Join(outDir, "class-diagram.mmd"))
-	assert.FileExists(t, filepath.Join(outDir, "sequence-diagram.mmd"))
+	// Diagrams are now embedded inside thematic articles; no standalone .mmd files
+	assert.NoFileExists(t, filepath.Join(outDir, "architecture.mmd"))
+	assert.NoFileExists(t, filepath.Join(outDir, "class-diagram.mmd"))
+	assert.NoFileExists(t, filepath.Join(outDir, "sequence-diagram.mmd"))
 
 	overview, err := os.ReadFile(filepath.Join(outDir, "00-overview.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(overview), "python-basic")
 	assert.Contains(t, string(overview), "models/user")
 
-	arch, err := os.ReadFile(filepath.Join(outDir, "architecture.mmd"))
+	arch, err := os.ReadFile(filepath.Join(outDir, "02-architecture.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(arch), "graph TD")
 }
