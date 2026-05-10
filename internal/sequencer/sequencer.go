@@ -66,6 +66,10 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 		}
 	}
 
+	diagNoDefs := 0
+	diagNoCalls := 0
+	diagMissCallee := 0
+
 	var edges []CallEdge
 	seen := make(map[string]bool)
 
@@ -92,12 +96,14 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 			funcDefs = findFunctionDefs(f, lines)
 		}
 		if len(funcDefs) == 0 {
+			diagNoDefs++
 			continue // nothing to attribute calls to
 		}
 
 		// Try tree-sitter based call extraction first (more accurate).
 		tsCalls := analyzer.ExtractCallSites(src, f.Filename)
 		if len(tsCalls) > 0 {
+			matched := 0
 			for _, site := range tsCalls {
 				// Map 1-based line to 0-based index used by findNearestPrecedingFunc.
 				callerDef := findNearestPrecedingFunc(funcDefs, site.Line-1)
@@ -110,8 +116,10 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 				}
 				refs, ok := knownFuncs[site.Callee]
 				if !ok {
+					diagMissCallee++
 					continue
 				}
+				matched++
 				target := pickTarget(refs, callerDef.Name, mod)
 				edge := CallEdge{
 					From: FunctionRef{Module: mod, Name: callerDef.Name},
@@ -122,6 +130,9 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 					seen[key] = true
 					edges = append(edges, edge)
 				}
+			}
+			if matched == 0 && len(tsCalls) > 0 {
+				diagNoCalls++
 			}
 			continue
 		}
@@ -176,6 +187,13 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 				}
 			}
 		}
+	}
+
+	if len(edges) == 0 {
+		fmt.Printf("[诊断] 已知函数索引：%d 个名称\n", len(knownFuncs))
+		fmt.Printf("[诊断] 无函数定义的文件：%d 个\n", diagNoDefs)
+		fmt.Printf("[诊断] 找到调用但无匹配目标的文件：%d 个\n", diagNoCalls)
+		fmt.Printf("[诊断] 调用目标不在已知函数中的次数：%d 次\n", diagMissCallee)
 	}
 
 	return edges, nil

@@ -76,15 +76,17 @@ func RunGenerate(cfg *Config) error {
 		if err != nil {
 			continue
 		}
-		if fr, ok := c.GetAST(p, info.ModTime().Unix(), info.Size()); ok {
-			files = append(files, fr)
-		} else {
-			src, err := os.ReadFile(p)
-			if err != nil {
-				return fmt.Errorf("read %s: %w", p, err)
+		if !cfg.Force {
+			if fr, ok := c.GetAST(p, info.ModTime().Unix(), info.Size()); ok {
+				files = append(files, fr)
+				continue
 			}
-			jobs = append(jobs, parseJob{path: p, src: string(src)})
 		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", p, err)
+		}
+		jobs = append(jobs, parseJob{path: p, src: string(src)})
 	}
 	c.Prune(paths)
 
@@ -92,11 +94,15 @@ func RunGenerate(cfg *Config) error {
 	if astChanged || cfg.Force {
 		docgen.ClearWikiCheckpoint(cfg.SourceDir)
 		if cfg.Force {
-			fmt.Println("--force 已指定，清除 checkpoint 并强制重新生成")
+			fmt.Println("--force 已指定，强制重新解析所有文件并重新生成")
 		}
 	}
-	if astChanged {
-		fmt.Printf("发现 %d 个新/变更文件需要解析（%d 个来自缓存）\n", len(jobs), len(files))
+	if astChanged || cfg.Force {
+		if cfg.Force {
+			fmt.Printf("强制重新解析所有 %d 个源文件\n", len(jobs))
+		} else {
+			fmt.Printf("发现 %d 个新/变更文件需要解析（%d 个来自缓存）\n", len(jobs), len(files))
+		}
 		results := make([]*analyzer.FileResult, len(jobs))
 		var parseErrs []error
 		var mu sync.Mutex
