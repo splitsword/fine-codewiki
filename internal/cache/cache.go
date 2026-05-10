@@ -12,7 +12,7 @@ import (
 	"github.com/splitsword/fine-codewiki/internal/grapher"
 )
 
-const cacheVersion = "2"
+const cacheVersion = "3"
 
 // FileEntry tracks mtime and size for cache invalidation.
 type FileEntry struct {
@@ -98,6 +98,7 @@ func (c *Cache) Save() error {
 }
 
 // GetAST returns a cached FileResult if the file has not changed.
+// The returned value is a deep copy so callers cannot mutate the cached object.
 func (c *Cache) GetAST(filename string, mtime, size int64) (*analyzer.FileResult, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -110,15 +111,58 @@ func (c *Cache) GetAST(filename string, mtime, size int64) (*analyzer.FileResult
 		return nil, false
 	}
 	c.hitCount++
-	return fr, true
+	return copyFileResult(fr), true
 }
 
-// PutAST stores a FileResult in the cache.
+// PutAST stores a deep copy of the FileResult in the cache.
 func (c *Cache) PutAST(filename string, mtime, size int64, result *analyzer.FileResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.data.Manifest[filename] = FileEntry{MTime: mtime, Size: size}
-	c.data.AST[filename] = result
+	c.data.AST[filename] = copyFileResult(result)
+}
+
+// copyFileResult creates a deep copy of a FileResult so that mutations
+// to the returned pointer do not affect the cached data.
+func copyFileResult(fr *analyzer.FileResult) *analyzer.FileResult {
+	if fr == nil {
+		return nil
+	}
+	copied := &analyzer.FileResult{
+		Filename:  fr.Filename,
+		Classes:   make([]analyzer.ClassInfo, len(fr.Classes)),
+		Functions: make([]analyzer.FunctionInfo, len(fr.Functions)),
+		Imports:   make([]analyzer.ImportInfo, len(fr.Imports)),
+	}
+	for i, c := range fr.Classes {
+		copied.Classes[i] = analyzer.ClassInfo{
+			Name:       c.Name,
+			Bases:      append([]string(nil), c.Bases...),
+			Methods:    make([]analyzer.FunctionInfo, len(c.Methods)),
+			Decorators: append([]string(nil), c.Decorators...),
+			StartLine:  c.StartLine,
+		}
+		for j, m := range c.Methods {
+			copied.Classes[i].Methods[j] = analyzer.FunctionInfo{
+				Name:       m.Name,
+				Params:     append([]string(nil), m.Params...),
+				ReturnType: m.ReturnType,
+				Decorators: append([]string(nil), m.Decorators...),
+				StartLine:  m.StartLine,
+			}
+		}
+	}
+	for i, f := range fr.Functions {
+		copied.Functions[i] = analyzer.FunctionInfo{
+			Name:       f.Name,
+			Params:     append([]string(nil), f.Params...),
+			ReturnType: f.ReturnType,
+			Decorators: append([]string(nil), f.Decorators...),
+			StartLine:  f.StartLine,
+		}
+	}
+	copy(copied.Imports, fr.Imports)
+	return copied
 }
 
 // GetGraph returns the cached graph if available.

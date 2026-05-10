@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-10 — fix(cache): 深拷贝 FileResult 防止缓存腐败，升级缓存版本 (faf5dbb)
+
 - 2026-05-10 — feat(sequencer): 诊断输出增加 sourceDir、path 和 resolved 路径 (8bd29b5)
 
 - 2026-05-10 — fix(cli): 缓存中的相对路径 Filename 导致 BuildCallGraph 读取文件失败 (10a853f)
