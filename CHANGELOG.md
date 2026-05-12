@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+- 2026-05-12 — feat(docgen, cli): Web UI 全面升级 — 14项交互特性 + Zread 体验对标 (27cac31)
+
+- 2026-05-12 — @ feat(docgen, cli): Web UI 全面升级 — 14项交互特性 + Zread 体验对标 (4183ef0)
+
 - 2026-05-10 — feat(docgen): 图表跟随主题文章内嵌，移除独立 .mmd 文件 (241bb2f)
 
 - 2026-05-10 — fix(cache): 深拷贝 FileResult 防止缓存腐败，升级缓存版本 (faf5dbb)

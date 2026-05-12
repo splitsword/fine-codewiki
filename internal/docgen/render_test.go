@@ -21,7 +21,7 @@ func TestMarkdownToHTMLHeaders(t *testing.T) {
 func TestMarkdownToHTMLCodeBlock(t *testing.T) {
 	src := []byte("```go\nfmt.Println(\"hello\")\n```\n")
 	html := MarkdownToHTML(src)
-	assert.Contains(t, string(html), "<pre><code>")
+	assert.Contains(t, string(html), "<pre><code")
 	assert.Contains(t, string(html), "fmt.Println")
 }
 
@@ -114,7 +114,7 @@ func TestMarkdownToHTMLCombined(t *testing.T) {
 	assert.Contains(t, string(html), "<h1>Title</h1>")
 	assert.Contains(t, string(html), "<strong>bold</strong>")
 	assert.Contains(t, string(html), "<em>italic</em>")
-	assert.Contains(t, string(html), "<pre><code>")
+	assert.Contains(t, string(html), "<pre><code")
 }
 
 func TestRenderInlineLinkBoldItalicCode(t *testing.T) {

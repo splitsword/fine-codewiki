@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/splitsword/fine-codewiki/internal/analyzer"
+	"github.com/splitsword/fine-codewiki/internal/diagram"
 	"github.com/splitsword/fine-codewiki/internal/grapher"
 	"github.com/splitsword/fine-codewiki/internal/llm"
 	"github.com/splitsword/fine-codewiki/internal/sequencer"
@@ -340,7 +341,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		return nil, fmt.Errorf("generate architecture doc: %w", err)
 	}
 
-	moduleDocs := GenerateModuleDocs(graph)
+	moduleDocs := GenerateModuleDocs(graph, sourceDir)
 
 	// Build module theme grouping for navigation and indexing
 	moduleThemes := make(map[string][]string)
@@ -1714,7 +1715,7 @@ func inferModuleDifficulty(n *grapher.Node, graph *grapher.Graph) string {
 
 // GenerateModuleDocs creates per-module documentation mapping module name to markdown content.
 // Each document describes the module's responsibility, dependencies, classes, and functions.
-func GenerateModuleDocs(graph *grapher.Graph) map[string]string {
+func GenerateModuleDocs(graph *grapher.Graph, sourceDir string) map[string]string {
 	if len(graph.Nodes) == 0 {
 		return nil
 	}
@@ -1730,18 +1731,55 @@ func GenerateModuleDocs(graph *grapher.Graph) map[string]string {
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf("# %s\n\n", n.Name))
 
-		// Difficulty
-		b.WriteString(fmt.Sprintf("**难度级别**：%s\n\n", inferModuleDifficulty(n, graph)))
-
-		// Role
+		// Meta: difficulty + role
+		b.WriteString(fmt.Sprintf("**难度级别**：%s", inferModuleDifficulty(n, graph)))
 		if role := roleMap[n.Name]; role != "" {
-			b.WriteString(fmt.Sprintf("**架构角色**：%s\n\n", role))
+			b.WriteString(fmt.Sprintf(" | **架构角色**：%s", role))
+		}
+		b.WriteString("\n\n")
+
+		// Narrative: what this module does
+		b.WriteString("## 功能说明\n\n")
+		b.WriteString(inferModuleResponsibility(n))
+		var summaries []string
+		for _, c := range n.Classes {
+			summaries = append(summaries, fmt.Sprintf("定义了 `%s` 类", c.Name))
+		}
+		for _, f := range n.Functions {
+			desc := describeFunction(f.Name, f.Params, f.ReturnType)
+			summaries = append(summaries, fmt.Sprintf("`%s` — %s", f.Name, desc))
+		}
+		if len(summaries) > 0 {
+			b.WriteString("详细如下：\n\n")
+			for _, s := range summaries {
+				b.WriteString(fmt.Sprintf("- %s\n", s))
+			}
+		}
+		b.WriteString("\n")
+
+		// Key code snippets (up to 3)
+		if sourceDir != "" {
+			snippets := ExtractSnippetsForNode(sourceDir, n, 3)
+			if len(snippets) > 0 {
+				b.WriteString("## 关键代码片段\n\n")
+				for _, s := range snippets {
+					b.WriteString(FormatSnippetMarkdown(s))
+					b.WriteString("\n")
+				}
+			}
 		}
 
-		// Responsibility (static inference from filename)
-		b.WriteString("## 职责说明\n\n")
-		b.WriteString(inferModuleResponsibility(n))
-		b.WriteString("\n\n")
+		// Local dependency diagram
+		neighbor := graph.NeighborSubGraph(n.Name)
+		if len(neighbor.Nodes) > 1 && len(neighbor.Edges) > 0 {
+			subDSL, err := diagram.GenerateSubArchDiagram(neighbor, n.Name)
+			if err == nil && subDSL != "" {
+				b.WriteString("## 模块依赖关系\n\n")
+				b.WriteString("```mermaid\n")
+				b.WriteString(subDSL)
+				b.WriteString("```\n\n")
+			}
+		}
 
 		// Dependencies
 		deps := graph.DependenciesOf(n.Name)
@@ -1773,12 +1811,12 @@ func GenerateModuleDocs(graph *grapher.Graph) map[string]string {
 					b.WriteString(fmt.Sprintf("继承自：%s\n\n", strings.Join(c.Bases, ", ")))
 				}
 				if len(c.Methods) > 0 {
-					b.WriteString("| 方法 | 参数 | 返回值 |\n")
-					b.WriteString("|------|------|--------|\n")
+					b.WriteString("| 方法 | 参数 | 返回值 | 职责 |\n")
+					b.WriteString("|------|------|--------|------|\n")
 					for _, m := range c.Methods {
 						params := strings.Join(m.Params, ", ")
 						params = stripSelfParamStr(params)
-						b.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", m.Name, params, m.ReturnType))
+						b.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s |\n", m.Name, params, m.ReturnType, describeFunction(m.Name, m.Params, m.ReturnType)))
 					}
 					b.WriteString("\n")
 				}
@@ -1842,45 +1880,60 @@ func groupModulesByTheme(graph *grapher.Graph) map[string][]*grapher.Node {
 }
 
 func inferModuleResponsibility(n *grapher.Node) string {
-	// Simple heuristic based on directory and filename
-	name := strings.ToLower(n.Name)
+	// Extract the leaf filename and parent directory for keyword matching,
+	// avoiding false matches on ancestor path segments (e.g. "testdata/...").
+	clean := strings.ReplaceAll(n.Name, "\\", "/")
+	base := strings.ToLower(filepath.Base(clean))
+	parent := strings.ToLower(filepath.Base(filepath.Dir(clean)))
+
+	match := func(ks ...string) bool {
+		for _, k := range ks {
+			if strings.Contains(base, k) || strings.Contains(parent, k) {
+				return true
+			}
+		}
+		return false
+	}
+
 	switch {
-	case strings.Contains(name, "test"):
+	case parent == "test" || parent == "tests" || parent == "spec" || parent == "specs":
 		return "该模块包含测试代码，用于验证项目功能的正确性。"
-	case strings.Contains(name, "cmd") || strings.Contains(name, "main"):
+	case match("cmd", "main"):
 		return "该模块是项目的入口或命令行接口，负责解析参数并启动核心流程。"
-	case strings.Contains(name, "api") || strings.Contains(name, "handler") || strings.Contains(name, "route"):
+	case match("api", "handler", "route", "router", "controller", "gateway"):
 		return "该模块负责对外提供接口或路由处理，是系统与外部交互的边界。"
-	case strings.Contains(name, "model") || strings.Contains(name, "entity") || strings.Contains(name, "domain"):
+	case match("model", "entity", "domain"):
 		return "该模块定义核心业务实体与领域模型，承载系统的核心数据结构。"
-	case strings.Contains(name, "service") || strings.Contains(name, "usecase") || strings.Contains(name, "biz"):
+	case match("service", "usecase", "biz", "logic", "workflow"):
 		return "该模块包含业务逻辑与服务编排，协调各组件完成具体业务功能。"
-	case strings.Contains(name, "repo") || strings.Contains(name, "dao") || strings.Contains(name, "store"):
+	case match("repo", "dao", "store", "repository"):
 		return "该模块负责数据持久化与存储访问，封装对数据库或文件系统的操作。"
-	case strings.Contains(name, "util") || strings.Contains(name, "helper") || strings.Contains(name, "common"):
+	case match("util", "helper", "common", "shared", "lib", "toolkit"):
 		return "该模块提供通用工具函数与辅助逻辑，供其他模块复用。"
-	case strings.Contains(name, "config") || strings.Contains(name, "setting"):
+	case match("config", "setting", "env", "option"):
 		return "该模块管理配置读取与环境适配，为系统运行提供参数支持。"
-	case strings.Contains(name, "middleware") || strings.Contains(name, "intercept"):
+	case match("middleware", "intercept", "filter", "guard"):
 		return "该模块实现横切关注点（如日志、认证、限流），在请求处理链中生效。"
-	case strings.Contains(name, "client"):
+	case match("client"):
 		return "该模块封装对外部服务或资源的客户端访问逻辑。"
-	case strings.Contains(name, "server"):
+	case match("server"):
 		return "该模块实现服务端监听与请求处理，是系统的网络入口。"
-	case strings.Contains(name, "view") || strings.Contains(name, "ui") || strings.Contains(name, "component"):
+	case match("view", "ui", "component", "template", "page"):
 		return "该模块负责界面展示或视图组件渲染，面向用户交互层。"
-	case strings.Contains(name, "db") || strings.Contains(name, "database") || strings.Contains(name, "migration"):
+	case match("db", "database", "migration", "migrate"):
 		return "该模块处理数据库连接、迁移或 schema 管理。"
-	case strings.Contains(name, "cache") || strings.Contains(name, "redis") || strings.Contains(name, "memo"):
+	case match("cache", "redis", "memo", "buffer"):
 		return "该模块实现缓存策略与高速数据存取，提升系统响应性能。"
-	case strings.Contains(name, "queue") || strings.Contains(name, "worker") || strings.Contains(name, "job"):
+	case match("queue", "worker", "job", "schedule", "cron"):
 		return "该模块负责任务队列管理与异步工作流调度。"
-	case strings.Contains(name, "grpc") || strings.Contains(name, "proto") || strings.Contains(name, "rpc"):
+	case match("grpc", "proto", "rpc"):
 		return "该模块定义或实现远程过程调用（RPC）接口与协议序列化。"
-	case strings.Contains(name, "schema") || strings.Contains(name, "types") || strings.Contains(name, "dto"):
+	case match("schema", "types", "dto", "vo"):
 		return "该模块声明数据结构、类型定义或数据传输对象（DTO）。"
-	case strings.Contains(name, "logger") || strings.Contains(name, "log") || strings.Contains(name, "monitor"):
+	case match("logger", "log", "monitor", "trace", "metric"):
 		return "该模块提供日志记录、监控埋点或可观测性支持。"
+	case match("crypto", "encrypt", "hash", "sign", "security"):
+		return "该模块提供加密、签名、哈希等安全相关功能。"
 	default:
 		return "该模块是项目的组成部分，承担特定的业务或技术职责。"
 	}
@@ -2039,6 +2092,11 @@ func GenerateArchitectureMarkdown(graph *grapher.Graph, archDSL, narrative strin
 
 		b.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s | %s |\n", n.Name, role, nodeType, depsStr, depStr))
 	}
+	b.WriteString("\n")
+
+	// Design decisions inferred from graph analysis
+	b.WriteString("## 关键设计决策\n\n")
+	b.WriteString(buildDesignDecisions(graph, roles, roleMap))
 	b.WriteString("\n")
 
 	// Embedded architecture diagram
@@ -2202,7 +2260,7 @@ func WriteWikiFiles(outputDir string, wiki *Wiki, graph *grapher.Graph) error {
 
 	// Compilation and HTML
 	files["compilation.md"] = GenerateMarkdownCompilation(wiki)
-	files["index.html"] = GenerateStaticHTML(wiki)
+	files["index.html"] = GenerateStaticHTML(wiki, graph)
 
 	moduleCount := len(wiki.ModuleDocs)
 
@@ -2290,7 +2348,13 @@ func WriteWikiFiles(outputDir string, wiki *Wiki, graph *grapher.Graph) error {
 // GenerateStaticHTML renders the entire Wiki as a single standalone HTML file
 // suitable for offline viewing. It includes sidebar navigation, all Markdown
 // content converted to HTML, and embedded Mermaid diagrams.
-func GenerateStaticHTML(wiki *Wiki) string {
+func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
+	var fileTreeHTML string
+	if graph != nil {
+		fileTree := BuildFileTree(graph)
+		fileTreeHTML = RenderFileTreeHTML(fileTree)
+	}
+
 	var body strings.Builder
 
 	sections := []struct {
@@ -2348,107 +2412,291 @@ func GenerateStaticHTML(wiki *Wiki) string {
 
 	var nav strings.Builder
 	nav.WriteString(`<nav class="sidebar">
-<div class="sidebar-header">`)
+<div class="sidebar-header"><span class="logo-dot"></span><a href="#" style="color:inherit;text-decoration:none;font-weight:700;">`)
 	nav.WriteString(HTMLEscape(wiki.ProjectName))
-	nav.WriteString(` Wiki</div>
-<ul>
+	nav.WriteString(`</a></div>
 `)
-	for _, sec := range sections {
-		nav.WriteString(fmt.Sprintf(`<li><a href="#%s">%s</a></li>
-`, sec.id, sec.title))
-	}
-	// Diagrams are now embedded inside their thematic sections, so no standalone nav links needed
-	if len(wiki.ModuleDocs) > 0 {
-		if len(wiki.ModuleThemes) > 0 {
-			for _, theme := range sortedThemeKeys(wiki.ModuleThemes) {
-				nav.WriteString(fmt.Sprintf(`<li class="sidebar-section">%s</li>`+"\n", HTMLEscape(theme)))
-				for _, name := range wiki.ModuleThemes[theme] {
-					if _, ok := wiki.ModuleDocs[name]; !ok {
-						continue
-					}
-					secID := "module-" + mermaidEscape(name)
-					nav.WriteString(fmt.Sprintf(`<li><a href="#%s">%s</a></li>`+"\n", secID, HTMLEscape(name)))
-				}
-			}
-		} else {
-			var modNames []string
-			for name := range wiki.ModuleDocs {
-				modNames = append(modNames, name)
-			}
-			sort.Strings(modNames)
-			nav.WriteString(`<li class="sidebar-section">模块文档</li>` + "\n")
-			for _, name := range modNames {
-				secID := "module-" + mermaidEscape(name)
-				nav.WriteString(fmt.Sprintf(`<li><a href="#%s">%s</a></li>`+"\n", secID, HTMLEscape(name)))
+	// Dynamic three-layer navigation built from graph analysis
+	entries := []*grapher.Node{}
+	entrySet := map[string]bool{}
+	coreTop := []*grapher.Node{}
+	themeSet := map[string]bool{}
+	if graph != nil {
+		entries = graph.EntryPoints()
+		for _, e := range entries {
+			entrySet[e.Name] = true
+		}
+		pr := graph.PageRank()
+		type ps struct {
+			n *grapher.Node
+			s float64
+		}
+		var ranked []ps
+		for _, n := range graph.Nodes {
+			ranked = append(ranked, ps{n, pr[n.Name]})
+		}
+		sort.Slice(ranked, func(i, j int) bool { return ranked[i].s > ranked[j].s })
+		for i := 0; i < 5 && i < len(ranked); i++ {
+			coreTop = append(coreTop, ranked[i].n)
+		}
+		for _, t := range wiki.ModuleThemes {
+			for _, m := range t {
+				themeSet[m] = true
 			}
 		}
 	}
-	nav.WriteString(`</ul>
-</nav>
+
+	sectionIcons := map[string]string{
+		"overview": "📊", "what-it-does": "🚀", "architecture": "🏗️",
+		"project-structure": "📁", "key-concepts": "💡", "learning-path": "📚",
+		"api-reference": "📖",
+	}
+	writeNavItem := func(id, title string) {
+		icon := sectionIcons[id]
+		if icon == "" {
+			icon = "📄"
+		}
+		nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">%s</span>%s</a></li>`+"\n", id, icon, title))
+	}
+
+	// 入门 ⭐
+	nav.WriteString(`<div class="nav-group">
+<div class="nav-group-header"><span>⭐ 入门</span><span class="chevron">&#9660;</span></div>
+<ul class="nav-group-items">
 `)
+	for _, s := range filterSections(sections, "overview", "what-it-does", "architecture") {
+		writeNavItem(s.id, s.title)
+	}
+	if len(entries) > 0 {
+		for _, e := range entries {
+			if e.Name == "" {
+				continue
+			}
+			secID := "module-" + mermaidEscape(e.Name)
+			nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">🚪</span>入口：%s</a></li>`+"\n", secID, filepath.Base(e.Name)))
+		}
+	}
+	nav.WriteString("</ul>\n</div>\n")
+
+	// 动态 ⚡
+	nav.WriteString(`<div class="nav-group">
+<div class="nav-group-header"><span>⚡ 动态</span><span class="chevron">&#9660;</span></div>
+<ul class="nav-group-items">
+`)
+	for _, s := range filterSections(sections, "learning-path", "project-structure") {
+		writeNavItem(s.id, s.title)
+	}
+	nav.WriteString("</ul>\n</div>\n")
+
+	// 探索 🔭
+	nav.WriteString(`<div class="nav-group">
+<div class="nav-group-header"><span>🔭 探索</span><span class="chevron">&#9660;</span></div>
+<ul class="nav-group-items">
+`)
+	for _, s := range filterSections(sections, "key-concepts", "api-reference") {
+		writeNavItem(s.id, s.title)
+	}
+	for _, n := range coreTop {
+		if entrySet[n.Name] || themeSet[n.Name] {
+			continue
+		}
+		secID := "module-" + mermaidEscape(n.Name)
+		nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">📦</span>%s</a></li>`+"\n", secID, filepath.Base(n.Name)))
+	}
+	if len(wiki.ModuleDocs) > 0 && len(wiki.ModuleThemes) > 0 {
+		for _, theme := range sortedThemeKeys(wiki.ModuleThemes) {
+			firstMod := ""
+			for _, name := range wiki.ModuleThemes[theme] {
+				if _, ok := wiki.ModuleDocs[name]; ok {
+					firstMod = name
+					break
+				}
+			}
+			if firstMod == "" {
+				continue
+			}
+			secID := "module-" + mermaidEscape(firstMod)
+			nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">🏷️</span>%s</a></li>`+"\n", secID, theme))
+		}
+	} else if len(wiki.ModuleDocs) > 0 {
+		var count int
+		for name := range wiki.ModuleDocs {
+			if count >= 8 {
+				break
+			}
+			secID := "module-" + mermaidEscape(name)
+			nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">📦</span>%s</a></li>`+"\n", secID, filepath.Base(name)))
+			count++
+		}
+	}
+	nav.WriteString("</ul>\n</div>\n")
+	nav.WriteString("</nav>\n")
 
 	var out strings.Builder
 	out.WriteString(`<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>`)
 	out.WriteString(HTMLEscape(wiki.ProjectName))
 	out.WriteString(` Wiki</title>
-<style>
-* { box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; line-height: 1.6; color: #24292f; background: #ffffff; display: flex; }
-.sidebar { width: 260px; min-width: 260px; background: #f6f8fa; border-right: 1px solid #d0d7de; height: 100vh; position: fixed; overflow-y: auto; }
-.sidebar-header { padding: 16px; font-weight: 600; font-size: 16px; border-bottom: 1px solid #d0d7de; background: #ffffff; }
-.sidebar ul { list-style: none; padding: 0; margin: 0; }
-.sidebar li a { display: block; padding: 8px 16px; color: #24292f; text-decoration: none; font-size: 14px; border-bottom: 1px solid #eaeef2; }
-.sidebar li a:hover { background: #eaeef2; }
-.sidebar-section { padding: 12px 16px 4px; font-size: 12px; font-weight: 600; color: #57606a; text-transform: uppercase; border-bottom: 1px solid #eaeef2; }
-.content { margin-left: 260px; padding: 24px 32px; max-width: 960px; width: 100%; }
-h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; color: #1f2328; }
-h1 { font-size: 2em; border-bottom: 1px solid #d0d7de; padding-bottom: .3em; }
-h2 { font-size: 1.5em; border-bottom: 1px solid #d0d7de; padding-bottom: .3em; }
-h3 { font-size: 1.25em; }
-a { color: #0969da; text-decoration: none; }
-a:hover { text-decoration: underline; }
-code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; background: rgba(175,184,193,0.2); padding: .2em .4em; border-radius: 6px; font-size: 85%; }
-pre { background: #1e1e1e; color: #d4d4d4; padding: 16px; overflow: auto; border-radius: 6px; }
-pre code { background: transparent; padding: 0; color: inherit; }
-blockquote { margin: 0; padding: 0 1em; color: #57606a; border-left: .25em solid #d0d7de; }
-ul, ol { padding-left: 2em; }
-li+li { margin-top: .25em; }
-table { border-collapse: collapse; width: 100%; margin: 16px 0; }
-th, td { border: 1px solid #d0d7de; padding: 6px 13px; }
-tr:nth-child(even) { background: #f6f8fa; }
-th { background: #f6f8fa; font-weight: 600; }
-hr { height: .25em; padding: 0; margin: 24px 0; background: #d0d7de; border-0; }
-.mermaid { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow: hidden; min-height: 200px; }
+<style>`)
+	out.WriteString(wikiPageCSS)
+	out.WriteString(`
+/* ---- Static HTML overrides: three-column layout ---- */
+.content { margin-left:var(--sidebar-w); margin-right:280px; max-width:none; width:auto; }
+.right-sidebar { width:280px; min-width:280px; background:rgba(246,248,250,.85); backdrop-filter:blur(12px) saturate(180%); -webkit-backdrop-filter:blur(12px) saturate(180%); border-left:1px solid var(--border2); height:100vh; position:fixed; right:0; top:0; overflow-y:auto; z-index:60; transition:background .3s; }
+[data-theme="dark"] .right-sidebar { background:rgba(22,27,34,.88); }
+.right-sidebar-header { padding:14px 18px; font-weight:700; font-size:14px; border-bottom:1px solid var(--border2); background:rgba(255,255,255,.6); backdrop-filter:blur(8px); position:sticky; top:0; z-index:3; color:var(--text2); display:flex; align-items:center; gap:8px; }
+[data-theme="dark"] .right-sidebar-header { background:rgba(13,17,23,.6); }
+.right-sidebar-header::before { content:''; width:8px; height:8px; border-radius:50%; background:#10b981; flex-shrink:0; }
+.file-tree { padding:8px 0; font-size:13px; }
+.file-tree details { margin:0; }
+.file-tree summary { padding:6px 16px; cursor:pointer; color:var(--text3); font-weight:600; font-size:12px; user-select:none; transition:all .15s; }
+.file-tree summary:hover { color:var(--accent); background:var(--accent-glow); }
+.file-tree details[open]>summary { color:var(--text); }
+.file-tree a { display:block; padding:4px 16px 4px 34px; color:var(--text2); text-decoration:none; font-size:12px; border-left:2px solid transparent; transition:all .15s; }
+.file-tree a:hover { background:var(--accent-glow); color:var(--text); }
+.file-tree a.active { background:var(--accent-glow); border-left-color:var(--accent); color:var(--accent); font-weight:600; }
+.file-tree details details summary { padding-left:30px; font-size:11px; }
+.file-tree details details a { padding-left:46px; }
+section { scroll-margin-top:calc(var(--topbar-h) + 16px); }
+@keyframes fadeUp2 { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+section { animation:fadeUp2 .4s ease-out; }
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" id="hljs-light">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" id="hljs-dark" disabled>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
 <script type="module">
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' });
-  window.navigateToModule = function(name) {
-    var safe = name.replace(/[\/\\:]/g, '_');
-    window.location.href = 'modules/' + safe + '.md';
-  };
-  window.addEventListener('load', function() {
-    if (typeof svgPanZoom === 'undefined') return;
-    document.querySelectorAll('.mermaid svg').forEach(function(svg) {
-      svg.style.maxWidth = 'none';
-      svgPanZoom(svg, { zoomEnabled: true, panEnabled: true, controlIconsEnabled: true, fit: true, center: true });
-    });
+  mermaid.initialize({ startOnLoad:true, securityLevel:'loose', theme:'neutral' });
+  window.addEventListener('load',function(){
+    if(typeof svgPanZoom!=='undefined'){
+      document.querySelectorAll('.mermaid svg').forEach(function(svg){svg.style.maxWidth='none';svgPanZoom(svg,{zoomEnabled:true,panEnabled:true,controlIconsEnabled:true,fit:true,center:true})});
+    }
+    hljs.highlightAll();
   });
 </script>
-</head>
-<body>
 `)
+	out.WriteString(wikiPageJS)
+	out.WriteString(`</head>
+<body>
+<div id="reading-progress"></div>
+`)
+
+	// Top bar
+	out.WriteString(`<div class="topbar" style="left:var(--sidebar-w);right:280px">
+<div class="topbar-title">`)
+	out.WriteString(HTMLEscape(wiki.ProjectName))
+	out.WriteString(` Wiki</div>
+<div class="topbar-search">
+<svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+<input type="text" id="topbar-search-trigger" placeholder="搜索章节..." readonly>
+<kbd>Ctrl+K</kbd>
+</div>
+<div class="topbar-actions">
+<button id="theme-toggle" class="theme-toggle" title="切换主题"></button>
+</div>
+</div>
+`)
+
 	out.WriteString(nav.String())
 	out.WriteString(`<div class="content">
 `)
 	out.WriteString(body.String())
 	out.WriteString(`</div>
+<aside class="right-sidebar">
+<div class="right-sidebar-header">代码结构</div>
+<div class="file-tree">
+`)
+	if fileTreeHTML != "" {
+		out.WriteString(fileTreeHTML)
+	} else {
+		out.WriteString(`<div style="padding:16px;color:var(--text3);font-size:12px">暂无代码结构信息</div>`)
+	}
+	out.WriteString(`</div>
+</aside>
+
+<!-- Search overlay for static HTML -->
+<div class="search-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+<div class="search-modal">
+<input type="text" id="static-search-input" placeholder="搜索章节、模块..." oninput="filterStaticSearch(this.value)">
+<div class="search-results" id="static-search-results"></div>
+</div>
+</div>
+
+<script>
+/* ---- File tree click & scroll spy ---- */
+document.querySelectorAll('.file-tree a[data-target]').forEach(function(a) {
+  a.addEventListener('click', function(e) {
+    e.preventDefault();
+    var target = document.getElementById(this.getAttribute('data-target'));
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.querySelectorAll('.file-tree a.active').forEach(function(el){el.classList.remove('active');});
+      this.classList.add('active');
+    }
+  });
+});
+
+/* ---- Scroll spy: file tree + left nav ---- */
+var observer = new IntersectionObserver(function(entries) {
+  entries.forEach(function(entry) {
+    if (!entry.isIntersecting) return;
+    var id = entry.target.id;
+    // Highlight file tree link
+    var ftLink = document.querySelector('.file-tree a[data-target="' + id + '"]');
+    if (ftLink) {
+      document.querySelectorAll('.file-tree a.active').forEach(function(el){el.classList.remove('active');});
+      ftLink.classList.add('active');
+    }
+    // Highlight sidebar nav link
+    var navLink = document.querySelector('.sidebar a[href="#' + id + '"]');
+    if (navLink) {
+      document.querySelectorAll('.nav-group-items a.active').forEach(function(el){el.classList.remove('active');});
+      navLink.classList.add('active');
+    }
+  });
+}, { rootMargin: '-' + (52+20) + 'px 0px -70% 0px' });
+document.querySelectorAll('section[id]').forEach(function(section) {
+  observer.observe(section);
+});
+
+/* ---- Sidebar smooth scroll ---- */
+document.querySelectorAll('.sidebar a[href^="#"]').forEach(function(a) {
+  a.addEventListener('click', function(e) {
+    e.preventDefault();
+    var target = document.getElementById(this.getAttribute('href').substring(1));
+    if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  });
+});
+
+/* ---- Static search ---- */
+(function(){
+  var trigger=document.getElementById('topbar-search-trigger');
+  if(trigger)trigger.addEventListener('click',function(){
+    document.querySelector('.search-overlay').classList.add('active');
+    document.getElementById('static-search-input').focus();
+  });
+})();
+function filterStaticSearch(q){
+  var r=document.getElementById('static-search-results');
+  q=q.toLowerCase();
+  if(!q){r.innerHTML='';return;}
+  var html='';
+  document.querySelectorAll('section[id]').forEach(function(sec){
+    var h=sec.querySelector('h1,h2,h3');
+    if(!h)return;
+    var t=h.textContent;
+    if(t.toLowerCase().indexOf(q)>=0||sec.id.toLowerCase().indexOf(q)>=0){
+      html+='<a class="search-hit" href="#'+sec.id+'" onclick="document.querySelector(\'.search-overlay\').classList.remove(\'active\')"><strong>'+t+'</strong><small>#'+sec.id+'</small></a>';
+    }
+  });
+  r.innerHTML=html||'<div class="search-empty">未找到匹配结果</div>';
+}
+</script>
 </body>
 </html>
 `)
@@ -3207,6 +3455,90 @@ func markdownEscape(s string) string {
 	return s
 }
 
+// filterSections returns section items whose id matches one of the given names.
+// buildDesignDecisions produces a narrative summary of key architectural choices
+// inferred from PageRank, roles, cycles, and dependency structure.
+func buildDesignDecisions(graph *grapher.Graph, roles []grapher.ModuleRole, roleMap map[string]string) string {
+	var b strings.Builder
+
+	// 1. Layering strategy
+	pr := graph.PageRank()
+	var coreMods, entryMods, utilMods []string
+	for _, r := range roles {
+		switch r.Role {
+		case "核心领域":
+			coreMods = append(coreMods, r.Name)
+		case "入口层":
+			entryMods = append(entryMods, r.Name)
+		case "工具库":
+			utilMods = append(utilMods, r.Name)
+		}
+	}
+	if len(entryMods) > 0 && len(coreMods) > 0 {
+		b.WriteString(fmt.Sprintf("**分层策略**：项目采用入口层-领域层-工具层的三层架构。`%s` 等入口模块接收外部请求，转发给 `%s` 等核心领域模块处理，`%s` 等工具模块提供跨层支撑。这种分层使得修改核心逻辑时不会影响入口层，新增功能时只需组合已有模块。\n\n",
+			firstOf(entryMods), firstOf(coreMods), firstOr(utilMods, "—")))
+	}
+
+	// 2. Dependency direction
+	entries := graph.EntryPoints()
+	if len(entries) > 0 {
+		b.WriteString(fmt.Sprintf("**依赖方向**：项目入口为 `%s`，依赖关系从入口向下游模块单向流动。", entries[0].Name))
+	} else {
+		b.WriteString("**依赖方向**：项目无明显单一入口，各模块通过相互依赖协作。")
+	}
+
+	// 3. Cycles as design tension
+	cycles := graph.DetectCycles()
+	if len(cycles) > 0 {
+		b.WriteString(fmt.Sprintf("存在 %d 处循环依赖（%s），这些模块存在紧密的双向耦合，可能需要在重构时引入接口或合并模块来解决。\n",
+			len(cycles), strings.Join(cycles[0].Nodes, " → ")))
+	} else {
+		b.WriteString("未检测到循环依赖，模块间耦合方向清晰。\n")
+	}
+
+	// 4. Central modules
+	type prPair struct{ name string; score float64 }
+	var prList []prPair
+	for name, s := range pr {
+		prList = append(prList, prPair{name, s})
+	}
+	sort.Slice(prList, func(i, j int) bool { return prList[i].score > prList[j].score })
+	if len(prList) >= 2 {
+		b.WriteString(fmt.Sprintf("**核心模块**：PageRank 分析表明 `%s`（%.2f）和 `%s`（%.2f）在依赖网络中处于中心位置，修改这些模块前应评估对上下游的影响。\n",
+			prList[0].name, prList[0].score, prList[1].name, prList[1].score))
+	}
+
+	return b.String()
+}
+
+func firstOf(s []string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	return s[0]
+}
+
+func firstOr(s []string, defaultVal string) string {
+	if len(s) == 0 {
+		return defaultVal
+	}
+	return s[0]
+}
+
+func filterSections(sections []struct{ id, title, content string }, names ...string) []struct{ id, title string } {
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
+	}
+	var result []struct{ id, title string }
+	for _, s := range sections {
+		if nameSet[s.id] {
+			result = append(result, struct{ id, title string }{s.id, s.title})
+		}
+	}
+	return result
+}
+
 func sortedThemeKeys(m map[string][]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -3231,4 +3563,457 @@ func sortedKeys(m map[string][]*grapher.Node) []string {
 		return keys[i] < keys[j]
 	})
 	return keys
+}
+
+
+// ---------- Source Code Snippet Extraction ----------
+
+// CodeSnippet holds an extracted source code fragment for inline embedding.
+type CodeSnippet struct {
+	Filename  string
+	StartLine int
+	EndLine   int
+	Code      string
+	Label     string
+	Language  string
+}
+
+// ExtractKeySnippets selects the most important code snippets from the entire graph.
+func ExtractKeySnippets(sourceDir string, graph *grapher.Graph, maxSnippets int) []CodeSnippet {
+	if sourceDir == "" || graph == nil || len(graph.Nodes) == 0 {
+		return nil
+	}
+
+	pr := graph.PageRank()
+	type candidate struct {
+		node      *grapher.Node
+		name      string
+		startLine int
+		endLine   int
+		score     float64
+	}
+
+	var candidates []candidate
+	for _, n := range graph.Nodes {
+		nodeScore := pr[n.Name]
+		for _, f := range n.Functions {
+			if f.StartLine <= 0 {
+				continue
+			}
+			end := f.EndLine
+			if end <= f.StartLine {
+				end = f.StartLine + 20
+			}
+			candidates = append(candidates, candidate{
+				node: n, name: f.Name, startLine: f.StartLine, endLine: end,
+				score: nodeScore*10 + float64(len(graph.DependentsOf(n.Name))),
+			})
+		}
+		for _, c := range n.Classes {
+			if c.StartLine <= 0 {
+				continue
+			}
+			end := c.EndLine
+			if end <= c.StartLine {
+				end = c.StartLine + 30
+			}
+			candidates = append(candidates, candidate{
+				node: n, name: c.Name, startLine: c.StartLine, endLine: end,
+				score: nodeScore*10 + float64(len(graph.DependentsOf(n.Name))) + 5,
+			})
+		}
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
+
+	if maxSnippets > 0 && len(candidates) > maxSnippets {
+		candidates = candidates[:maxSnippets]
+	}
+
+	var snippets []CodeSnippet
+	for _, c := range candidates {
+		code := readFileLines(sourceDir, c.node.Filename, c.startLine, c.endLine)
+		if code == "" {
+			continue
+		}
+		lang := inferLanguageFromFilename(c.node.Filename)
+		snippets = append(snippets, CodeSnippet{
+			Filename:  c.node.Filename,
+			StartLine: c.startLine,
+			EndLine:   c.endLine,
+			Code:      code,
+			Label:     c.name,
+			Language:  lang,
+		})
+	}
+	return snippets
+}
+
+// ExtractSnippetsForNode extracts code snippets for a specific module node.
+func ExtractSnippetsForNode(sourceDir string, node *grapher.Node, maxSnippets int) []CodeSnippet {
+	if sourceDir == "" || node == nil {
+		return nil
+	}
+
+	type candidate struct {
+		name      string
+		startLine int
+		endLine   int
+		isClass   bool
+	}
+
+	var candidates []candidate
+	for _, f := range node.Functions {
+		if f.StartLine <= 0 {
+			continue
+		}
+		end := f.EndLine
+		if end <= f.StartLine {
+			end = f.StartLine + 20
+		}
+		candidates = append(candidates, candidate{name: f.Name, startLine: f.StartLine, endLine: end})
+	}
+	for _, c := range node.Classes {
+		if c.StartLine <= 0 {
+			continue
+		}
+		end := c.EndLine
+		if end <= c.StartLine {
+			end = c.StartLine + 30
+		}
+		candidates = append(candidates, candidate{name: c.Name, startLine: c.StartLine, endLine: end, isClass: true})
+	}
+
+	if maxSnippets > 0 && len(candidates) > maxSnippets {
+		candidates = candidates[:maxSnippets]
+	}
+
+	lang := inferLanguageFromFilename(node.Filename)
+	var snippets []CodeSnippet
+	for _, c := range candidates {
+		code := readFileLines(sourceDir, node.Filename, c.startLine, c.endLine)
+		if code == "" {
+			continue
+		}
+		snippets = append(snippets, CodeSnippet{
+			Filename:  node.Filename,
+			StartLine: c.startLine,
+			EndLine:   c.endLine,
+			Code:      code,
+			Label:     c.name,
+			Language:  lang,
+		})
+	}
+	return snippets
+}
+
+// FormatSnippetMarkdown formats a CodeSnippet as Markdown with source attribution.
+func FormatSnippetMarkdown(s CodeSnippet) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("**%s** — `%s:%d-%d`\n\n", s.Label, s.Filename, s.StartLine, s.EndLine))
+	b.WriteString("```" + s.Language + "\n")
+	b.WriteString(s.Code)
+	b.WriteString("\n```\n")
+	return b.String()
+}
+
+// readFileLines reads a range of lines from a source file.
+func readFileLines(sourceDir, filename string, startLine, endLine int) string {
+	ext := filepath.Ext(filename)
+	// Try exact path first, then common variations
+	paths := []string{
+		filepath.Join(sourceDir, filename),
+	}
+	if ext == "" {
+		paths = append(paths, filepath.Join(sourceDir, filename+".py"),
+			filepath.Join(sourceDir, filename+".go"),
+			filepath.Join(sourceDir, filename+".js"),
+			filepath.Join(sourceDir, filename+".ts"),
+			filepath.Join(sourceDir, filename+".java"))
+	}
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		if startLine < 1 {
+			startLine = 1
+		}
+		if endLine > len(lines) {
+			endLine = len(lines)
+		}
+		if startLine > len(lines) {
+			return ""
+		}
+		selected := lines[startLine-1 : endLine]
+		return strings.TrimRight(strings.Join(selected, "\n"), "\n")
+	}
+	return ""
+}
+
+// inferLanguageFromFilename returns a language tag for syntax highlighting.
+func inferLanguageFromFilename(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".py":
+		return "python"
+	case ".go":
+		return "go"
+	case ".js":
+		return "javascript"
+	case ".ts", ".tsx":
+		return "typescript"
+	case ".java":
+		return "java"
+	case ".rs":
+		return "rust"
+	case ".cpp", ".cc", ".c":
+		return "cpp"
+	default:
+		return ""
+	}
+}
+
+// selectCoreNodes returns the top N nodes by PageRank score.
+func selectCoreNodes(graph *grapher.Graph, n int) []*grapher.Node {
+	pr := graph.PageRank()
+	type scored struct {
+		node  *grapher.Node
+		score float64
+	}
+	var all []scored
+	for _, node := range graph.Nodes {
+		all = append(all, scored{node: node, score: pr[node.Name]})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
+	var result []*grapher.Node
+	for i := 0; i < n && i < len(all); i++ {
+		result = append(result, all[i].node)
+	}
+	return result
+}
+
+// collectCoreClasses returns the most important classes across the graph.
+func collectCoreClasses(graph *grapher.Graph, maxClasses int) []analyzer.ClassInfo {
+	pr := graph.PageRank()
+	type classRef struct {
+		class analyzer.ClassInfo
+		score float64
+	}
+	var all []classRef
+	for _, node := range graph.Nodes {
+		for _, c := range node.Classes {
+			all = append(all, classRef{class: c, score: pr[node.Name]})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
+	seen := make(map[string]bool)
+	var result []analyzer.ClassInfo
+	for _, ref := range all {
+		if seen[ref.class.Name] {
+			continue
+		}
+		seen[ref.class.Name] = true
+		result = append(result, ref.class)
+		if len(result) >= maxClasses {
+			break
+		}
+	}
+	return result
+}
+
+// EmbedContextualContent injects contextually relevant diagrams and code snippets
+// into each wiki article based on the article'sthematic focus.
+func EmbedContextualContent(wiki *Wiki, graph *grapher.Graph, sourceDir string, sequences []sequencer.Sequence) {
+	if wiki == nil || graph == nil {
+		return
+	}
+
+	// Overview: top-level diagram + entry point snippet
+	if topDSL, err := diagram.GenerateTopLevelDiagram(graph); err == nil && topDSL != "" {
+		wiki.Overview += "\n## 架构概览\n\n"
+		wiki.Overview += "```mermaid\n" + topDSL + "\n```\n"
+	}
+	entries := graph.EntryPoints()
+	if len(entries) > 0 && sourceDir != "" {
+		snippets := ExtractSnippetsForNode(sourceDir, entries[0], 2)
+		if len(snippets) > 0 {
+			wiki.Overview += "\n## 入口代码\n\n"
+			for _, s := range snippets {
+				wiki.Overview += FormatSnippetMarkdown(s) + "\n"
+			}
+		}
+	}
+
+	// Architecture: core module source code
+	coreNodes := selectCoreNodes(graph, 5)
+	if len(coreNodes) > 0 && sourceDir != "" {
+		wiki.Architecture += "\n## 核心模块源码\n\n"
+		for _, node := range coreNodes {
+			snippets := ExtractSnippetsForNode(sourceDir, node, 1)
+			for _, s := range snippets {
+				wiki.Architecture += FormatSnippetMarkdown(s) + "\n"
+			}
+		}
+	}
+
+	// Key Concepts: class diagram for top classes
+	coreClasses := collectCoreClasses(graph, 10)
+	if len(coreClasses) > 0 {
+		if classDSL, err := diagram.GenerateSubClassDiagram(coreClasses, "核心类型关系"); err == nil && classDSL != "" {
+			wiki.KeyConcepts += "\n## 类型关系图\n\n"
+			wiki.KeyConcepts += "```mermaid\n" + classDSL + "\n```\n"
+		}
+	}
+
+	// Learning Path: up to 3 sequence diagrams
+	for i := 0; i < len(sequences) && i < 3; i++ {
+		seq := sequences[i]
+		seqDSL := sequencer.GenerateSequenceDiagram(seq)
+		if seqDSL == "" {
+			continue
+		}
+		title := seq.Description
+		if title == "" {
+			title = fmt.Sprintf("调用流程 %d", i+1)
+		}
+		wiki.LearningPath += fmt.Sprintf("\n## %s\n\n", title)
+		wiki.LearningPath += "```mermaid\n" + seqDSL + "\n```\n"
+	}
+
+	// Project Structure: directory-level sub-diagrams (up to 3)
+	groups := graph.GroupByDirectory()
+	count := 0
+	for dir, nodes := range groups {
+		if count >= 3 {
+			break
+		}
+		if dir == "." || dir == "" || len(nodes) < 2 {
+			continue
+		}
+		sub := graph.SubGraphForDirectory(dir)
+		if len(sub.Edges) == 0 {
+			continue
+		}
+		subDSL, err := diagram.GenerateSubArchDiagram(sub, dir)
+		if err != nil || subDSL == "" {
+			continue
+		}
+		wiki.ProjectStructure += fmt.Sprintf("\n## %s 目录依赖图\n\n", dir)
+		wiki.ProjectStructure += "```mermaid\n" + subDSL + "\n```\n"
+		count++
+	}
+}
+
+// ---------- File Tree for Code Navigation ----------
+
+// FileTreeNode represents a node in the code structure tree.
+type FileTreeNode struct {
+	Name     string
+	Path     string
+	IsDir    bool
+	Children []*FileTreeNode
+}
+
+// BuildFileTree constructs a directory tree from graph nodes.
+func BuildFileTree(graph *grapher.Graph) *FileTreeNode {
+	root := &FileTreeNode{Name: ".", Path: "", IsDir: true}
+	dirSet := make(map[string]bool)
+	for _, n := range graph.Nodes {
+		fn := strings.ReplaceAll(n.Filename, "\\", "/")
+		parts := strings.Split(fn, "/")
+		for i := 0; i < len(parts)-1; i++ {
+			dirSet[strings.Join(parts[:i+1], "/")] = true
+		}
+	}
+
+	nodeByPath := make(map[string]*FileTreeNode)
+	nodeByPath[""] = root
+
+	var dirs []string
+	for d := range dirSet {
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
+	for _, d := range dirs {
+		parent := ""
+		if idx := strings.LastIndex(d, "/"); idx >= 0 {
+			parent = d[:idx]
+		}
+		name := d
+		if idx := strings.LastIndex(d, "/"); idx >= 0 {
+			name = d[idx+1:]
+		}
+		child := &FileTreeNode{Name: name, Path: d, IsDir: true}
+		if p, ok := nodeByPath[parent]; ok {
+			p.Children = append(p.Children, child)
+		}
+		nodeByPath[d] = child
+	}
+
+	for _, n := range graph.Nodes {
+		fn := strings.ReplaceAll(n.Filename, "\\", "/")
+		parent := ""
+		if idx := strings.LastIndex(fn, "/"); idx >= 0 {
+			parent = fn[:idx]
+		}
+		name := fn
+		if idx := strings.LastIndex(fn, "/"); idx >= 0 {
+			name = fn[idx+1:]
+		}
+		safe := strings.ReplaceAll(n.Name, "/", "_")
+		safe = strings.ReplaceAll(safe, "\\", "_")
+		safe = strings.ReplaceAll(safe, ":", "_")
+		child := &FileTreeNode{Name: name, Path: "module-" + safe, IsDir: false}
+		if p, ok := nodeByPath[parent]; ok {
+			p.Children = append(p.Children, child)
+		} else {
+			root.Children = append(root.Children, child)
+		}
+	}
+
+	var sortNode func(n *FileTreeNode)
+	sortNode = func(n *FileTreeNode) {
+		sort.Slice(n.Children, func(i, j int) bool {
+			if n.Children[i].IsDir != n.Children[j].IsDir {
+				return n.Children[i].IsDir
+			}
+			return n.Children[i].Name < n.Children[j].Name
+		})
+		for _, c := range n.Children {
+			sortNode(c)
+		}
+	}
+	sortNode(root)
+	return root
+}
+
+// RenderFileTreeHTML renders a FileTreeNode as collapsible HTML.
+func RenderFileTreeHTML(node *FileTreeNode) string {
+	var b strings.Builder
+	renderFileTreeNode(&b, node, 0)
+	return b.String()
+}
+
+func renderFileTreeNode(b *strings.Builder, node *FileTreeNode, depth int) {
+	if node.Name == "." {
+		for _, c := range node.Children {
+			renderFileTreeNode(b, c, 0)
+		}
+		return
+	}
+	if node.IsDir {
+		b.WriteString("<details class=\"file-tree-dir\" open>\n")
+		b.WriteString(fmt.Sprintf("<summary>%s</summary>\n", node.Name))
+		for _, c := range node.Children {
+			renderFileTreeNode(b, c, depth+1)
+		}
+		b.WriteString("</details>\n")
+	} else {
+		b.WriteString(fmt.Sprintf("<a href=\"#%s\" class=\"file-tree-link\" data-target=\"%s\">%s</a>\n",
+			node.Path, node.Path, node.Name))
+	}
 }

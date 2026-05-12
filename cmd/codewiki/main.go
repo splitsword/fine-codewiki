@@ -28,6 +28,10 @@ func main() {
 		runAsk(os.Args[2:])
 	case "config":
 		runConfig(os.Args[2:])
+	case "browse":
+		runBrowse(os.Args[2:])
+	case "update":
+		runUpdate(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Printf("codewiki version %s\n", version)
 	case "help", "-h", "--help":
@@ -152,6 +156,32 @@ func runAsk(args []string) {
 	}
 }
 
+func runBrowse(args []string) {
+	fs := flag.NewFlagSet("browse", flag.ExitOnError)
+	sourceDir := fs.String("source", ".", "Source code directory")
+	outputDir := fs.String("output", "", "Output directory for wiki files")
+	name := fs.String("name", "", "Project name")
+	fs.Parse(args)
+
+	cfg := &cli.Config{
+		SourceDir:   *sourceDir,
+		OutputDir:   *outputDir,
+		ProjectName: *name,
+	}
+	if err := cli.RunBrowse(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runUpdate(args []string) {
+	cfg := &cli.Config{Version: version}
+	if err := cli.RunUpdate(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func runConfig(args []string) {
 	fs := flag.NewFlagSet("config", flag.ExitOnError)
 	path := fs.String("path", "", "Config file path (default: ~/.codewiki/config.yaml)")
@@ -177,9 +207,12 @@ Usage:
 
 Commands:
   generate   Analyze code and generate wiki documentation
+  browse     Generate (if needed) and open wiki in browser
   serve      Start a local HTTP server to preview the wiki
   ask        Ask a natural-language question about the codebase
   config     Configure LLM provider and API settings
+  update     Check for and install the latest version
+  version    Print version information
   help       Show this help message
 
 Generate flags:

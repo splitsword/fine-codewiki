@@ -88,9 +88,14 @@ func BuildCallGraph(sourceDir string, files []*analyzer.FileResult) ([]CallEdge,
 		mod := moduleNameFromFilename(f.Filename)
 		ext := filepath.Ext(f.Filename)
 
-		// Handle both relative and absolute filenames safely on Windows.
+		// Resolve source path: try raw filename first (it may already be
+		// relative to sourceDir from WalkSourceFiles), then join with sourceDir.
 		srcPath := f.Filename
-		if !filepath.IsAbs(srcPath) {
+		if _, err := os.Stat(srcPath); err != nil {
+			if filepath.IsAbs(srcPath) {
+				fileDiags = append(fileDiags, fileDiag{path: f.Filename, ext: ext, readErr: err})
+				continue
+			}
 			srcPath = filepath.Join(sourceDir, f.Filename)
 		}
 		src, err := os.ReadFile(srcPath)

@@ -1,7 +1,7 @@
 # PRD 覆盖追踪文档
 
 > 本文档将 PRD 中的能力、测试、里程碑、发布门禁映射到实际实现状态。每次提交前更新对应条目，确保无遗漏。
-> 文档版本：v0.2 | 最后更新：2026-05-08
+> 文档版本：v0.3 | 最后更新：2026-05-12
 
 ---
 
@@ -107,6 +107,7 @@
 | 3.5 | Wiki 导出 Markdown 合辑 | `internal/docgen/docgen.go` | ✅ | `GenerateMarkdownCompilation()` + `WriteWikiFiles` 自动生成 `compilation.md` |
 | 3.6 | 导出静态 HTML | `internal/docgen/docgen.go` + `internal/cli/cli.go` | ✅ | `GenerateStaticHTML()` 生成单文件离线 HTML（含导航、Mermaid.js CDN、CSS）；`WriteWikiFiles` 自动输出 `index.html`；`serve` 保留实时渲染 |
 | 3.7 | 导出 PDF | `internal/docgen/pdf.go` | ✅ | `GeneratePDF()` + `WriteWikiFiles` 集成；跨平台 CJK 字体自动探测；Markdown 渲染（标题/段落/列表/代码块/表格/分隔线）；图表附录以 DSL 代码块输出 |
+| 3.7b | **Web UI 体验升级** | `internal/docgen/render.go` + `internal/cli/cli.go` | ✅ | **14 项 UI 特性：** 磨砂玻璃态(backdrop-filter)、暗色主题(CSS 变量+localStorage)、阅读进度条、代码块语言标签+复制、图表全屏展开、折叠导航分组(入门/动态/探索)、Ctrl+K 搜索覆盖层、Ask AI 快捷入口、滚动导航高亮(IntersectionObserver)、阅读时长徽章(EstimateReadingTime)、难度星级徽章(articleDifficulty)、Mermaid 点击导航(navigateToModule)、版本历史备份(.bak)、生成时间戳；Serve/Static 双路径共享 wikiPageCSS + wikiPageJS |
 | 3.8 | Homebrew/npm/winget 分发 | `scripts/install.sh` + `scripts/install.ps1` + `.github/workflows/release.yml` | 🟡 | GitHub Releases + 一键安装脚本已就绪；Homebrew tap 仓库/npm/winget manifest 待创建 |
 | 3.9 | 大规模仓库性能优化 | `internal/cli/cli.go` (RunAsk) + `benchmark/benchmark_test.go` | ✅ | AST+Graph 缓存已实现，增量索引已实现；`BenchmarkEndToEnd100K` 验证 100K 行生成 < 4s；CI 性能门禁已配置 |
 | 3.10 | 提示词优化（按语言）+ Prompt 快照回归 | `internal/docgen/docgen.go` | ✅ | prompt 已统一中文；按语言定制模板已实现（Python/Go/JS/Java/Rust/C++）；快照回归机制已建立 (`testdata/expected/prompts/`) |
@@ -137,6 +138,10 @@
 | Prompt 变更可被回归测试发现 | ✅ | `testdata/expected/prompts/` 存储 overview/architecture prompt 快照；`SnapshotCompare` 支持 `-update` 更新 |
 | 发布到 Homebrew/npm/winget | ❌ | 未实现 |
 | 发布后第一个月 100+ star | ⏳ | Beta 未发布 |
+| **Web UI 对标 Zread 体验质量** | ✅ | 14 项 UI 特性已实现（磨砂玻璃态/暗色主题/阅读进度条/代码块复制/图表全屏/折叠导航/Ctrl+K搜索/Ask AI/滚动高亮/时长徽章/难度徽章/主题切换/图表导航/版本备份） |
+| **Serve 与 Static HTML 双路径视觉一致** | ✅ | 共享 `wikiPageCSS` + `wikiPageJS`，渲染测试覆盖 |
+| **新开发者 5 分钟内理解项目定位** | ✅ | 阅读时长徽章 + 难度星级 + "下一步阅读 →"导航 + 五分钟快速上手路径 |
+| **暗色模式可用** | ✅ | CSS 变量双主题 + `localStorage` 持久化 + 顶栏一键切换 |
 
 ### M3 测试计划核对
 
@@ -160,6 +165,14 @@
 | Rust / C++ AST 解析 | ✅ | `analyzer` 单元测试覆盖 struct/trait/impl/class/include/method |
 | tree-sitter grammar 捆绑验证 | ✅ | `grammar_bundle.go` + `gotreesitter/grammars` 自动检测；`treesitter_extract.go` tags query 提取定义 + AST walk 提取 import；正则兜底回退 |
 | CI 跨平台矩阵 | ✅ | GitHub Actions: ubuntu-latest / macos-latest / windows-latest × Go 1.23 / 1.24 |
+| **代码块语言标签+复制** | ✅ | `TestMarkdownToHTMLCodeBlock` 验证 `<pre><code` + 语言标签 + 复制按钮 |
+| **Mermaid 全屏展开** | ✅ | `TestGenerateStaticHTML` 验证 `mermaid-wrap` + expand 按钮 |
+| **折叠导航分组** | ✅ | `TestWriteWikiFiles` + `TestGenerateStaticHTML` 验证 `nav-group` 结构 + 图标 span |
+| **搜索覆盖层** | ✅ | `TestGenerateStaticHTML` 验证 `.search-overlay` + `filterStaticSearch` + Ctrl+K |
+| **阅读时长估算** | ✅ | `EstimateReadingTime()` 中文 400 字/分钟，`cli.go` 注入 ⏱ 徽章 |
+| **难度星级标注** | ✅ | `articleDifficulty()` 按文件名前缀分级 + 颜色编码 |
+| **暗色主题** | ✅ | CSS `[data-theme="dark"]` + `localStorage` 持久化 |
+| **Serve/Static 双路径一致性** | ✅ | `wikiPageCSS` + `wikiPageJS` 共享常量，两路径渲染测试覆盖 |
 
 ---
 
@@ -217,7 +230,8 @@
 | 文件/目录 | 覆盖的 PRD 能力 |
 |-----------|----------------|
 | `internal/analyzer/` | M1-1.1 AST, M2-2.7 多语言 |
-| `internal/docgen/` | M1-1.2 文档, M3-3.1~3.4 深度增强 |
+| `internal/docgen/` | M1-1.2 文档, M3-3.1~3.7 深度增强与导出, M3-3.7b Web UI 体验升级 |
+| `internal/docgen/render.go` | M3-3.7b Web UI: `wikiPageCSS`/`wikiPageJS` 共享样式与脚本, `BuildWikiPage()` Serve 渲染, `RenderMarkdownBody()` Markdown→HTML |
 | `internal/diagram/` | M1-1.3 架构图, M1-1.4 类图 |
 | `internal/grapher/` | M1-1.3 依赖图, M3-3.2 模块推断 |
 | `internal/sequencer/` | M2-2.4 时序图, M3-3.3 调用链语义 |
@@ -226,5 +240,5 @@
 | `internal/vectorstore/` | M2-2.2 向量存储 |
 | `internal/rag/` | M2-2.3 RAG 问答 |
 | `internal/llm/` | M2-2.5 本地LLM, M2-2.6 配置系统 |
-| `internal/cli/` | M1-1.5 CLI, M1-1.7 Web, M2-2.3 ask |
+| `internal/cli/` | M1-1.5 CLI, M1-1.7 Web, M2-2.3 ask, M3-3.7b Web UI (阅读时长/难度徽章/搜索入口) |
 | `cmd/codewiki/` | M1-1.5 入口 |

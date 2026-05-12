@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -40,6 +41,7 @@ type Config struct {
 	Question        string
 	ConfigPath      string
 	Force           bool
+	Version         string
 }
 
 // RunGenerate executes the full generate pipeline: parse → graph → diagram → doc.
@@ -242,6 +244,9 @@ func RunGenerate(cfg *Config) error {
 	}
 	wiki.SequenceDescription = seqDesc
 
+	fmt.Println("正在嵌入上下文图表和源码片段...")
+	docgen.EmbedContextualContent(wiki, graph, cfg.SourceDir, sequences)
+
 	fmt.Printf("正在将 Wiki 写入 %s...\n", cfg.OutputDir)
 	if err := docgen.WriteWikiFiles(cfg.OutputDir, wiki, graph); err != nil {
 		return fmt.Errorf("write wiki files: %w", err)
@@ -258,9 +263,30 @@ func RunServe(cfg *Config) error {
 		cfg.OutputDir = filepath.Join(".", ".codewiki", "wiki")
 	}
 
+	// Auto-detect: if default dir doesn't exist, search subdirectories
 	if _, err := os.Stat(cfg.OutputDir); os.IsNotExist(err) {
-		return fmt.Errorf("Wiki 目录未找到：%s（请先运行 'generate'）", cfg.OutputDir)
+		found := false
+		filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+			if found || err != nil {
+				return nil
+			}
+			if info.IsDir() && info.Name() == "wiki" {
+				parent := filepath.Dir(path)
+				if filepath.Base(parent) == ".codewiki" {
+					cfg.OutputDir = path
+					found = true
+				}
+			}
+			return nil
+		})
+		if !found {
+			return fmt.Errorf("Wiki 目录未找到：%s\n请先运行 'generate' 或使用 -dir 指定 Wiki 目录", cfg.OutputDir)
+		}
 	}
+
+	absDir, _ := filepath.Abs(cfg.OutputDir)
+	fmt.Printf("Wiki 目录：%s\n", absDir)
+	fmt.Printf("访问 http://localhost:%d 开始浏览\n", cfg.Port)
 
 	var engine *rag.Engine
 	if cfg.SourceDir != "" {
@@ -365,7 +391,13 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rawPath == "/" {
-		serveIndexPage(w, h.root)
+		// Prefer the pre-generated three-column index.html; fall back to dynamic page.
+		indexPath := filepath.Join(h.root, "index.html")
+		if _, err := os.Stat(indexPath); err == nil {
+			http.ServeFile(w, r, indexPath)
+		} else {
+			serveIndexPage(w, h.root)
+		}
 		return
 	}
 	path := strings.TrimPrefix(rawPath, "/")
@@ -401,6 +433,10 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		body := docgen.RenderMarkdownBody(data)
 		title := strings.TrimSuffix(filepath.Base(path), ext)
+		readMin := docgen.EstimateReadingTime(string(data))
+		difficulty := articleDifficulty(path)
+		badge := fmt.Sprintf(`<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap"><span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--accent-glow);color:var(--accent)">⏱ %d 分钟阅读</span><span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;background:%s;color:%s">%s</span></div>`, readMin, difficulty.bg, difficulty.fg, difficulty.label)
+		body = badge + body
 		w.Write(docgen.BuildWikiPage(title, body, navItems, path))
 		return
 	}
@@ -620,6 +656,15 @@ func serveIndexPage(w http.ResponseWriter, root string) {
 		b.WriteString(fmt.Sprintf(`<div class="index-preview"><p>%s</p></div>`, docgen.HTMLEscape(overviewPreview)))
 	}
 
+	// Search box
+	b.WriteString(`<div style="margin:20px 0;position:relative">
+	<input type="text" id="wiki-search" placeholder="搜索文章、模块、函数..." autocomplete="off"
+	style="width:100%;padding:10px 16px;font-size:15px;border:2px solid #ddd;border-radius:8px;outline:none;box-sizing:border-box"
+	onfocus="this.style.borderColor='#2196f3'" onblur="this.style.borderColor='#ddd'">
+	<div id="search-results" style="position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #ddd;border-top:none;border-radius:0 0 8px 8px;max-height:300px;overflow-y:auto;z-index:100;display:none"></div>
+	</div>
+	`)
+
 	// Learning Guide section
 	b.WriteString(`<div class="index-section">
 <h2>📖 学习指南</h2>
@@ -668,12 +713,79 @@ func serveIndexPage(w http.ResponseWriter, root string) {
 </div>
 `)
 
+	// Build search index and inject search JS
+	searchJS := `<script>
+(function(){
+	var idx=[
+		{file:"00-overview.md",title:"项目概述",desc:"项目定位、规模统计、模块概览"},
+		{file:"01-what-it-does.md",title:"项目能做什么",desc:"核心能力、使用场景、目标用户"},
+		{file:"02-architecture.md",title:"架构说明",desc:"系统分层、设计模式、模块关系"},
+		{file:"03-project-structure.md",title:"项目结构",desc:"目录组织、模块职责、依赖关系"},
+		{file:"04-key-concepts.md",title:"核心概念",desc:"关键设计决策与架构思想"},
+		{file:"05-learning-path.md",title:"学习路径",desc:"按目标选择阅读路径"},
+		{file:"api-reference.md",title:"API 参考",desc:"全部类、函数、方法的详细说明"}
+	];
+	var inp=document.getElementById("wiki-search");
+	var res=document.getElementById("search-results");
+	inp.addEventListener("input",function(){
+		var q=inp.value.toLowerCase();
+		res.innerHTML="";
+		if(!q){res.style.display="none";return;}
+		var hits=[];
+		for(var i=0;i<idx.length;i++){
+			var s=idx[i].title+" "+idx[i].desc;
+			var p=s.toLowerCase().indexOf(q);
+			if(p>=0){hits.push({item:idx[i],pos:p});}
+		}
+		if(hits.length==0){
+			res.innerHTML='<div style="padding:10px;color:#999">未找到匹配结果</div>';
+			res.style.display="block";
+			return;
+		}
+		hits.sort(function(a,b){return a.pos-b.pos;});
+		var html="";
+		for(var i=0;i<hits.length;i++){
+			var h=hits[i].item;
+			html+='<a href="'+h.file+'" style="display:block;padding:10px 16px;text-decoration:none;color:#333;border-bottom:1px solid #eee">';
+			html+='<strong>'+h.title+'</strong></a>';
+		}
+		res.innerHTML=html;
+		res.style.display="block";
+	});
+	document.addEventListener("click",function(e){
+		if(e.target!==inp){res.style.display="none";}
+	});
+})();
+</script>`
+	// Inject search JS before the closing index-page div
+	pageHTML := strings.Replace(b.String(), "</div>\n</div>", "</div>\n"+searchJS+"\n</div>", 1)
+
 	navItems := listWikiFiles(root)
-	w.Write(docgen.BuildWikiPage("CodeWiki", b.String(), navItems, ""))
+	w.Write(docgen.BuildWikiPage("CodeWiki", pageHTML, navItems, ""))
 }
 
 func buildIndexLink(file, title, desc string) string {
 	return fmt.Sprintf(`<li><a href="%s"><strong>%s</strong></a> — %s</li>`, file, title, desc)
+}
+
+type difficultyInfo struct {
+	label string
+	bg    string
+	fg    string
+}
+
+func articleDifficulty(path string) difficultyInfo {
+	base := strings.ToLower(filepath.Base(path))
+	switch {
+	case strings.HasPrefix(base, "00"), strings.HasPrefix(base, "01"):
+		return difficultyInfo{"⭐ 入门", "rgba(16,185,129,.12)", "#059669"}
+	case strings.HasPrefix(base, "02"), strings.HasPrefix(base, "03"), strings.HasPrefix(base, "05"):
+		return difficultyInfo{"⭐⭐ 进阶", "rgba(245,158,11,.12)", "#d97706"}
+	case strings.HasPrefix(base, "04"), strings.HasPrefix(base, "api"):
+		return difficultyInfo{"⭐⭐⭐ 高级", "rgba(239,68,68,.12)", "#dc2626"}
+	default:
+		return difficultyInfo{"📖 参考", "rgba(99,102,241,.12)", "#6366f1"}
+	}
 }
 
 // listWikiFiles returns sorted .md and .mmd filenames in the directory.
@@ -1041,4 +1153,222 @@ func maskKey(key string) string {
 		return "****"
 	}
 	return key[:4] + "****" + key[len(key)-4:]
+}
+
+// RunUpdate checks GitHub Releases for a newer version and self-updates.
+func RunUpdate(cfg *Config) error {
+	current := cfg.Version
+	if current == "" || current == "dev" {
+		fmt.Println("当前为开发版本（dev），无法自动更新。请通过 go install 或手动下载更新。")
+		return nil
+	}
+
+	fmt.Printf("当前版本：%s\n", current)
+	fmt.Println("正在检查更新...")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get("https://api.github.com/repos/splitsword/fine-codewiki/releases/latest")
+	if err != nil {
+		return fmt.Errorf("检查更新失败：无法访问 GitHub API (%w)", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("检查更新失败：GitHub API 返回 %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return fmt.Errorf("解析 GitHub 响应失败 (%w)", err)
+	}
+
+	latest := strings.TrimPrefix(release.TagName, "v")
+	if latest == "" {
+		return fmt.Errorf("无法解析远程版本号")
+	}
+
+	if latest == current {
+		fmt.Printf("已是最新版本 (%s)。\n", current)
+		return nil
+	}
+
+	fmt.Printf("发现新版本：%s → %s\n", current, latest)
+
+	osName := runtime.GOOS
+	arch := runtime.GOARCH
+	ext := ".tar.gz"
+	binaryName := "codewiki"
+	if osName == "windows" {
+		ext = ".zip"
+		binaryName = "codewiki.exe"
+	}
+	assetName := "codewiki-v" + latest + "-" + osName + "-" + arch + ext
+
+	var downloadURL string
+	for _, a := range release.Assets {
+		if a.Name == assetName {
+			downloadURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if downloadURL == "" {
+		return fmt.Errorf("未找到 %s/%s 平台的新版本资产 (%s)", osName, arch, assetName)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "codewiki-update")
+	if err != nil {
+		return fmt.Errorf("创建临时目录失败 (%w)", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	archivePath := filepath.Join(tmpDir, assetName)
+	fmt.Printf("正在下载 %s...\n", assetName)
+
+	dlResp, err := client.Get(downloadURL)
+	if err != nil {
+		return fmt.Errorf("下载失败 (%w)", err)
+	}
+	defer dlResp.Body.Close()
+
+	f, err := os.Create(archivePath)
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败 (%w)", err)
+	}
+	if _, err := io.Copy(f, dlResp.Body); err != nil {
+		f.Close()
+		return fmt.Errorf("写入下载内容失败 (%w)", err)
+	}
+	f.Close()
+
+	fmt.Println("正在解压...")
+	if ext == ".zip" {
+		if err := extractZip(archivePath, tmpDir); err != nil {
+			return fmt.Errorf("解压失败 (%w)", err)
+		}
+	} else {
+		if err := extractTarGz(archivePath, tmpDir); err != nil {
+			return fmt.Errorf("解压失败 (%w)", err)
+		}
+	}
+
+	newBinary := filepath.Join(tmpDir, binaryName)
+	if _, err := os.Stat(newBinary); err != nil {
+		return fmt.Errorf("在解压内容中未找到 %s", binaryName)
+	}
+
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("获取当前可执行文件路径失败 (%w)", err)
+	}
+
+	if runtime.GOOS == "windows" {
+		newPath := execPath + ".new"
+		newData, err := os.ReadFile(newBinary)
+		if err != nil {
+			return fmt.Errorf("读取新二进制失败 (%w)", err)
+		}
+		if err := os.WriteFile(newPath, newData, 0755); err != nil {
+			return fmt.Errorf("写入新版本失败 (%w)", err)
+		}
+		swapScript := execPath + ".swap.bat"
+		script := "@echo off\r\ntimeout /t 2 /nobreak >nul\r\nmove /Y \"" + execPath + "\" \"" + execPath + ".old\"\r\nmove /Y \"" + execPath + ".new\" \"" + execPath + "\"\r\ndel \"" + swapScript + "\"\r\n"
+		if err := os.WriteFile(swapScript, []byte(script), 0644); err != nil {
+			return fmt.Errorf("创建替换脚本失败 (%w)", err)
+		}
+		fmt.Printf("更新已下载到 %s.new\n", execPath)
+		fmt.Printf("请运行以下命令完成更新：\n  start %s\n", swapScript)
+	} else {
+		oldPath := execPath + ".old"
+		os.Remove(oldPath)
+		if err := os.Rename(execPath, oldPath); err != nil {
+			return fmt.Errorf("备份当前版本失败 (%w)", err)
+		}
+		newData, err := os.ReadFile(newBinary)
+		if err != nil {
+			os.Rename(oldPath, execPath)
+			return fmt.Errorf("读取新二进制失败 (%w)", err)
+		}
+		if err := os.WriteFile(execPath, newData, 0755); err != nil {
+			os.Rename(oldPath, execPath)
+			return fmt.Errorf("写入新版本失败 (%w)", err)
+		}
+		os.Remove(oldPath)
+		fmt.Printf("更新完成：%s → %s\n", current, latest)
+	}
+
+	return nil
+}
+
+func extractZip(path, dest string) error {
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("powershell", "-Command",
+			"Expand-Archive -Path \""+path+"\" -DestinationPath \""+dest+"\" -Force")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("Expand-Archive: %s", string(out))
+		}
+		return nil
+	}
+	cmd := exec.Command("unzip", "-q", path, "-d", dest)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("unzip: %s", string(out))
+	}
+	return nil
+}
+
+func extractTarGz(path, dest string) error {
+	cmd := exec.Command("tar", "-xzf", path, "-C", dest)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tar: %s", string(out))
+	}
+	return nil
+}
+
+// RunBrowse generates the wiki if needed and opens it in a browser.
+func RunBrowse(cfg *Config) error {
+	if cfg.OutputDir == "" {
+		if cfg.SourceDir == "" || cfg.SourceDir == "." {
+			cfg.SourceDir = "."
+		}
+		cfg.OutputDir = filepath.Join(cfg.SourceDir, ".codewiki", "wiki")
+	}
+	indexPath := filepath.Join(cfg.OutputDir, "index.html")
+
+	// Auto-generate if wiki doesn't exist
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		fmt.Println("Wiki 尚未生成，正在自动生成...")
+		genCfg := &Config{
+			SourceDir:   cfg.SourceDir,
+			OutputDir:   cfg.OutputDir,
+			ProjectName: cfg.ProjectName,
+		}
+		if err := RunGenerate(genCfg); err != nil {
+			return fmt.Errorf("生成 wiki 失败: %w", err)
+		}
+	}
+
+	absPath, _ := filepath.Abs(indexPath)
+	fmt.Printf("正在浏览器中打开 %s\n", absPath)
+	return openBrowser("file://" + absPath)
+}
+
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	return cmd.Start()
 }

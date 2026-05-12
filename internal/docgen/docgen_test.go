@@ -198,7 +198,8 @@ func TestWriteWikiFiles(t *testing.T) {
 	assert.Contains(t, html, "<section id=\"overview\">")
 	assert.Contains(t, html, "<section id=\"architecture\">")
 	assert.Contains(t, html, "<section id=\"api-reference\">")
-	assert.Contains(t, html, `<a href="#overview">项目概述</a>`)
+	assert.Contains(t, html, `href="#overview"`)
+	assert.Contains(t, html, "项目概述")
 	assert.Contains(t, html, `<div class="mermaid">`)
 	assert.Contains(t, html, "graph TD")
 }
@@ -601,17 +602,20 @@ func TestGenerateStaticHTML(t *testing.T) {
 		SequenceDescription: "触发条件：调用 A 的主流程执行；最终由 B 完成数据查询",
 	}
 
-	html := GenerateStaticHTML(wiki)
+	html := GenerateStaticHTML(wiki, nil)
 
 	// 基本结构
 	assert.Contains(t, html, "<!DOCTYPE html>")
-	assert.Contains(t, html, `<html lang="zh-CN">`)
+	assert.Contains(t, html, `<html lang="zh-CN" data-theme="light">`)
 	assert.Contains(t, html, "html-demo Wiki")
 
-	// 导航锚点
-	assert.Contains(t, html, `<a href="#overview">项目概述</a>`)
-	assert.Contains(t, html, `<a href="#architecture">架构说明</a>`)
-	assert.Contains(t, html, `<a href="#api-reference">API 参考</a>`)
+	// 导航锚点（新版含图标 span）
+	assert.Contains(t, html, `href="#overview"`)
+	assert.Contains(t, html, "项目概述")
+	assert.Contains(t, html, `href="#architecture"`)
+	assert.Contains(t, html, "架构说明")
+	assert.Contains(t, html, `href="#api-reference"`)
+	assert.Contains(t, html, "API 参考")
 	// 图表已嵌入对应主题，不再作为独立导航项
 	assert.NotContains(t, html, `<a href="#architecture-diagram">架构图</a>`)
 	assert.NotContains(t, html, `<a href="#class-diagram">类图</a>`)
@@ -641,7 +645,7 @@ func TestGenerateStaticHTML(t *testing.T) {
 	assert.Contains(t, html, "cdn.jsdelivr.net/npm/mermaid")
 
 	// Mermaid interactive configuration
-	assert.Contains(t, html, "securityLevel: 'loose'", "should enable loose security for click handlers")
+	assert.Contains(t, html, "securityLevel:'loose'", "should enable loose security for click handlers")
 	assert.Contains(t, html, "window.navigateToModule", "should inject navigateToModule helper")
 
 	// 时序图场景描述已嵌入 learning-path section（通过 Markdown blockquote 渲染）
@@ -765,7 +769,7 @@ func TestGenerateModuleDocs(t *testing.T) {
 	}
 	graph := grapher.BuildGraph(files)
 
-	docs := GenerateModuleDocs(graph)
+	docs := GenerateModuleDocs(graph, "")
 	require.NotNil(t, docs)
 	require.Len(t, docs, 2)
 
@@ -773,7 +777,7 @@ func TestGenerateModuleDocs(t *testing.T) {
 	apiDoc := docs["services/api"]
 	assert.Contains(t, apiDoc, "# services/api")
 	assert.Contains(t, apiDoc, "**难度级别**")
-	assert.Contains(t, apiDoc, "## 职责说明")
+	assert.Contains(t, apiDoc, "## 功能说明")
 	assert.Contains(t, apiDoc, "## 类定义")
 	assert.Contains(t, apiDoc, "### Api")
 	assert.Contains(t, apiDoc, "BaseHandler")
@@ -962,13 +966,13 @@ func TestGenerateStaticHTMLWithThemes(t *testing.T) {
 		},
 	}
 
-	html := GenerateStaticHTML(wiki)
+	html := GenerateStaticHTML(wiki, nil)
 
 	// Should contain theme sections in sidebar
 	assert.Contains(t, html, "入口与命令行")
 	assert.Contains(t, html, "数据模型与实体")
-	assert.Contains(t, html, `<a href="#module-cmd_main">cmd/main</a>`)
-	assert.Contains(t, html, `<a href="#module-models_user">models/user</a>`)
+	assert.Contains(t, html, `href="#module-cmd_main"`)
+	assert.Contains(t, html, `href="#module-models_user"`)
 }
 
 func TestGenerateMarkdownCompilationWithThemes(t *testing.T) {

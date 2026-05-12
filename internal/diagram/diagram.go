@@ -334,3 +334,111 @@ func stripSelfParams(params string) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// GenerateTopLevelDiagram generates a coarsened architecture diagram where
+// each top-level directory is collapsed into a single node. Suitable for
+// the overview article to give a high-level picture without overwhelming detail.
+func GenerateTopLevelDiagram(graph *grapher.Graph) (string, error) {
+	top := graph.TopLevelGraph()
+	if len(top.Nodes) == 0 {
+		return "", nil
+	}
+	var b strings.Builder
+	b.WriteString("%% 顶层架构概览：展示各模块包之间的依赖关系\n")
+	b.WriteString("graph TD\n")
+	for _, n := range top.Nodes {
+		nodeID := mermaidEscape(n.Name)
+		b.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID, n.Name))
+	}
+	for _, e := range top.Edges {
+		fromID := mermaidEscape(e.From)
+		toID := mermaidEscape(e.To)
+		b.WriteString(fmt.Sprintf("    %s --> %s\n", fromID, toID))
+	}
+	return b.String(), nil
+}
+
+// GenerateSubArchDiagram generates an architecture diagram for a sub-graph
+// (e.g. a single directory or a group of related modules).
+func GenerateSubArchDiagram(subGraph *grapher.Graph, title string) (string, error) {
+	if len(subGraph.Nodes) == 0 {
+		return "", nil
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%%%% %s\n", title))
+	b.WriteString("graph TD\n")
+	for _, n := range subGraph.Nodes {
+		nodeID := mermaidEscape(n.Name)
+		label := n.Name
+		if idx := strings.LastIndex(label, "/"); idx >= 0 {
+			label = label[idx+1:]
+		}
+		b.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID, label))
+	}
+	for _, e := range subGraph.Edges {
+		fromID := mermaidEscape(e.From)
+		toID := mermaidEscape(e.To)
+		b.WriteString(fmt.Sprintf("    %s --> %s\n", fromID, toID))
+	}
+	return b.String(), nil
+}
+
+// GenerateSubClassDiagram generates a class diagram for a filtered set of classes.
+func GenerateSubClassDiagram(classes []analyzer.ClassInfo, title string) (string, error) {
+	if len(classes) == 0 {
+		return "", nil
+	}
+
+	// Deduplicate by class name
+	classMap := make(map[string]analyzer.ClassInfo)
+	for _, c := range classes {
+		if existing, ok := classMap[c.Name]; !ok || len(c.Methods) > len(existing.Methods) {
+			classMap[c.Name] = c
+		}
+	}
+	var deduped []analyzer.ClassInfo
+	for _, c := range classMap {
+		deduped = append(deduped, c)
+	}
+	sort.Slice(deduped, func(i, j int) bool {
+		return deduped[i].Name < deduped[j].Name
+	})
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%%%% %s\n", title))
+	b.WriteString("classDiagram\n")
+
+	inheritance := make(map[string][]string)
+	for _, c := range deduped {
+		classID := mermaidEscape(c.Name)
+		b.WriteString(fmt.Sprintf("    class %s {\n", classID))
+		for _, m := range c.Methods {
+			params := strings.Join(m.Params, ", ")
+			params = stripSelfParams(params)
+			line := fmt.Sprintf("        +%s(%s)", m.Name, params)
+			if m.ReturnType != "" {
+				line += " " + m.ReturnType
+			}
+			b.WriteString(line + "\n")
+		}
+		b.WriteString("    }\n")
+		if len(c.Bases) > 0 {
+			inheritance[c.Name] = c.Bases
+		}
+	}
+
+	var childNames []string
+	for child := range inheritance {
+		childNames = append(childNames, child)
+	}
+	sort.Strings(childNames)
+	for _, child := range childNames {
+		for _, parent := range inheritance[child] {
+			childID := mermaidEscape(child)
+			parentID := mermaidEscape(parent)
+			b.WriteString(fmt.Sprintf("    %s --|> %s\n", childID, parentID))
+		}
+	}
+
+	return b.String(), nil
+}

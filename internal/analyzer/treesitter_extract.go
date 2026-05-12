@@ -84,7 +84,7 @@ func extractDefinitionsWithQuery(tree *gotreesitter.Tree, lang *gotreesitter.Lan
 		switch d.kind {
 		case "definition.class", "definition.interface", "definition.type":
 			if !hasClass(result.Classes, d.name) {
-				ci := ClassInfo{Name: d.name, StartLine: int(d.node.StartPoint().Row) + 1}
+				ci := ClassInfo{Name: d.name, StartLine: int(d.node.StartPoint().Row) + 1, EndLine: int(d.node.EndPoint().Row) + 1}
 				result.Classes = append(result.Classes, ci)
 				classNodes = append(classNodes, classNode{info: ci, node: d.node})
 			}
@@ -99,7 +99,7 @@ func extractDefinitionsWithQuery(tree *gotreesitter.Tree, lang *gotreesitter.Lan
 			for i := range classNodes {
 				if isNodeInsideClass(d.node, classNodes[i].node) {
 					if !hasFunction(result.Classes[i].Methods, d.name) {
-						result.Classes[i].Methods = append(result.Classes[i].Methods, FunctionInfo{Name: d.name, StartLine: int(d.node.StartPoint().Row) + 1})
+						result.Classes[i].Methods = append(result.Classes[i].Methods, FunctionInfo{Name: d.name, StartLine: int(d.node.StartPoint().Row) + 1, EndLine: int(d.node.EndPoint().Row) + 1})
 					}
 					assigned = true
 					break
@@ -107,7 +107,7 @@ func extractDefinitionsWithQuery(tree *gotreesitter.Tree, lang *gotreesitter.Lan
 			}
 			if !assigned {
 				if !hasFunction(result.Functions, d.name) {
-					result.Functions = append(result.Functions, FunctionInfo{Name: d.name, StartLine: int(d.node.StartPoint().Row) + 1})
+					result.Functions = append(result.Functions, FunctionInfo{Name: d.name, StartLine: int(d.node.StartPoint().Row) + 1, EndLine: int(d.node.EndPoint().Row) + 1})
 				}
 			}
 		}

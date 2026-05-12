@@ -491,3 +491,150 @@ func hasEdge(edges []Edge, from, to string) bool {
 	}
 	return false
 }
+
+// SubGraphForNodes extracts a sub-graph containing only the specified nodes
+// and edges between them.
+func (g *Graph) SubGraphForNodes(names []string) *Graph {
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
+	}
+
+	sub := &Graph{}
+	for _, n := range g.Nodes {
+		if nameSet[n.Name] {
+			sub.Nodes = append(sub.Nodes, n)
+		}
+	}
+	for _, e := range g.Edges {
+		if nameSet[e.From] && nameSet[e.To] {
+			sub.Edges = append(sub.Edges, e)
+		}
+	}
+	return sub
+}
+
+// SubGraphForDirectory extracts a sub-graph of nodes whose Filename is under
+// the given directory prefix, plus edges between them.
+func (g *Graph) SubGraphForDirectory(dir string) *Graph {
+	dir = strings.ReplaceAll(dir, "\\", "/")
+	if !strings.HasSuffix(dir, "/") {
+		dir += "/"
+	}
+
+	sub := &Graph{}
+	nameSet := make(map[string]bool)
+	for _, n := range g.Nodes {
+		fn := strings.ReplaceAll(n.Filename, "\\", "/")
+		if strings.HasPrefix(fn, dir) || strings.HasPrefix(n.Name, strings.TrimSuffix(dir, "/")) {
+			sub.Nodes = append(sub.Nodes, n)
+			nameSet[n.Name] = true
+		}
+	}
+	for _, e := range g.Edges {
+		if nameSet[e.From] && nameSet[e.To] {
+			sub.Edges = append(sub.Edges, e)
+		}
+	}
+	return sub
+}
+
+// NeighborSubGraph returns a sub-graph centered on the given node, including
+// its direct dependencies and dependents (1-hop neighborhood).
+func (g *Graph) NeighborSubGraph(nodeName string) *Graph {
+	nameSet := map[string]bool{nodeName: true}
+	for _, e := range g.Edges {
+		if e.From == nodeName {
+			nameSet[e.To] = true
+		}
+		if e.To == nodeName {
+			nameSet[e.From] = true
+		}
+	}
+
+	sub := &Graph{}
+	for _, n := range g.Nodes {
+		if nameSet[n.Name] {
+			sub.Nodes = append(sub.Nodes, n)
+		}
+	}
+	for _, e := range g.Edges {
+		if nameSet[e.From] && nameSet[e.To] {
+			sub.Edges = append(sub.Edges, e)
+		}
+	}
+	return sub
+}
+
+// TopLevelGraph returns a coarsened graph where each top-level directory
+// is collapsed into a single node. Edges represent cross-directory imports.
+func (g *Graph) TopLevelGraph() *Graph {
+	dirNodes := make(map[string]bool)
+	nodeToDir := make(map[string]string)
+
+	for _, n := range g.Nodes {
+		fn := strings.ReplaceAll(n.Filename, "\\", "/")
+		parts := strings.SplitN(fn, "/", 2)
+		dir := parts[0]
+		if len(parts) == 1 {
+			dir = "."
+		}
+		dirNodes[dir] = true
+		nodeToDir[n.Name] = dir
+	}
+
+	top := &Graph{}
+	for dir := range dirNodes {
+		top.Nodes = append(top.Nodes, &Node{Name: dir, Filename: dir})
+	}
+	sort.Slice(top.Nodes, func(i, j int) bool {
+		return top.Nodes[i].Name < top.Nodes[j].Name
+	})
+
+	edgeSet := make(map[string]bool)
+	for _, e := range g.Edges {
+		fromDir := nodeToDir[e.From]
+		toDir := nodeToDir[e.To]
+		if fromDir != toDir {
+			key := fromDir + "->" + toDir
+			if !edgeSet[key] {
+				edgeSet[key] = true
+				top.Edges = append(top.Edges, Edge{From: fromDir, To: toDir, Type: "import"})
+			}
+		}
+	}
+	sort.Slice(top.Edges, func(i, j int) bool {
+		if top.Edges[i].From == top.Edges[j].From {
+			return top.Edges[i].To < top.Edges[j].To
+		}
+		return top.Edges[i].From < top.Edges[j].From
+	})
+
+	return top
+}
+
+// ClassesForDirectory returns all ClassInfo from nodes under a given directory.
+func (g *Graph) ClassesForDirectory(dir string) []analyzer.ClassInfo {
+	dir = strings.ReplaceAll(dir, "\\", "/")
+	if !strings.HasSuffix(dir, "/") {
+		dir += "/"
+	}
+	var classes []analyzer.ClassInfo
+	for _, n := range g.Nodes {
+		fn := strings.ReplaceAll(n.Filename, "\\", "/")
+		if strings.HasPrefix(fn, dir) || strings.HasPrefix(n.Name, strings.TrimSuffix(dir, "/")) {
+			classes = append(classes, n.Classes...)
+		}
+	}
+	return classes
+}
+
+// NodeByName returns the node with the given name, or nil if not found.
+func (g *Graph) NodeByName(name string) *Node {
+	for _, n := range g.Nodes {
+		if n.Name == name {
+			return n
+		}
+	}
+	return nil
+}

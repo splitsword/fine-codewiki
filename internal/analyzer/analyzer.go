@@ -26,6 +26,7 @@ type FunctionInfo struct {
 	ReturnType string   `json:"return_type,omitempty"`
 	Decorators []string `json:"decorators,omitempty"`
 	StartLine  int      `json:"start_line,omitempty"`
+	EndLine    int      `json:"end_line,omitempty"`
 }
 
 // ClassInfo represents a class definition.
@@ -35,6 +36,7 @@ type ClassInfo struct {
 	Methods    []FunctionInfo `json:"methods"`
 	Decorators []string       `json:"decorators,omitempty"`
 	StartLine  int            `json:"start_line,omitempty"`
+	EndLine    int            `json:"end_line,omitempty"`
 }
 
 // FileResult holds all extracted symbols from a single source file.
@@ -969,21 +971,88 @@ func ParseFile(filename, source string) (*FileResult, error) {
 
 // parseWithRegex falls back to the regex-based parsers for the given extension.
 func parseWithRegex(path, src, ext string) (*FileResult, error) {
+	var result *FileResult
+	var err error
 	switch ext {
 	case ".py":
-		return ParsePython(path, src)
+		result, err = ParsePython(path, src)
 	case ".js", ".ts", ".tsx":
-		return ParseJavaScript(path, src)
+		result, err = ParseJavaScript(path, src)
 	case ".go":
-		return ParseGo(path, src)
+		result, err = ParseGo(path, src)
 	case ".java":
-		return ParseJava(path, src)
+		result, err = ParseJava(path, src)
 	case ".rs":
-		return ParseRust(path, src)
+		result, err = ParseRust(path, src)
 	case ".cpp", ".cc", ".h", ".hpp", ".c":
-		return ParseCpp(path, src)
+		result, err = ParseCpp(path, src)
+	default:
+		return nil, fmt.Errorf("unsupported extension: %s", ext)
 	}
-	return nil, fmt.Errorf("unsupported extension: %s", ext)
+	if err != nil {
+		return nil, err
+	}
+	totalLines := strings.Count(src, "\n") + 1
+	fillEndLines(result, totalLines)
+	return result, nil
+}
+
+// fillEndLines estimates EndLine for functions and classes parsed by regex
+// (tree-sitter parsers already set EndLine precisely from node.EndPoint()).
+// Classes take precedence over top-level functions when computing boundaries.
+func fillEndLines(result *FileResult, totalLines int) {
+	if result == nil {
+		return
+	}
+
+	// Collect all top-level definition starts (functions + classes)
+	type boundary struct {
+		startLine int
+		isClass   bool
+		idx       int // index into result.Functions or result.Classes
+	}
+	var boundaries []boundary
+	for i, f := range result.Functions {
+		if f.StartLine > 0 {
+			boundaries = append(boundaries, boundary{startLine: f.StartLine, idx: i})
+		}
+	}
+	for i, c := range result.Classes {
+		if c.StartLine > 0 {
+			boundaries = append(boundaries, boundary{startLine: c.StartLine, isClass: true, idx: i})
+		}
+	}
+	sort.Slice(boundaries, func(i, j int) bool { return boundaries[i].startLine < boundaries[j].startLine })
+
+	// Compute EndLine for each top-level item
+	for i, b := range boundaries {
+		endLine := totalLines
+		if i+1 < len(boundaries) {
+			endLine = boundaries[i+1].startLine - 1
+		}
+		if b.isClass {
+			cls := &result.Classes[b.idx]
+			if cls.EndLine <= 0 {
+				cls.EndLine = endLine
+			}
+			// Fill EndLine for methods within this class
+			for j := range cls.Methods {
+				m := &cls.Methods[j]
+				if m.EndLine <= 0 && m.StartLine > 0 {
+					mEnd := cls.EndLine
+					if j+1 < len(cls.Methods) && cls.Methods[j+1].StartLine > 0 {
+						mEnd = cls.Methods[j+1].StartLine - 1
+					}
+					m.EndLine = mEnd
+				}
+			}
+		} else {
+			fn := &result.Functions[b.idx]
+			if fn.EndLine <= 0 {
+				fn.EndLine = endLine
+			}
+		}
+	}
 }
 
 // ---------- Utilities ----------
