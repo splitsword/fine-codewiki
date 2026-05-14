@@ -10,12 +10,12 @@ import (
 func TestMarkdownToHTMLHeaders(t *testing.T) {
 	src := []byte("# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n")
 	html := MarkdownToHTML(src)
-	assert.Contains(t, string(html), "<h1>H1</h1>")
-	assert.Contains(t, string(html), "<h2>H2</h2>")
-	assert.Contains(t, string(html), "<h3>H3</h3>")
-	assert.Contains(t, string(html), "<h4>H4</h4>")
-	assert.Contains(t, string(html), "<h5>H5</h5>")
-	assert.Contains(t, string(html), "<h6>H6</h6>")
+	assert.Contains(t, string(html), `<h1 id="H1">H1</h1>`)
+	assert.Contains(t, string(html), `<h2 id="H2">H2</h2>`)
+	assert.Contains(t, string(html), `<h3 id="H3">H3</h3>`)
+	assert.Contains(t, string(html), `<h4 id="H4">H4</h4>`)
+	assert.Contains(t, string(html), `<h5 id="H5">H5</h5>`)
+	assert.Contains(t, string(html), `<h6 id="H6">H6</h6>`)
 }
 
 func TestMarkdownToHTMLCodeBlock(t *testing.T) {
@@ -111,7 +111,7 @@ func TestMarkdownToHTMLEmpty(t *testing.T) {
 func TestMarkdownToHTMLCombined(t *testing.T) {
 	src := []byte("# Title\n\nParagraph with **bold** and *italic*.\n\n```\ncode block\n```\n\n")
 	html := MarkdownToHTML(src)
-	assert.Contains(t, string(html), "<h1>Title</h1>")
+	assert.Contains(t, string(html), `<h1 id="Title">Title</h1>`)
 	assert.Contains(t, string(html), "<strong>bold</strong>")
 	assert.Contains(t, string(html), "<em>italic</em>")
 	assert.Contains(t, string(html), "<pre><code")

@@ -2,9 +2,46 @@ package docgen
 
 import (
 	"fmt"
-	"path/filepath"
+	"regexp"
 	"strings"
+	"unicode"
 )
+
+var nonAlnumRe = regexp.MustCompile(`[^\p{L}\p{N}]+`)
+
+func headingSlug(text string) string {
+	plain := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(text, "")
+	slug := strings.TrimSpace(plain)
+	slug = strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		return '-'
+	}, slug)
+	slug = nonAlnumRe.ReplaceAllString(slug, "-")
+	slug = strings.Trim(slug, "-")
+	if slug == "" {
+		return "section"
+	}
+	return slug
+}
+
+// NavItem represents a single clickable item in the sidebar navigation.
+type NavItem struct {
+	URL         string    // href target (relative file path or anchor)
+	Title       string    // display name
+	Icon        string    // emoji icon
+	ReadingTime int       // minutes, 0 = don't show
+	Difficulty  string    // "⭐", "⭐⭐", "⭐⭐⭐", "" = don't show
+	SubItems    []NavItem // nested items (e.g. modules under a chapter)
+}
+
+// NavSection represents a collapsible group in the sidebar.
+type NavSection struct {
+	Label string    // section label, e.g. "认识项目"
+	Icon  string    // section emoji, e.g. "📘"
+	Items []NavItem
+}
 
 // EstimateReadingTime estimates reading time in minutes for Chinese+code content.
 func EstimateReadingTime(content string) int {
@@ -57,9 +94,9 @@ func RenderMarkdownBody(src []byte) string {
 			if langLabel == "" {
 				langLabel = "code"
 			}
-			body.WriteString(fmt.Sprintf("<div class=\"code-block\"><div class=\"code-header\"><span class=\"code-lang\">%s</span><button class=\"code-copy\" onclick=\"copyCode(this)\" title=\"复制代码\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\"/><path d=\"M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1\"/></svg><span>复制</span></button></div><pre><code%s>", htmlEscape(langLabel), langClass))
+			body.WriteString(fmt.Sprintf("<div class=\"code-block\"><div class=\"code-header\"><span class=\"code-lang\">%s</span><button class=\"code-copy\" onclick=\"copyCode(this)\" title=\"复制代码\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\"/><path d=\"M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1\"/></svg><span>复制</span></button></div><pre><code%s>", HTMLEscape(langLabel), langClass))
 			for _, cl := range codeLines {
-				body.WriteString(htmlEscape(cl))
+				body.WriteString(HTMLEscape(cl))
 				body.WriteByte('\n')
 			}
 			body.WriteString("</code></pre></div>\n")
@@ -199,38 +236,44 @@ func RenderMarkdownBody(src []byte) string {
 
 		// Headers
 		if strings.HasPrefix(trimmed, "# ") {
-			body.WriteString("<h1>")
-			body.WriteString(RenderInline(strings.TrimPrefix(trimmed, "# ")))
+			content := RenderInline(strings.TrimPrefix(trimmed, "# "))
+			body.WriteString(fmt.Sprintf(`<h1 id="%s">`, headingSlug(content)))
+			body.WriteString(content)
 			body.WriteString("</h1>\n")
 			continue
 		}
 		if strings.HasPrefix(trimmed, "## ") {
-			body.WriteString("<h2>")
-			body.WriteString(RenderInline(strings.TrimPrefix(trimmed, "## ")))
+			content := RenderInline(strings.TrimPrefix(trimmed, "## "))
+			body.WriteString(fmt.Sprintf(`<h2 id="%s">`, headingSlug(content)))
+			body.WriteString(content)
 			body.WriteString("</h2>\n")
 			continue
 		}
 		if strings.HasPrefix(trimmed, "### ") {
-			body.WriteString("<h3>")
-			body.WriteString(RenderInline(strings.TrimPrefix(trimmed, "### ")))
+			content := RenderInline(strings.TrimPrefix(trimmed, "### "))
+			body.WriteString(fmt.Sprintf(`<h3 id="%s">`, headingSlug(content)))
+			body.WriteString(content)
 			body.WriteString("</h3>\n")
 			continue
 		}
 		if strings.HasPrefix(trimmed, "#### ") {
-			body.WriteString("<h4>")
-			body.WriteString(RenderInline(strings.TrimPrefix(trimmed, "#### ")))
+			content := RenderInline(strings.TrimPrefix(trimmed, "#### "))
+			body.WriteString(fmt.Sprintf(`<h4 id="%s">`, headingSlug(content)))
+			body.WriteString(content)
 			body.WriteString("</h4>\n")
 			continue
 		}
 		if strings.HasPrefix(trimmed, "##### ") {
-			body.WriteString("<h5>")
-			body.WriteString(RenderInline(strings.TrimPrefix(trimmed, "##### ")))
+			content := RenderInline(strings.TrimPrefix(trimmed, "##### "))
+			body.WriteString(fmt.Sprintf(`<h5 id="%s">`, headingSlug(content)))
+			body.WriteString(content)
 			body.WriteString("</h5>\n")
 			continue
 		}
 		if strings.HasPrefix(trimmed, "###### ") {
-			body.WriteString("<h6>")
-			body.WriteString(RenderInline(strings.TrimPrefix(trimmed, "###### ")))
+			content := RenderInline(strings.TrimPrefix(trimmed, "###### "))
+			body.WriteString(fmt.Sprintf(`<h6 id="%s">`, headingSlug(content)))
+			body.WriteString(content)
 			body.WriteString("</h6>\n")
 			continue
 		}
@@ -323,6 +366,16 @@ body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto San
 .nav-group-items li a:hover { background:var(--accent-glow); color:var(--text); border-left-color:var(--accent); }
 .nav-group-items li a.active { background:var(--accent-gradient); color:#fff; font-weight:600; border-left-color:transparent; border-radius:0 6px 6px 0; margin-right:8px; }
 .nav-group-items li a .nav-icon { font-size:14px; flex-shrink:0; width:20px; text-align:center; }
+.nav-group-items li a .nav-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nav-group-items li a .nav-meta { display:flex; align-items:center; gap:4px; flex-shrink:0; margin-left:auto; }
+.nav-group-items li a .nav-time { font-size:10px; padding:1px 5px; border-radius:8px; background:var(--inline-code-bg); color:var(--text3); font-weight:500; }
+.nav-group-items li a .nav-diff { font-size:10px; padding:1px 5px; border-radius:8px; background:var(--accent-glow); color:var(--accent); font-weight:600; }
+.nav-group-items li a.active .nav-time { background:rgba(255,255,255,.25); color:rgba(255,255,255,.85); }
+.nav-group-items li a.active .nav-diff { background:rgba(255,255,255,.25); color:#fff; }
+.nav-group-header { gap:8px; }
+.nav-group-count { font-size:10px; padding:1px 6px; border-radius:10px; background:var(--bg3); color:var(--text3); font-weight:600; }
+.sidebar-summary { padding:10px 18px; font-size:11px; color:var(--text3); border-bottom:1px solid var(--border2); display:flex; align-items:center; gap:4px; }
+.sidebar-summary .dot { margin:0 2px; }
 
 /* ---- Content ---- */
 .content { margin-left:var(--sidebar-w); padding:calc(var(--topbar-h) + 28px) 48px 60px; max-width:900px; width:100%; }
@@ -335,7 +388,7 @@ a:hover { color:var(--accent2); text-decoration:underline; }
 p { margin:12px 0; }
 
 /* ---- Code ---- */
-code { font-family:"Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace; background:var(--inline-code-bg); padding:.15em .45em; border-radius:5px; font-size:85%; color:var(--accent); font-weight:500; }
+:not(pre) > code { font-family:"Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace; background:var(--inline-code-bg); padding:.15em .45em; border-radius:5px; font-size:85%; color:var(--accent); font-weight:500; }
 .code-block { border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow-md); margin:20px 0; border:1px solid var(--border2); }
 .code-header { display:flex; align-items:center; justify-content:space-between; padding:6px 14px; background:var(--bg3); border-bottom:1px solid var(--border2); }
 [data-theme="dark"] .code-header { background:#1c2028; }
@@ -345,7 +398,7 @@ code { font-family:"Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFM
 .code-copy.copied { color:#10b981; }
 .code-block pre { margin:0; border-radius:0; box-shadow:none; border:none; }
 pre { background:var(--pre-bg); color:var(--pre-text); padding:18px 20px; overflow:auto; border-radius:var(--radius); box-shadow:var(--shadow); position:relative; }
-pre code { background:none; padding:0; color:inherit; font-size:13px; line-height:1.65; font-weight:400; }
+pre code { background:none; padding:0; font-size:13px; line-height:1.65; font-weight:400; font-family:"Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace; }
 
 /* ---- Blockquote ---- */
 blockquote { margin:20px 0; padding:14px 20px; color:var(--text2); border-left:3px solid; border-image:var(--accent-gradient) 1; background:var(--accent-glow); border-radius:0 var(--radius) var(--radius) 0; }
@@ -400,6 +453,31 @@ hr { height:1px; padding:0; margin:36px 0; background:var(--border); border:0; }
 @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
 .content h1,.content h2,.content h3 { animation:fadeUp .4s ease-out; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+	/* ---- Chapter grid & cards ---- */
+	.chapter-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; margin:20px 0; }
+	.chapter-card { display:flex; flex-direction:column; gap:6px; padding:20px; border-radius:var(--radius-lg); border:1px solid var(--border); background:var(--bg); text-decoration:none; color:var(--text); transition:all .2s; }
+	.chapter-card:hover { border-color:var(--accent); box-shadow:0 4px 16px var(--accent-glow); transform:translateY(-2px); }
+	.chapter-card-title { font-size:1.05em; font-weight:700; color:var(--text); }
+	.chapter-card-subtitle { font-size:0.9em; color:var(--text2); line-height:1.4; }
+	.chapter-card-meta { display:flex; align-items:center; gap:10px; margin-top:4px; font-size:12px; color:var(--text3); }
+	.chapter-card-meta span:first-child { padding:2px 8px; border-radius:12px; background:var(--accent-glow); color:var(--accent); font-weight:600; }
+	/* ---- Chapter page header ---- */
+	.chapter-header { margin-bottom:32px; padding-bottom:24px; border-bottom:2px solid var(--border); }
+	.chapter-header h1 { border:none; -webkit-text-fill-color:unset; background:var(--accent-gradient); -webkit-background-clip:text; background-clip:text; margin-bottom:8px; }
+	.chapter-subtitle { font-size:1.1em; color:var(--text2); margin:8px 0; }
+	.chapter-meta { display:flex; align-items:center; gap:12px; margin-top:12px; }
+	.chapter-diff { display:inline-block; padding:3px 10px; border-radius:20px; font-size:12px; font-weight:600; background:var(--accent-glow); color:var(--accent); }
+	.chapter-count { font-size:12px; color:var(--text3); }
+	.chapter-intro { margin:20px 0 28px; padding:16px 20px; background:var(--accent-glow); border-radius:var(--radius-lg); border-left:3px solid var(--accent); }
+	.chapter-intro p { margin:0; font-size:0.95em; color:var(--text2); line-height:1.7; }
+
+	/* ---- Nav group label ---- */
+	.nav-group-label { font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:.8px; }
+
+	/* ---- Section animation ---- */
+	@keyframes fadeUp2 { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+	section { animation:fadeUp2 .4s ease-out; }
 `
 
 // wikiPageJS is the shared JavaScript for all wiki pages (serve mode).
@@ -482,20 +560,29 @@ document.addEventListener('keydown',function(e){
   }
 });
 
-/* ---- Scroll spy for nav ---- */
-document.addEventListener('DOMContentLoaded',function(){
-  var links=document.querySelectorAll('.nav-group-items a');
-  if(!links.length)return;
-  var current=null;
-  function updateActive(){
-    var scrollY=window.scrollY+120;
-    var best=null;
-    links.forEach(function(a){
-      var href=a.getAttribute('href');
-      if(!href)return;
-    });
-  }
-});
+	/* ---- Scroll spy for nav ---- */
+	document.addEventListener('DOMContentLoaded',function(){
+	  var links=document.querySelectorAll('.nav-group-items a');
+	  if(!links.length)return;
+	  function updateActive(){
+	    var best=null;
+	    var bestDist=Infinity;
+	    var scrollY=window.scrollY+120;
+	    links.forEach(function(a){
+	      var href=a.getAttribute('href');
+	      if(!href||href.charAt(0)!=='#')return;
+	      var el=document.getElementById(href.slice(1));
+	      if(!el)return;
+	      var top=el.getBoundingClientRect().top+window.scrollY;
+	      var dist=Math.abs(scrollY-top);
+	      if(dist<bestDist){bestDist=dist;best=a;}
+	    });
+	    links.forEach(function(a){a.classList.remove('active');});
+	    if(best)best.classList.add('active');
+	  }
+	  window.addEventListener('scroll',updateActive);
+	  updateActive();
+	});
 
 /* ---- Mermaid click navigation ---- */
 window.navigateToModule=function(mod){
@@ -507,8 +594,8 @@ window.navigateToModule=function(mod){
 </script>
 `
 
-// BuildWikiPage assembles a full HTML page with optional sidebar navigation.
-func BuildWikiPage(title, body string, navItems []string, current string) []byte {
+// BuildWikiPage assembles a full HTML page with sidebar navigation from structured sections.
+func BuildWikiPage(title, body, currentURL string, sections []NavSection, totalArticles, totalMinutes int) []byte {
 	var out strings.Builder
 	out.WriteString(`<!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
@@ -516,7 +603,7 @@ func BuildWikiPage(title, body string, navItems []string, current string) []byte
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>`)
-	out.WriteString(htmlEscape(title))
+	out.WriteString(HTMLEscape(title))
 	out.WriteString(`</title>
 <style>`)
 	out.WriteString(wikiPageCSS)
@@ -536,15 +623,15 @@ func BuildWikiPage(title, body string, navItems []string, current string) []byte
 <div id="reading-progress"></div>
 `)
 
-	if len(navItems) > 0 {
+	if len(sections) > 0 {
 		// Top bar
 		out.WriteString(`<div class="topbar">
 <div class="topbar-title">`)
-		out.WriteString(htmlEscape(title))
+		out.WriteString(HTMLEscape(title))
 		out.WriteString(`</div>
 <div class="topbar-search">
 <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-<input type="text" placeholder="` + "搜索文档..." + `" readonly onclick="document.querySelector('.search-overlay').classList.add('active');document.querySelector('.search-overlay input').focus();">
+<input type="text" placeholder="` + "搜索文章、模块..." + `" readonly onclick="document.querySelector('.search-overlay').classList.add('active');document.querySelector('.search-overlay input').focus();">
 <kbd>Ctrl+K</kbd>
 </div>
 <div class="topbar-actions">
@@ -554,7 +641,7 @@ func BuildWikiPage(title, body string, navItems []string, current string) []byte
 </div>
 `)
 
-		// Search overlay
+		// Search overlay — build index from structured sections
 		out.WriteString(`<div class="search-overlay" onclick="if(event.target===this)this.classList.remove('active')">
 <div class="search-modal">
 <input type="text" id="search-input" placeholder="` + "搜索文章、模块..." + `" oninput="filterSearch(this.value)">
@@ -563,12 +650,15 @@ func BuildWikiPage(title, body string, navItems []string, current string) []byte
 </div>
 <script>
 var _navIdx=[`)
-		for i, item := range navItems {
-			if i > 0 {
-				out.WriteByte(',')
+		first := true
+		for _, sec := range sections {
+			for _, item := range sec.Items {
+				if !first {
+					out.WriteByte(',')
+				}
+				first = false
+				out.WriteString(fmt.Sprintf(`{f:"%s",t:"%s"}`, item.URL, item.Title))
 			}
-			display := navDisplayName(item)
-			out.WriteString(fmt.Sprintf(`{f:"%s",t:"%s"}`, item, display))
 		}
 		out.WriteString(`];
 function filterSearch(q){
@@ -590,57 +680,36 @@ function filterSearch(q){
 		out.WriteString(`<nav class="sidebar">
 <div class="sidebar-header"><span class="logo-dot"></span><a href="/" style="color:inherit;text-decoration:none;font-weight:700;">CodeWiki</a></div>
 `)
-		type navLayer struct {
-			label string
-			icon  string
-			files []string
-		}
-		var entryFiles, dynFiles, expFiles []string
-		for _, item := range navItems {
-			base := strings.ToLower(item)
-			switch {
-			case strings.HasPrefix(base, "00") || strings.HasPrefix(base, "01") || strings.HasPrefix(base, "02"):
-				entryFiles = append(entryFiles, item)
-			case strings.HasPrefix(base, "03") || strings.HasPrefix(base, "05"):
-				dynFiles = append(dynFiles, item)
-			default:
-				expFiles = append(expFiles, item)
-			}
-		}
-		layers := []navLayer{
-			{label: "入门", icon: "⭐", files: entryFiles},
-			{label: "动态", icon: "⚡", files: dynFiles},
-			{label: "探索", icon: "🔭", files: expFiles},
+		if totalArticles > 0 {
+			out.WriteString(fmt.Sprintf(`<div class="sidebar-summary"><span>%d 篇文章</span><span class="dot">·</span><span>约 %d 分钟</span></div>
+`, totalArticles, totalMinutes))
 		}
 
-		navIcons := map[string]string{
-			"00-overview": "📊", "01-what-it-does": "🚀",
-			"02-architecture": "🏗️", "03-project-structure": "📁",
-			"04-key-concepts": "💡", "05-learning-path": "📚",
-			"api-reference": "📖", "compilation": "📝",
-		}
-
-		for _, layer := range layers {
-			if len(layer.files) == 0 {
+		for _, sec := range sections {
+			if len(sec.Items) == 0 {
 				continue
 			}
 			out.WriteString(fmt.Sprintf(`<div class="nav-group">
-<div class="nav-group-header"><span>%s %s</span><span class="chevron">&#9660;</span></div>
+<div class="nav-group-header"><span class="nav-group-label">%s %s</span><span class="nav-group-count">%d</span><span class="chevron">&#9660;</span></div>
 <ul class="nav-group-items">
-`, layer.icon, layer.label))
-			for _, item := range layer.files {
+`, sec.Icon, sec.Label, len(sec.Items)))
+			for _, item := range sec.Items {
 				activeClass := ""
-				if item == current {
+				if item.URL == currentURL {
 					activeClass = ` class="active"`
 				}
-				display := navDisplayName(item)
-				base := strings.TrimSuffix(filepath.Base(item), filepath.Ext(item))
-				icon := navIcons[base]
-				if icon == "" {
-					icon = "📄"
+				out.WriteString(fmt.Sprintf(`<li><a href="%s"%s><span class="nav-icon">%s</span><span class="nav-title">%s</span>`, item.URL, activeClass, item.Icon, HTMLEscape(item.Title)))
+				if item.ReadingTime > 0 || item.Difficulty != "" {
+					out.WriteString(`<span class="nav-meta">`)
+					if item.ReadingTime > 0 {
+						out.WriteString(fmt.Sprintf(`<span class="nav-time">⏱ %dmin</span>`, item.ReadingTime))
+					}
+					if item.Difficulty != "" {
+						out.WriteString(fmt.Sprintf(`<span class="nav-diff">%s</span>`, item.Difficulty))
+					}
+					out.WriteString(`</span>`)
 				}
-				out.WriteString(fmt.Sprintf(`<li><a href="%s"%s><span class="nav-icon">%s</span>%s</a></li>
-`, item, activeClass, icon, display))
+				out.WriteString("</a></li>\n")
 			}
 			out.WriteString("</ul>\n</div>\n")
 		}
@@ -649,7 +718,7 @@ function filterSearch(q){
 		// No sidebar - still add topbar with theme toggle
 		out.WriteString(`<div class="topbar" style="left:0">
 <div class="topbar-title">`)
-		out.WriteString(htmlEscape(title))
+		out.WriteString(HTMLEscape(title))
 		out.WriteString(`</div>
 <div class="topbar-actions" style="margin-left:auto;">
 <button id="theme-toggle" class="theme-toggle" title="` + "切换主题" + `"></button>
@@ -659,7 +728,7 @@ function filterSearch(q){
 	}
 
 	contentStyle := ""
-	if len(navItems) == 0 {
+	if len(sections) == 0 {
 		contentStyle = ` style="margin-left:0;max-width:800px;margin:0 auto;"`
 	}
 	out.WriteString(fmt.Sprintf(`<div class="content"%s>
@@ -672,45 +741,15 @@ function filterSearch(q){
 	return []byte(out.String())
 }
 
-// navDisplayName converts a filename to a human-readable navigation label.
-func navDisplayName(filename string) string {
-	base := strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
-	switch base {
-	case "00-overview":
-		return "项目概述"
-	case "01-what-it-does":
-		return "项目能做什么"
-	case "02-architecture":
-		return "架构说明"
-	case "03-project-structure":
-		return "项目结构"
-	case "04-key-concepts":
-		return "核心概念"
-	case "05-learning-path":
-		return "学习路径"
-	case "api-reference":
-		return "API 参考"
-	case "architecture":
-		return "架构图"
-	case "class-diagram":
-		return "类图"
-	case "sequence-diagram":
-		return "时序图"
-	case "compilation":
-		return "文档合辑"
-	default:
-		return base
-	}
-}
 
 // MarkdownToHTML converts basic Markdown to a complete HTML page.
 func MarkdownToHTML(src []byte) []byte {
-	return BuildWikiPage("CodeWiki", RenderMarkdownBody(src), nil, "")
+	return BuildWikiPage("CodeWiki", RenderMarkdownBody(src), "", nil, 0, 0)
 }
 
 // RenderInline renders inline Markdown formatting (bold, italic, links, code).
 func RenderInline(s string) string {
-	s = htmlEscape(s)
+	s = HTMLEscape(s)
 	// Links: [text](url)
 	for {
 		start := strings.Index(s, "[")
@@ -796,9 +835,6 @@ func HTMLEscape(s string) string {
 	return s
 }
 
-func htmlEscape(s string) string {
-	return HTMLEscape(s)
-}
 
 func orderedListMatch(s string) bool {
 	for i, c := range s {

@@ -35,6 +35,7 @@ type Config struct {
 	Model      string `yaml:"model"`
 	MaxRetries int    `yaml:"max_retries"`
 	Timeout    int    `yaml:"timeout"` // seconds
+	Thinking   bool   `yaml:"thinking"` // 启用深度思考模式
 }
 
 // AppConfig holds separate LLM configurations for generation and embedding.
@@ -51,6 +52,7 @@ func defaultConfig() Config {
 		Model:      "qwen:14b",
 		MaxRetries: 3,
 		Timeout:    120,
+		Thinking:   true,
 	}
 }
 
@@ -80,6 +82,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CODEWIKI_BASE_URL"); v != "" {
 		cfg.BaseURL = v
+	}
+	if v := os.Getenv("CODEWIKI_THINKING"); v != "" {
+		cfg.Thinking = v == "1" || v == "true"
 	}
 
 	return &cfg, nil
@@ -133,6 +138,9 @@ func LoadAppConfig(path string) (*AppConfig, error) {
 		appCfg.Generation.BaseURL = v
 	} else if v := os.Getenv("CODEWIKI_BASE_URL"); v != "" {
 		appCfg.Generation.BaseURL = v
+	}
+	if v := os.Getenv("CODEWIKI_THINKING"); v != "" {
+		appCfg.Generation.Thinking = v == "1" || v == "true"
 	}
 
 	// Environment overrides for embedding
@@ -220,24 +228,27 @@ func NewEmbeddingProvider(cfg *AppConfig) (Provider, error) {
 
 // OpenAIProvider calls OpenAI-compatible APIs.
 type OpenAIProvider struct {
-	BaseURL    string
-	APIKey     string
-	Model      string
-	MaxRetries int
-	HTTPClient *http.Client
+	BaseURL      string
+	APIKey       string
+	Model        string
+	MaxRetries   int
+	Thinking     bool
+	HTTPClient   *http.Client
+	StreamClient *http.Client
 }
 
 func newOpenAIProvider(cfg *Config) *OpenAIProvider {
-	timeout := time.Duration(cfg.Timeout) * time.Second
-	if timeout == 0 {
-		timeout = 120 * time.Second
-	}
+	// HTTPClient carries no Timeout — all deadline enforcement is via context.
+	// Setting http.Client.Timeout would conflict with context deadlines and
+	// prematurely kill long-running requests (especially with thinking mode).
 	return &OpenAIProvider{
-		BaseURL:    cfg.BaseURL,
-		APIKey:     cfg.APIKey,
-		Model:      cfg.Model,
-		MaxRetries: cfg.MaxRetries,
-		HTTPClient: &http.Client{Timeout: timeout},
+		BaseURL:      cfg.BaseURL,
+		APIKey:       cfg.APIKey,
+		Model:        cfg.Model,
+		MaxRetries:   cfg.MaxRetries,
+		Thinking:     cfg.Thinking,
+		HTTPClient:   &http.Client{},
+		StreamClient: &http.Client{},
 	}
 }
 
@@ -249,6 +260,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, prompt string) (string, e
 			{"role": "user", "content": prompt},
 		},
 	}
+	p.injectThinking(reqBody)
 
 	var resp openAIChatResponse
 	err := p.post(ctx, "/chat/completions", reqBody, &resp)
@@ -271,6 +283,7 @@ func (p *OpenAIProvider) CompleteStream(ctx context.Context, prompt string) (<-c
 		},
 		"stream": true,
 	}
+	p.injectThinking(reqBody)
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -285,7 +298,11 @@ func (p *OpenAIProvider) CompleteStream(ctx context.Context, prompt string) (<-c
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 
-	resp, err := p.HTTPClient.Do(req)
+	client := p.StreamClient
+	if client == nil {
+		client = p.HTTPClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -430,29 +447,39 @@ type openAIEmbedResponse struct {
 type openAIStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
 		} `json:"delta"`
 	} `json:"choices"`
+}
+
+// injectThinking adds thinking/reasoning parameters to the request body.
+func (p *OpenAIProvider) injectThinking(reqBody map[string]any) {
+	if !p.Thinking {
+		return
+	}
+	// DeepSeek-native thinking format
+	reqBody["thinking"] = map[string]string{"type": "enabled"}
+	// OpenAI-style reasoning effort (some gateways/proxies prefer this)
+	reqBody["reasoning_effort"] = "high"
 }
 
 // ---------- Ollama Provider ----------
 
 // OllamaProvider calls local Ollama API.
 type OllamaProvider struct {
-	BaseURL    string
-	Model      string
-	HTTPClient *http.Client
+	BaseURL      string
+	Model        string
+	HTTPClient   *http.Client
+	StreamClient *http.Client
 }
 
 func newOllamaProvider(cfg *Config) *OllamaProvider {
-	timeout := time.Duration(cfg.Timeout) * time.Second
-	if timeout == 0 {
-		timeout = 60 * time.Second
-	}
 	return &OllamaProvider{
-		BaseURL:    cfg.BaseURL,
-		Model:      cfg.Model,
-		HTTPClient: &http.Client{Timeout: timeout},
+		BaseURL:      cfg.BaseURL,
+		Model:        cfg.Model,
+		HTTPClient:   &http.Client{},
+		StreamClient: &http.Client{},
 	}
 }
 
@@ -491,7 +518,11 @@ func (p *OllamaProvider) CompleteStream(ctx context.Context, prompt string) (<-c
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.HTTPClient.Do(req)
+	client := p.StreamClient
+	if client == nil {
+		client = p.HTTPClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		if isConnectionError(err) {
 			return nil, fmt.Errorf("无法连接到 Ollama 服务（%s）。请确认 Ollama 已启动，或检查 base_url 配置是否正确", p.BaseURL)

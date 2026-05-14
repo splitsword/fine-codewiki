@@ -235,8 +235,8 @@ func RunGenerate(cfg *Config) error {
 		}
 	}
 
-	// 整个文档生成总体超时 30 分钟，防止 LLM 阶段 hung 住拖垮整个流程
-	docCtx, docCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// 整个文档生成总体超时 60 分钟（thinking 模式需要更长推理时间）
+	docCtx, docCancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer docCancel()
 	wiki, err := docgen.GenerateWikiEnhancedWithMaxFunctions(docCtx, provider, graph, cfg.SourceDir, cfg.ProjectName, archDSL, classDSL, seqDSL, cfg.Language, cfg.MaxLLMFunctions)
 	if err != nil {
@@ -427,7 +427,7 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(path))
-	navItems := listWikiFiles(h.root)
+	sections, totalArts, totalMins := buildNavSections(h.root)
 
 	if ext == ".md" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -437,7 +437,7 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		difficulty := articleDifficulty(path)
 		badge := fmt.Sprintf(`<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap"><span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--accent-glow);color:var(--accent)">⏱ %d 分钟阅读</span><span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;background:%s;color:%s">%s</span></div>`, readMin, difficulty.bg, difficulty.fg, difficulty.label)
 		body = badge + body
-		w.Write(docgen.BuildWikiPage(title, body, navItems, path))
+		w.Write(docgen.BuildWikiPage(title, body, path, sections, totalArts, totalMins))
 		return
 	}
 
@@ -445,7 +445,7 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		filename := strings.TrimSuffix(filepath.Base(path), ext)
 		body := fmt.Sprintf("<h2>%s</h2>\n<div class=\"mermaid\">\n%s\n</div>\n", docgen.HTMLEscape(filename), string(data))
-		w.Write(docgen.BuildWikiPage(filename, body, navItems, path))
+		w.Write(docgen.BuildWikiPage(filename, body, path, sections, totalArts, totalMins))
 		return
 	}
 
@@ -658,7 +658,7 @@ func serveIndexPage(w http.ResponseWriter, root string) {
 
 	// Search box
 	b.WriteString(`<div style="margin:20px 0;position:relative">
-	<input type="text" id="wiki-search" placeholder="搜索文章、模块、函数..." autocomplete="off"
+	<input type="text" id="wiki-search" placeholder="搜索文章、模块..." autocomplete="off"
 	style="width:100%;padding:10px 16px;font-size:15px;border:2px solid #ddd;border-radius:8px;outline:none;box-sizing:border-box"
 	onfocus="this.style.borderColor='#2196f3'" onblur="this.style.borderColor='#ddd'">
 	<div id="search-results" style="position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #ddd;border-top:none;border-radius:0 0 8px 8px;max-height:300px;overflow-y:auto;z-index:100;display:none"></div>
@@ -760,8 +760,8 @@ func serveIndexPage(w http.ResponseWriter, root string) {
 	// Inject search JS before the closing index-page div
 	pageHTML := strings.Replace(b.String(), "</div>\n</div>", "</div>\n"+searchJS+"\n</div>", 1)
 
-	navItems := listWikiFiles(root)
-	w.Write(docgen.BuildWikiPage("CodeWiki", pageHTML, navItems, ""))
+	sections, totalArts, totalMins := buildNavSections(root)
+	w.Write(docgen.BuildWikiPage("CodeWiki", pageHTML, "", sections, totalArts, totalMins))
 }
 
 func buildIndexLink(file, title, desc string) string {
@@ -788,25 +788,174 @@ func articleDifficulty(path string) difficultyInfo {
 	}
 }
 
-// listWikiFiles returns sorted .md and .mmd filenames in the directory.
-func listWikiFiles(root string) []string {
+// buildNavSections categorizes wiki files into 4 navigation sections.
+func buildNavSections(root string) ([]docgen.NavSection, int, int) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil
+		return nil, 0, 0
 	}
-	var files []string
+
+	// Known file icons
+	fileIcons := map[string]string{
+		"00-overview.md":          "📊",
+		"01-what-it-does.md":      "🎯",
+		"02-architecture.md":      "🏗️",
+		"03-project-structure.md": "📁",
+		"04-key-concepts.md":      "💡",
+		"05-learning-path.md":     "🗺️",
+		"api-reference.md":        "📋",
+	}
+
+	// Section definitions: label, icon, and which file prefixes belong
+	type sectionDef struct {
+		label  string
+		icon   string
+		prefix []string
+	}
+	defs := []sectionDef{
+		{"认识项目", "📘", []string{"00-", "01-"}},
+		{"开始阅读", "📗", []string{"02-", "03-"}},
+		{"深入剖析", "📕", []string{"04-", "05-"}},
+		{"速查", "📓", nil},
+	}
+
+	sections := make([]docgen.NavSection, len(defs))
+	for i, d := range defs {
+		sections[i] = docgen.NavSection{Label: d.label, Icon: d.icon}
+	}
+
+	matchSection := func(name string) int {
+		for i, d := range defs {
+			for _, p := range d.prefix {
+				if strings.HasPrefix(name, p) {
+					return i
+				}
+			}
+		}
+		return 3 // default to 速查
+	}
+
+	var fileNames []string
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		name := e.Name()
 		ext := strings.ToLower(filepath.Ext(name))
-		if ext == ".md" || ext == ".mmd" {
-			files = append(files, name)
+		if ext != ".md" && ext != ".mmd" {
+			continue
+		}
+		// Skip compilation and index artifacts
+		if name == "compilation.md" || name == "index.html" {
+			continue
+		}
+		fileNames = append(fileNames, name)
+	}
+	sort.Strings(fileNames)
+
+	totalArticles := 0
+	totalMinutes := 0
+
+	for _, name := range fileNames {
+		ext := strings.ToLower(filepath.Ext(name))
+		secIdx := matchSection(name)
+
+		// Determine icon
+		icon := "📄"
+		if ext == ".mmd" {
+			icon = "📊"
+		}
+		if ic, ok := fileIcons[name]; ok {
+			icon = ic
+		}
+
+		// Title: strip extension, replace hyphens/underscores for readability
+		title := strings.TrimSuffix(name, ext)
+		title = strings.ReplaceAll(title, "-", " ")
+		title = strings.ReplaceAll(title, "_", " ")
+
+		// Reading time and difficulty (for .md files only)
+		readingTime := 0
+		difficulty := ""
+		if ext == ".md" {
+			if data, err := os.ReadFile(filepath.Join(root, name)); err == nil {
+				readingTime = docgen.EstimateReadingTime(string(data))
+			}
+			diff := articleDifficulty(name)
+			difficulty = diff.label
+			totalArticles++
+			totalMinutes += readingTime
+		}
+
+		sections[secIdx].Items = append(sections[secIdx].Items, docgen.NavItem{
+			URL:         name,
+			Title:       title,
+			Icon:        icon,
+			ReadingTime: readingTime,
+			Difficulty:  difficulty,
+		})
+	}
+
+	// Also collect module files from modules/ subdirectory
+	modulesDir := filepath.Join(root, "modules")
+	if modEntries, err := os.ReadDir(modulesDir); err == nil {
+		var modNames []string
+		for _, e := range modEntries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if strings.ToLower(filepath.Ext(name)) == ".md" {
+				modNames = append(modNames, name)
+			}
+		}
+		sort.Strings(modNames)
+		for _, name := range modNames {
+			title := strings.TrimSuffix(name, ".md")
+			title = strings.ReplaceAll(title, "-", " ")
+			title = strings.ReplaceAll(title, "_", " ")
+
+			readingTime := 0
+			if data, err := os.ReadFile(filepath.Join(modulesDir, name)); err == nil {
+				readingTime = docgen.EstimateReadingTime(string(data))
+			}
+			diff := inferModuleDiffFromName(name)
+
+			sections[2].Items = append(sections[2].Items, docgen.NavItem{ // 深入剖析
+				URL:         "modules/" + name,
+				Title:       title,
+				Icon:        "📦",
+				ReadingTime: readingTime,
+				Difficulty:  diff,
+			})
+			totalArticles++
+			totalMinutes += readingTime
 		}
 	}
-	sort.Strings(files)
-	return files
+
+	// Remove empty sections
+	var result []docgen.NavSection
+	for _, sec := range sections {
+		if len(sec.Items) > 0 {
+			result = append(result, sec)
+		}
+	}
+
+	return result, totalArticles, totalMinutes
+}
+
+// inferModuleDiffFromName assigns a difficulty label based on module name complexity.
+func inferModuleDiffFromName(name string) string {
+	parts := strings.Split(strings.TrimSuffix(name, ".md"), "_")
+	depth := len(parts)
+	switch {
+	case depth <= 1:
+		return "⭐ 入门"
+	case depth == 2:
+		return "⭐⭐ 进阶"
+	default:
+		return "⭐⭐⭐ 深入"
+	}
 }
 
 func contentTypeFor(path string) string {

@@ -18,6 +18,15 @@ import (
 )
 
 // Wiki holds all generated documentation artifacts.
+// ChapterTitle holds the LLM-generated book-like title for a theme chapter.
+type ChapterTitle struct {
+	Title         string   // 4-8 char Chinese, e.g. "用户认证"
+	Subtitle      string   // ~15 char, e.g. "身份验证与会话管理"
+	Difficulty    string   // "⭐", "⭐⭐", "⭐⭐⭐"
+	LearningGoals []string // 2-3 learning objectives for this chapter
+	Prerequisites []string // 0-2 prerequisite topics
+}
+
 type Wiki struct {
 	ProjectName         string
 	Overview            string
@@ -32,7 +41,11 @@ type Wiki struct {
 	SequenceDiagram     string
 	SequenceDescription string
 	ModuleDocs          map[string]string // module name -> markdown content
-	ModuleThemes        map[string][]string // theme -> sorted module names
+	ModuleThemes        map[string][]string        // theme -> sorted module names
+	ChapterTitles       map[string]ChapterTitle    // theme name → LLM-generated title
+	ThemeIntros         map[string]string          // theme name → LLM-generated 2-3 sentence intro
+	ChapterNarratives   map[string]string          // theme name → LLM-generated narrative article
+	ChapterPages        map[string]string          // theme name → standalone chapter HTML
 }
 
 // wikiCheckpoint persists partial LLM-enhanced results for resume support.
@@ -42,8 +55,12 @@ type wikiCheckpoint struct {
 	KeyConcepts   string            `json:"key_concepts,omitempty"`
 	LearningPath  string            `json:"learning_path,omitempty"`
 	ArchNarrative string            `json:"arch_narrative,omitempty"`
-	FuncDescMap   map[string]string `json:"func_desc_map,omitempty"`
-	Timestamp     time.Time         `json:"timestamp"`
+	FuncDescMap   map[string]string         `json:"func_desc_map,omitempty"`
+	Timestamp     time.Time                 `json:"timestamp"`
+	ChapterTitles map[string]ChapterTitle   `json:"chapter_titles,omitempty"`
+	ModuleThemes  map[string][]string       `json:"module_themes,omitempty"`
+	ThemeIntros        map[string]string         `json:"theme_intros,omitempty"`
+	ChapterNarratives  map[string]string         `json:"chapter_narratives,omitempty"`
 }
 
 func loadWikiCheckpoint(path string) *wikiCheckpoint {
@@ -122,7 +139,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		} else {
 			fmt.Println("[LLM] 正在生成项目概述...")
 			prompt := buildOverviewPrompt(graph, projectName, readme, language)
-			enhanced, err := provider.Complete(ctx, prompt)
+			enhanced, err := streamComplete(ctx, provider, prompt)
 			if err != nil {
 				fmt.Printf("警告：LLM 生成项目概述失败 (%v)\n", err)
 				if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
@@ -155,7 +172,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		} else {
 			fmt.Println("[LLM] 正在生成项目核心能力说明...")
 			prompt := buildWhatItDoesPrompt(graph, projectName, readme, language)
-			enhanced, err := provider.Complete(ctx, prompt)
+			enhanced, err := streamComplete(ctx, provider, prompt)
 			if err != nil {
 				fmt.Printf("警告：LLM 生成核心能力说明失败 (%v)\n", err)
 			} else if enhanced != "" && !isChecklistLike(enhanced, graph) {
@@ -178,8 +195,8 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	} else if provider != nil {
 		fmt.Println("[LLM] 正在生成关键设计决策...")
 		prompt := buildKeyConceptsPrompt(graph, projectName, language)
-		batchCtx, batchCancel := context.WithTimeout(ctx, 5*time.Minute)
-		enhanced, err := provider.Complete(batchCtx, prompt)
+		batchCtx, batchCancel := context.WithTimeout(ctx, 8*time.Minute)
+		enhanced, err := streamComplete(batchCtx, provider, prompt)
 		batchCancel()
 		if err != nil {
 			fmt.Printf("警告：LLM 生成设计决策失败 (%v)\n", err)
@@ -208,14 +225,14 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		} else {
 			fmt.Println("[LLM] 正在生成学习路径...")
 			prompt := buildLearningPathPrompt(graph, projectName, language)
-			batchCtx, batchCancel := context.WithTimeout(ctx, 5*time.Minute)
-			enhanced, err := provider.Complete(batchCtx, prompt)
+			batchCtx, batchCancel := context.WithTimeout(ctx, 8*time.Minute)
+			enhanced, err := streamComplete(batchCtx, provider, prompt)
 			batchCancel()
 			if err != nil {
 				fmt.Printf("警告：LLM 生成学习路径失败 (%v)\n", err)
 				fmt.Println("[Fallback] 使用静态学习路径...")
-			} else if enhanced == "" || isChecklistLike(enhanced, graph) {
-				fmt.Println("警告：LLM 返回的学习路径内容无效，使用静态回退")
+			} else if enhanced == "" {
+				fmt.Println("警告：LLM 返回的学习路径内容为空，使用静态回退")
 			} else {
 				learningPath = fmt.Sprintf("# %s 学习路径\n\n%s", projectName, enhanced)
 			}
@@ -270,9 +287,8 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 				batchNum := i/batchSize + 1
 				fmt.Printf("  批次 %d/%d（%d 个函数）...\n", batchNum, totalBatches, len(batch))
 				prompt := buildFunctionDescriptionPrompt(batch)
-				// 每批独立超时 5 分钟，防止单批 hung 住拖垮整个流程
-				batchCtx, batchCancel := context.WithTimeout(ctx, 5*time.Minute)
-				enhanced, err := provider.Complete(batchCtx, prompt)
+				batchCtx, batchCancel := context.WithTimeout(ctx, 8*time.Minute)
+				enhanced, err := streamComplete(batchCtx, provider, prompt)
 				batchCancel()
 				if err != nil {
 					if isTimeoutErr(err) {
@@ -317,7 +333,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		} else {
 			fmt.Println("[LLM] 正在生成架构描述...")
 			prompt := buildArchitecturePrompt(graph, language)
-			enhanced, err := provider.Complete(ctx, prompt)
+			enhanced, err := streamComplete(ctx, provider, prompt)
 			if err != nil {
 				fmt.Printf("警告：LLM 生成架构描述失败 (%v)\n", err)
 			} else if enhanced == "" {
@@ -345,11 +361,85 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 	// Build module theme grouping for navigation and indexing
 	moduleThemes := make(map[string][]string)
+	var themeIntros map[string]string
 	if graph != nil {
-		themeGroups := groupModulesByTheme(graph)
+		var themeGroups map[string][]*grapher.Node
+		if cp.ModuleThemes != nil && len(cp.ModuleThemes) > 0 {
+			fmt.Println("[Checkpoint] 恢复模块主题分组")
+			themeGroups = make(map[string][]*grapher.Node)
+			nodeMap := make(map[string]*grapher.Node)
+			for _, n := range graph.Nodes {
+				nodeMap[n.Name] = n
+			}
+			for theme, modNames := range cp.ModuleThemes {
+				for _, mn := range modNames {
+					if n, ok := nodeMap[mn]; ok {
+						themeGroups[theme] = append(themeGroups[theme], n)
+					}
+				}
+			}
+		} else {
+			fmt.Println("[LLM] 正在使用语义分组...")
+			themeGroups = generateModuleThemes(ctx, provider, projectName, graph)
+			cp.ModuleThemes = make(map[string][]string)
+			for theme, nodes := range themeGroups {
+				for _, n := range nodes {
+					cp.ModuleThemes[theme] = append(cp.ModuleThemes[theme], n.Name)
+				}
+			}
+			_ = saveWikiCheckpoint(cpPath, cp)
+			fmt.Printf("[LLM] 语义分组完成 → %d 个主题\n", len(themeGroups))
+		}
 		for theme, nodes := range themeGroups {
 			for _, n := range nodes {
 				moduleThemes[theme] = append(moduleThemes[theme], n.Name)
+			}
+		}
+	}
+
+	// Generate book-like chapter titles for each theme
+	var chapterTitles map[string]ChapterTitle
+	if provider != nil && len(moduleThemes) > 0 {
+		if cp.ChapterTitles != nil && len(cp.ChapterTitles) > 0 {
+			fmt.Println("[Checkpoint] 恢复章节标题")
+			chapterTitles = cp.ChapterTitles
+		} else {
+			fmt.Println("[LLM] 正在生成章节标题...")
+			chapterTitles = generateChapterTitles(ctx, provider, projectName, moduleThemes, graph)
+			cp.ChapterTitles = chapterTitles
+			_ = saveWikiCheckpoint(cpPath, cp)
+			fmt.Println("[LLM] 章节标题生成完成")
+		}
+	} else {
+		chapterTitles = generateChapterTitlesFallback(moduleThemes, graph)
+	}
+
+	// Generate theme-level intros via LLM
+	if provider != nil && len(moduleThemes) > 0 {
+		if cp.ThemeIntros != nil && len(cp.ThemeIntros) > 0 {
+			themeIntros = cp.ThemeIntros
+		} else {
+			fmt.Println("[LLM] 正在生成主题简介...")
+			themeIntros = generateThemeIntros(ctx, provider, projectName, moduleThemes, chapterTitles, graph)
+			cp.ThemeIntros = themeIntros
+			_ = saveWikiCheckpoint(cpPath, cp)
+			fmt.Println("[LLM] 主题简介生成完成")
+		}
+	}
+
+	// Generate chapter narratives — cross-module educational articles per theme
+	var chapterNarratives map[string]string
+	if provider != nil && len(moduleThemes) > 0 {
+		if cp.ChapterNarratives != nil && len(cp.ChapterNarratives) > 0 {
+			fmt.Printf("[Checkpoint] 恢复 %d 个章节叙事\n", len(cp.ChapterNarratives))
+			chapterNarratives = cp.ChapterNarratives
+		} else {
+			fmt.Println("[LLM] 正在生成章节叙事...")
+			chapterNarratives = generateChapterNarratives(ctx, provider, projectName, moduleThemes, chapterTitles, graph)
+			cp.ChapterNarratives = chapterNarratives
+			_ = saveWikiCheckpoint(cpPath, cp)
+			if len(chapterNarratives) > 0 {
+				fmt.Printf("[LLM] 章节叙事生成完成 → %d/%d 个主题\n", len(chapterNarratives), len(moduleThemes))
 			}
 		}
 	}
@@ -384,6 +474,9 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		SequenceDiagram:     seqDSL,
 		ModuleDocs:          moduleDocs,
 		ModuleThemes:        moduleThemes,
+		ChapterTitles:       chapterTitles,
+		ThemeIntros:         themeIntros,
+		ChapterNarratives:   chapterNarratives,
 	}, nil
 }
 
@@ -1028,6 +1121,528 @@ func buildLearningPathPrompt(graph *grapher.Graph, projectName, language string)
 	}
 
 	return b.String()
+}
+
+
+// buildChapterTitlesPrompt builds an LLM prompt to generate book-like chapter titles.
+func buildChapterTitlesPrompt(projectName string, themes map[string][]string, graph *grapher.Graph) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "你是一位资深技术文档编辑，正在为一本代码库技术书籍设计章节标题。\n\n")
+	fmt.Fprintf(&b, "项目：%s\n\n", projectName)
+	fmt.Fprintf(&b, "以下是按功能主题分组的模块列表。请为每个主题设计一个书籍式章节标题：\n\n")
+
+	for _, theme := range sortedThemeKeys(themes) {
+		mods := themes[theme]
+		var modNames []string
+		for _, m := range mods {
+			modNames = append(modNames, m)
+			if len(modNames) >= 5 {
+				break
+			}
+		}
+		fmt.Fprintf(&b, "主题：%s\n", theme)
+		fmt.Fprintf(&b, "包含模块：%s\n\n", strings.Join(modNames, ", "))
+	}
+
+	fmt.Fprintf(&b, "要求：\n")
+	fmt.Fprintf(&b, "1. 为每个主题生成：\n")
+	fmt.Fprintf(&b, "   - 标题（4-8个中文字，像书名目录一样精炼有力，不要带'模块'二字）\n")
+	fmt.Fprintf(&b, "   - 副标题（10-15字，解释本章内容，吸引读者阅读）\n")
+	fmt.Fprintf(&b, "   - 难度（⭐ / ⭐⭐ / ⭐⭐⭐）\n")
+	fmt.Fprintf(&b, "   - 学习目标（2-3条，每条10-20字，读完本章后读者能做什么）\n")
+	fmt.Fprintf(&b, "   - 前置知识（0-2条，每条5-15字，阅读本章前需了解的概念，基础章节可为空数组）\n")
+	fmt.Fprintf(&b, "2. 标题要体现该主题的核心价值，而不是模块名称的简单拼接\n")
+	fmt.Fprintf(&b, "3. 按理解难度排序（基础→进阶→深入）\n")
+	fmt.Fprintf(&b, "4. 使用简体中文\n\n")
+	fmt.Fprintf(&b, "输出格式（JSON 数组，严格的 JSON 格式，不要输出其他内容）：\n")
+	fmt.Fprintf(&b, `[{"theme":"主题名称","title":"章节标题","subtitle":"副标题说明","difficulty":"⭐⭐","learning_goals":["理解X的工作原理","掌握Y的配置方法"],"prerequisites":["了解基本Go语法"]}]`+"\n\n")
+	fmt.Fprintf(&b, "现在请输出 JSON：")
+
+	return b.String()
+}
+
+// generateChapterTitlesFallback generates chapter titles from theme names without LLM.
+func generateChapterTitlesFallback(themes map[string][]string, graph *grapher.Graph) map[string]ChapterTitle {
+	result := make(map[string]ChapterTitle)
+	for _, theme := range sortedThemeKeys(themes) {
+		mods := themes[theme]
+		title := theme
+		for _, suffix := range []string{"与", "和", "及"} {
+			if idx := strings.Index(title, suffix); idx > 0 {
+				title = title[:idx]
+				break
+			}
+		}
+		runes := []rune(title)
+		if len(runes) > 8 {
+			title = string(runes[:8])
+		}
+		var modNames []string
+		for _, m := range mods {
+			base := filepath.Base(m)
+			modNames = append(modNames, base)
+			if len(modNames) >= 3 {
+				break
+			}
+		}
+		subtitle := strings.Join(modNames, " · ")
+		if len([]rune(subtitle)) > 15 {
+			subtitle = string([]rune(subtitle)[:15]) + "…"
+		}
+		difficulty := "⭐⭐ 进阶"
+		if len(mods) <= 1 {
+			difficulty = "⭐ 入门"
+		} else if len(mods) >= 5 {
+			difficulty = "⭐⭐⭐ 深入"
+		}
+		result[theme] = ChapterTitle{
+			Title:      title,
+			Subtitle:   subtitle,
+			Difficulty: difficulty,
+		}
+	}
+	return result
+}
+
+// generateChapterTitles uses LLM (with fallback) to generate book-like chapter titles.
+func generateChapterTitles(ctx context.Context, provider llm.Provider, projectName string, themes map[string][]string, graph *grapher.Graph) map[string]ChapterTitle {
+	if provider == nil || len(themes) == 0 {
+		return generateChapterTitlesFallback(themes, graph)
+	}
+	prompt := buildChapterTitlesPrompt(projectName, themes, graph)
+	batchCtx, batchCancel := context.WithTimeout(ctx, 8*time.Minute)
+	defer batchCancel()
+	response, err := streamComplete(batchCtx, provider, prompt)
+	if err != nil {
+		fmt.Printf("警告：LLM 生成章节标题失败 (%v)，使用静态回退\n", err)
+		return generateChapterTitlesFallback(themes, graph)
+	}
+	response = strings.TrimSpace(response)
+	if strings.HasPrefix(response, "```") {
+		if idx := strings.Index(response, "\n"); idx != -1 {
+			response = response[idx+1:]
+		}
+		if strings.HasSuffix(response, "```") {
+			response = response[:len(response)-3]
+		}
+		response = strings.TrimSpace(response)
+	}
+	var entries []struct {
+		Theme         string   `json:"theme"`
+		Title         string   `json:"title"`
+		Subtitle      string   `json:"subtitle"`
+		Difficulty    string   `json:"difficulty"`
+		LearningGoals []string `json:"learning_goals"`
+		Prerequisites []string `json:"prerequisites"`
+	}
+	if err := json.Unmarshal([]byte(response), &entries); err != nil {
+		fmt.Printf("警告：解析 LLM 章节标题 JSON 失败 (%v)，使用静态回退\n", err)
+		return generateChapterTitlesFallback(themes, graph)
+	}
+	result := make(map[string]ChapterTitle)
+	for _, e := range entries {
+		if e.Title == "" {
+			continue
+		}
+		result[e.Theme] = ChapterTitle{
+			Title:         e.Title,
+			Subtitle:      e.Subtitle,
+			Difficulty:    e.Difficulty,
+			LearningGoals: e.LearningGoals,
+			Prerequisites: e.Prerequisites,
+		}
+	}
+	fallback := generateChapterTitlesFallback(themes, graph)
+	for theme, ct := range fallback {
+		if _, ok := result[theme]; !ok {
+			result[theme] = ct
+		}
+	}
+	return result
+}
+// generateThemeIntros uses LLM to generate 2-3 sentence introductions for each theme.
+func generateThemeIntros(ctx context.Context, provider llm.Provider, projectName string, themes map[string][]string, titles map[string]ChapterTitle, graph *grapher.Graph) map[string]string {
+	if provider == nil || len(themes) == 0 {
+		return nil
+	}
+	prompt := buildThemeIntrosPrompt(projectName, themes, titles, graph)
+	batchCtx, batchCancel := context.WithTimeout(ctx, 8*time.Minute)
+	defer batchCancel()
+	response, err := streamComplete(batchCtx, provider, prompt)
+	if err != nil {
+		fmt.Printf("警告：LLM 生成主题简介失败 (%v)\n", err)
+		return nil
+	}
+	response = strings.TrimSpace(response)
+	if strings.HasPrefix(response, "```") {
+		if idx := strings.Index(response, "\n"); idx != -1 {
+			response = response[idx+1:]
+		}
+		if strings.HasSuffix(response, "```") {
+			response = response[:len(response)-3]
+		}
+		response = strings.TrimSpace(response)
+	}
+	var entries []struct {
+		Theme string `json:"theme"`
+		Intro string `json:"intro"`
+	}
+	if err := json.Unmarshal([]byte(response), &entries); err != nil {
+		fmt.Printf("警告：解析 LLM 主题简介 JSON 失败 (%v)\n", err)
+		return nil
+	}
+	result := make(map[string]string)
+	for _, e := range entries {
+		if e.Intro != "" {
+			result[e.Theme] = e.Intro
+		}
+	}
+	return result
+}
+
+// buildThemeIntrosPrompt builds the LLM prompt for theme introductions.
+func buildThemeIntrosPrompt(projectName string, themes map[string][]string, titles map[string]ChapterTitle, graph *grapher.Graph) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "你是一位资深技术文档编辑，正在为一本代码库技术书籍撰写章节导语。\n\n")
+	fmt.Fprintf(&b, "项目：%s\n\n", projectName)
+	fmt.Fprintf(&b, "以下每个主题章节需要一段 2-3 句的引言，说明：\n")
+	fmt.Fprintf(&b, "1. 该章节覆盖了什么系统能力\n")
+	fmt.Fprintf(&b, "2. 各模块之间如何协作\n")
+	fmt.Fprintf(&b, "3. 读者学完本章后能掌握什么\n\n")
+
+	for _, theme := range sortedThemeKeys(themes) {
+		mods := themes[theme]
+		title := theme
+		if ct, ok := titles[theme]; ok {
+			title = ct.Title
+		}
+		fmt.Fprintf(&b, "**%s**（章节标题：%s）\n", theme, title)
+		fmt.Fprintf(&b, "包含模块：%s\n\n", strings.Join(mods, ", "))
+	}
+
+	fmt.Fprintf(&b, "要求：\n")
+	fmt.Fprintf(&b, "1. 每个主题生成一段 40-80 字的简介\n")
+	fmt.Fprintf(&b, "2. 使用简体中文，风格专业但亲切\n")
+	fmt.Fprintf(&b, "3. 不要重复章节标题\n\n")
+	fmt.Fprintf(&b, "输出格式（严格的 JSON 数组，不要输出其他内容）：\n")
+	fmt.Fprintf(&b, `[{"theme":"主题名称","intro":"简介内容"}]`+"\n\n")
+	fmt.Fprintf(&b, "现在请输出 JSON：")
+
+	return b.String()
+}
+
+// buildChapterNarrativePrompt builds an LLM prompt to generate a narrative article
+// for one theme chapter, weaving its modules into a coherent learning story.
+func buildChapterNarrativePrompt(projectName, theme string, title ChapterTitle, modules []string, graph *grapher.Graph) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "你是一位资深技术教程作者，正在为 %s 项目的代码 Wiki 撰写一篇教学文章。\n\n", projectName)
+	fmt.Fprintf(&b, "本章主题：%s\n", title.Title)
+	if title.Subtitle != "" {
+		fmt.Fprintf(&b, "副标题：%s\n", title.Subtitle)
+	}
+	if title.Difficulty != "" {
+		fmt.Fprintf(&b, "难度：%s\n", title.Difficulty)
+	}
+	fmt.Fprintf(&b, "\n## 本章包含的模块\n\n")
+
+	roles := graph.InferModuleRoles()
+	roleMap := make(map[string]string)
+	for _, r := range roles {
+		roleMap[r.Name] = r.Role
+	}
+	nodeMap := make(map[string]*grapher.Node, len(graph.Nodes))
+	for _, n := range graph.Nodes {
+		nodeMap[n.Name] = n
+	}
+
+	displayModules := modules
+	if len(displayModules) > 10 {
+		displayModules = displayModules[:10]
+		fmt.Fprintf(&b, "（共 %d 个模块，展示前 10 个关键模块）\n\n", len(modules))
+	}
+
+	for _, modName := range displayModules {
+		node := nodeMap[modName]
+		if node == nil {
+			fmt.Fprintf(&b, "- **%s**\n\n", modName)
+			continue
+		}
+		resp := inferModuleResponsibility(node)
+		role := roleMap[modName]
+		if role == "" {
+			role = "通用"
+		}
+		fmt.Fprintf(&b, "- **%s**\n  职责：%s\n  架构角色：%s\n", modName, resp, role)
+
+		funcs := node.Functions
+		if len(funcs) > 3 {
+			funcs = funcs[:3]
+		}
+		if len(funcs) > 0 {
+			fmt.Fprintf(&b, "  关键函数：")
+			names := make([]string, len(funcs))
+			for i, f := range funcs {
+				names[i] = f.Name + "()"
+			}
+			fmt.Fprintf(&b, "%s\n", strings.Join(names, ", "))
+		}
+
+		deps := graph.DependenciesOf(modName)
+		inTheme := filterInTheme(deps, modules)
+		if len(inTheme) > 0 {
+			fmt.Fprintf(&b, "  主题内依赖：%s\n", strings.Join(inTheme, ", "))
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
+	fmt.Fprintf(&b, "## 写作要求\n\n")
+	fmt.Fprintf(&b, "请撰写一篇 800-1500 字的中文教学文章，要求：\n\n")
+	fmt.Fprintf(&b, "1. **叙事式组织**：不要逐模块罗列，而是围绕本章主题用连贯的故事线把各模块串起来。\n")
+	fmt.Fprintf(&b, "   解释这些模块如何协作完成该主题的功能，数据如何在它们之间流动。\n")
+	fmt.Fprintf(&b, "2. **回答三个核心问题**：这个子系统是什么？为什么这样设计？读者理解它有什么价值？\n")
+	fmt.Fprintf(&b, "3. **设计决策**：用 Markdown 引用块（> 开头）标注 1-2 个关键设计决策及其权衡理由。\n")
+	fmt.Fprintf(&b, "4. **来源标注**：在关键技术描述处用 `*来源：[文件路径]*` 标注对应的源码文件。\n")
+	fmt.Fprintf(&b, "5. **关键收获**：文章结尾用一个 \"## 关键收获\" 段落总结 3 个要点（用列表）。\n")
+	fmt.Fprintf(&b, "6. **格式**：使用 Markdown 格式，包含 ## 和 ### 级别标题来组织段落。不要包含一级标题（# ）。\n")
+	fmt.Fprintf(&b, "7. **风格**：像高质量技术博客一样，专业但不枯燥，让读者有「原来是这样」的体验。\n\n")
+	fmt.Fprintf(&b, "直接输出 Markdown 文章正文，不要加任何 JSON 包装或代码围栏。")
+
+	return b.String()
+}
+
+// buildSimplifiedNarrativePrompt builds a lighter prompt for degradation retry:
+// keeps module names and a one-line role summary, drops functions and dependency details.
+func buildSimplifiedNarrativePrompt(projectName, theme string, title ChapterTitle, modules []string, graph *grapher.Graph) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "为 %s 项目撰写「%s」主题的教学文章。\n\n模块：", projectName, title.Title)
+
+	roles := graph.InferModuleRoles()
+	roleMap := make(map[string]string)
+	for _, r := range roles {
+		roleMap[r.Name] = r.Role
+	}
+
+	capped := modules
+	if len(capped) > 10 {
+		capped = capped[:10]
+	}
+
+	names := make([]string, len(capped))
+	for i, m := range capped {
+		role := roleMap[m]
+		if role == "" {
+			role = "通用"
+		}
+		names[i] = fmt.Sprintf("%s(%s)", m, role)
+	}
+	fmt.Fprintf(&b, "%s\n", strings.Join(names, "、"))
+
+	if len(modules) > 10 {
+		fmt.Fprintf(&b, "（共 %d 个模块，仅展示前 10 个）\n", len(modules))
+	}
+
+	fmt.Fprintf(&b, "\n撰写 600-1000 字中文教学文章，Markdown 格式，不要 JSON 或代码围栏。")
+	return b.String()
+}
+
+// buildMinimalNarrativePrompt builds the lightest possible prompt for last-resort retry.
+func buildMinimalNarrativePrompt(projectName, theme string, title ChapterTitle, modules []string) string {
+	var b strings.Builder
+	capped := modules
+	if len(capped) > 15 {
+		capped = capped[:15]
+	}
+	fmt.Fprintf(&b, "为 %s 项目的「%s」主题撰写 400-800 字的中文技术概述。\n", projectName, title.Title)
+	fmt.Fprintf(&b, "包含模块：%s", strings.Join(capped, "、"))
+	if len(modules) > 15 {
+		fmt.Fprintf(&b, "（共 %d 个）", len(modules))
+	}
+	fmt.Fprintf(&b, "\n用 Markdown 格式输出，不要 JSON 或代码围栏。")
+	return b.String()
+}
+
+// filterInTheme returns only those names present in the theme's module list.
+func filterInTheme(names []string, themeModules []string) []string {
+	set := make(map[string]bool, len(themeModules))
+	for _, m := range themeModules {
+		set[m] = true
+	}
+	var result []string
+	for _, n := range names {
+		if set[n] {
+			result = append(result, n)
+		}
+	}
+	return result
+}
+
+// streamCollectWithLiveness reads tokens from ch until it closes or ctx is cancelled.
+// If no token arrives within idleTimeout, it cancels and returns what it has.
+func streamCollectWithLiveness(ctx context.Context, ch <-chan string, idleTimeout time.Duration) (string, bool) {
+	var raw strings.Builder
+	timer := time.NewTimer(idleTimeout)
+	defer timer.Stop()
+	charCount := 0
+	for {
+		select {
+		case token, ok := <-ch:
+			if !ok {
+				return raw.String(), true
+			}
+			raw.WriteString(token)
+			charCount += len([]rune(token))
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(idleTimeout)
+			if charCount%500 < len([]rune(token)) {
+				fmt.Printf(".")
+			}
+		case <-timer.C:
+			fmt.Printf("\n警告：流式接收超过 %v 无新 token，中止\n", idleTimeout)
+			return raw.String(), false
+		case <-ctx.Done():
+			return raw.String(), false
+		}
+	}
+}
+
+// streamComplete is a drop-in replacement for provider.Complete that uses streaming
+// with liveness detection. If streaming fails (establish or idle timeout), it falls
+// back to non-streaming Complete. This avoids HTTPClient.Timeout killing long-running
+// requests while tolerating API gateways that buffer responses.
+func streamComplete(ctx context.Context, provider llm.Provider, prompt string) (string, error) {
+	ch, err := provider.CompleteStream(ctx, prompt)
+	if err != nil {
+		return provider.Complete(ctx, prompt)
+	}
+
+	// 3-minute idle timeout: some API gateways buffer the entire response before
+	// forwarding the first token, so we need a generous window.
+	response, completed := streamCollectWithLiveness(ctx, ch, 3*time.Minute)
+	if response == "" {
+		if !completed {
+			fmt.Printf("（流式超时，降级到非流式）")
+			return provider.Complete(ctx, prompt)
+		}
+		return "", fmt.Errorf("LLM 返回空响应")
+	}
+	return response, nil
+}
+
+// cleanNarrativeResponse strips code fences from an LLM response.
+func cleanNarrativeResponse(response string) string {
+	response = strings.TrimSpace(response)
+	if strings.HasPrefix(response, "```") {
+		if idx := strings.Index(response, "\n"); idx != -1 {
+			response = response[idx+1:]
+		}
+		if strings.HasSuffix(response, "```") {
+			response = response[:len(response)-3]
+		}
+		response = strings.TrimSpace(response)
+	}
+	return response
+}
+
+// tryStreamNarrative attempts to generate a narrative using CompleteStream.
+func tryStreamNarrative(ctx context.Context, provider llm.Provider, prompt string, timeout time.Duration) (string, error) {
+	sCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ch, err := provider.CompleteStream(sCtx, prompt)
+	if err != nil {
+		return "", fmt.Errorf("流建立失败: %w", err)
+	}
+
+	response, completed := streamCollectWithLiveness(sCtx, ch, 3*time.Minute)
+	response = cleanNarrativeResponse(response)
+	if response == "" {
+		if !completed {
+			return "", fmt.Errorf("流式接收中断，无有效内容")
+		}
+		return "", fmt.Errorf("LLM 返回空响应")
+	}
+	return response, nil
+}
+
+// tryCompleteNarrative attempts to generate a narrative using non-streaming Complete.
+func tryCompleteNarrative(ctx context.Context, provider llm.Provider, prompt string, timeout time.Duration) (string, error) {
+	cCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	response, err := provider.Complete(cCtx, prompt)
+	if err != nil {
+		return "", err
+	}
+	response = cleanNarrativeResponse(response)
+	if response == "" {
+		return "", fmt.Errorf("LLM 返回空响应")
+	}
+	return response, nil
+}
+
+// generateChapterNarratives uses LLM to generate narrative articles for all theme chapters.
+// It uses streaming mode with liveness detection and progressive degradation:
+//   Level 1: full prompt + CompleteStream (15min)
+//   Level 2: simplified prompt + CompleteStream (10min)
+//   Level 3: minimal prompt + Complete non-streaming (8min)
+//   Fail: skip this chapter
+func generateChapterNarratives(ctx context.Context, provider llm.Provider, projectName string, themes map[string][]string, titles map[string]ChapterTitle, graph *grapher.Graph) map[string]string {
+	if provider == nil || len(themes) == 0 {
+		return nil
+	}
+	result := make(map[string]string)
+	for _, theme := range sortedThemeKeys(themes) {
+		modules := themes[theme]
+		title, ok := titles[theme]
+		if !ok {
+			title = ChapterTitle{Title: theme}
+		}
+
+		var response string
+		var err error
+
+		// Level 1: 完整 prompt + 流式 (thinking 模式需要更长时间推理)
+		prompt := buildChapterNarrativePrompt(projectName, theme, title, modules, graph)
+		fmt.Printf("[LLM] 正在生成章节叙事（流式）：%s（prompt %d 字）...", title.Title, len([]rune(prompt)))
+		response, err = tryStreamNarrative(ctx, provider, prompt, 15*time.Minute)
+		if err != nil {
+			fmt.Printf("\n警告：Level-1 流式失败 (%v)，尝试精简 prompt...\n", err)
+
+			// Level 2: 精简 prompt + 流式
+			prompt = buildSimplifiedNarrativePrompt(projectName, theme, title, modules, graph)
+			fmt.Printf("[LLM] 重试章节叙事（精简流式）：%s（prompt %d 字）...", title.Title, len([]rune(prompt)))
+			response, err = tryStreamNarrative(ctx, provider, prompt, 10*time.Minute)
+			if err != nil {
+				fmt.Printf("\n警告：Level-2 精简流式失败 (%v)，尝试极简非流式...\n", err)
+
+				// Level 3: 极简 prompt + 非流式
+				prompt = buildMinimalNarrativePrompt(projectName, theme, title, modules)
+				fmt.Printf("[LLM] 最后重试（极简非流式）：%s（prompt %d 字）...", title.Title, len([]rune(prompt)))
+				response, err = tryCompleteNarrative(ctx, provider, prompt, 8*time.Minute)
+				if err != nil {
+					fmt.Printf("\n警告：所有级别均失败 (%v)，%s 将使用模块拼接模式\n", err, theme)
+					continue
+				}
+			}
+		}
+
+		if isChecklistLike(response, graph) {
+			fmt.Printf("\n警告：LLM 返回的叙事像模块清单，%s 将使用模块拼接模式\n", theme)
+			continue
+		}
+
+		result[theme] = response
+		fmt.Printf("\n[LLM] 章节叙事生成完成：%s（%d 字）\n", title.Title, len([]rune(response)))
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // inferArchitecturePattern infers an architectural pattern and design rationale
@@ -1842,6 +2457,195 @@ func GenerateModuleDocs(graph *grapher.Graph, sourceDir string) map[string]strin
 	return docs
 }
 
+// generateModuleThemes uses LLM streaming to semantically group modules into themes.
+// Falls back to enhanced static grouping if LLM is unavailable or fails.
+func generateModuleThemes(ctx context.Context, provider llm.Provider, projectName string, graph *grapher.Graph) map[string][]*grapher.Node {
+	if provider == nil || graph == nil || len(graph.Nodes) == 0 {
+		return groupModulesByTheme(graph)
+	}
+
+	prompt := buildModuleThemesPrompt(projectName, graph)
+	streamCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
+	defer cancel()
+
+	response, err := streamComplete(streamCtx, provider, prompt)
+	if err != nil {
+		fmt.Printf("警告：LLM 分组失败 (%v)，使用静态回退\n", err)
+		return groupModulesByTheme(graph)
+	}
+	response = strings.TrimSpace(response)
+	if response == "" {
+		fmt.Println("警告：LLM 分组返回空响应，使用静态回退")
+		return groupModulesByTheme(graph)
+	}
+
+	// Strip markdown code fences if present
+	if strings.HasPrefix(response, "```") {
+		if idx := strings.Index(response, "\n"); idx != -1 {
+			response = response[idx+1:]
+		}
+		if strings.HasSuffix(response, "```") {
+			response = response[:len(response)-3]
+		}
+		response = strings.TrimSpace(response)
+	}
+
+	var entries []struct {
+		Theme   string   `json:"theme"`
+		Modules []string `json:"modules"`
+	}
+	if err := json.Unmarshal([]byte(response), &entries); err != nil {
+		fmt.Printf("警告：解析 LLM 主题分组 JSON 失败 (%v)，使用静态回退\n", err)
+		return groupModulesByTheme(graph)
+	}
+
+	// Build result map and validate coverage
+	result := make(map[string][]*grapher.Node)
+	nodeMap := make(map[string]*grapher.Node)
+	for _, n := range graph.Nodes {
+		nodeMap[n.Name] = n
+	}
+	assigned := make(map[string]bool)
+
+	for _, entry := range entries {
+		if entry.Theme == "" || len(entry.Modules) == 0 {
+			continue
+		}
+		for _, modName := range entry.Modules {
+			if n, ok := nodeMap[modName]; ok {
+				result[entry.Theme] = append(result[entry.Theme], n)
+				assigned[modName] = true
+			}
+		}
+	}
+
+	// Collect any unassigned modules
+	var unassigned []*grapher.Node
+	for _, n := range graph.Nodes {
+		if !assigned[n.Name] {
+			unassigned = append(unassigned, n)
+		}
+	}
+
+	// If too many unassigned or too few themes, fall back to static
+	if len(unassigned) > len(graph.Nodes)/3 || len(result) < 2 {
+		fmt.Printf("警告：LLM 分组覆盖率不足（未分配 %d/%d 模块，%d 个主题），使用静态回退\n",
+			len(unassigned), len(graph.Nodes), len(result))
+		return groupModulesByTheme(graph)
+	}
+
+	// Distribute unassigned modules to the closest theme by naming similarity
+	for _, n := range unassigned {
+		bestTheme := findClosestTheme(n.Name, result)
+		result[bestTheme] = append(result[bestTheme], n)
+	}
+
+	// Remove "其他" / "Other" / "Misc" bucket — redistribute to real themes
+	if otherNodes, ok := result["其他"]; ok {
+		delete(result, "其他")
+		for _, n := range otherNodes {
+			best := findClosestTheme(n.Name, result)
+			result[best] = append(result[best], n)
+		}
+	}
+	if otherNodes, ok := result["Other"]; ok {
+		delete(result, "Other")
+		for _, n := range otherNodes {
+			best := findClosestTheme(n.Name, result)
+			result[best] = append(result[best], n)
+		}
+	}
+
+	// Sort nodes within each group
+	for _, nodes := range result {
+		sort.Slice(nodes, func(i, j int) bool {
+			return nodes[i].Name < nodes[j].Name
+		})
+	}
+
+	return result
+}
+
+// findClosestTheme assigns a module to the theme with the most keyword overlap.
+func findClosestTheme(modName string, themes map[string][]*grapher.Node) string {
+	best := ""
+	bestScore := -1
+	lower := strings.ToLower(modName)
+	for theme := range themes {
+		score := keywordOverlap(lower, strings.ToLower(theme))
+		if score > bestScore {
+			bestScore = score
+			best = theme
+		}
+	}
+	if best == "" {
+		return "核心模块"
+	}
+	return best
+}
+
+// keywordOverlap counts how many substrings of target appear in source.
+func keywordOverlap(source, target string) int {
+	parts := strings.FieldsFunc(target, func(r rune) bool {
+		return r == '/' || r == '\\' || r == '_' || r == '-' || r == ' '
+	})
+	count := 0
+	for _, p := range parts {
+		if len(p) >= 2 && strings.Contains(source, p) {
+			count++
+		}
+	}
+	return count
+}
+
+// buildModuleThemesPrompt builds the LLM prompt for semantic module grouping.
+func buildModuleThemesPrompt(projectName string, graph *grapher.Graph) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "你是一位资深软件架构师，正在为一本代码库技术书籍设计目录结构。\n\n")
+	fmt.Fprintf(&b, "项目：%s\n", projectName)
+	fmt.Fprintf(&b, "模块总数：%d\n\n", len(graph.Nodes))
+	fmt.Fprintf(&b, "请分析以下所有模块，将它们按语义归入 3-8 个有意义的主题章节中。\n\n")
+
+	// List all modules with their inferred responsibilities and roles
+	roles := graph.InferModuleRoles()
+	roleMap := make(map[string]string)
+	for _, r := range roles {
+		roleMap[r.Name] = r.Role
+	}
+
+	fmt.Fprintf(&b, "## 模块清单\n\n")
+	for _, n := range graph.Nodes {
+		resp := inferModuleResponsibility(n)
+		role := roleMap[n.Name]
+		if role == "" {
+			role = "通用"
+		}
+		// List top dependencies
+		deps := graph.DependenciesOf(n.Name)
+		depStr := strings.Join(deps, ", ")
+		if len(deps) > 3 {
+			depStr = strings.Join(deps[:3], ", ")
+		}
+		if depStr == "" {
+			depStr = "无"
+		}
+		fmt.Fprintf(&b, "- **%s**\n  职责：%s\n  架构角色：%s\n  依赖：%s\n\n",
+			n.Name, resp, role, depStr)
+	}
+
+	fmt.Fprintf(&b, "## 要求\n")
+	fmt.Fprintf(&b, "1. 将每个模块归入恰好一个主题（**类型定义和接口**优先与使用它们的业务逻辑归入同一主题，不要单独成章）\n")
+	fmt.Fprintf(&b, "2. 主题名称用 3-8 个中文字，体现该主题的核心价值，如\"入口与命令行\"\"数据持久化\"\n")
+	fmt.Fprintf(&b, "3. 主题数量 3-8 个，每个主题至少包含 2 个模块\n")
+	fmt.Fprintf(&b, "4. 不要创建\"其他\"\"杂项\"\"Misc\"类主题——每个模块都必须归入有意义的主题\n")
+	fmt.Fprintf(&b, "5. 按理解难度排序（基础/入口 → 进阶/业务 → 深入/基础设施）\n\n")
+	fmt.Fprintf(&b, "输出格式（严格的 JSON 数组，不要输出其他内容）：\n")
+	fmt.Fprintf(&b, `[{"theme":"主题名","modules":["module/a","module/b"]}]`+"\n\n")
+	fmt.Fprintf(&b, "现在请输出 JSON：")
+
+	return b.String()
+}
+
 // groupModulesByTheme groups modules into thematic categories based on filename heuristics.
 func groupModulesByTheme(graph *grapher.Graph) map[string][]*grapher.Node {
 	groups := make(map[string][]*grapher.Node)
@@ -2332,6 +3136,25 @@ func WriteWikiFiles(outputDir string, wiki *Wiki, graph *grapher.Graph) error {
 		}
 	}
 
+
+	// Chapter pages — standalone HTML for each theme with contextual sidebar
+	if len(wiki.ModuleThemes) > 0 && graph != nil {
+		chaptersDir := filepath.Join(outputDir, "chapters")
+		if err := os.MkdirAll(chaptersDir, 0755); err != nil {
+			fmt.Printf("警告：创建 chapters 目录失败 (%v)\n", err)
+		} else {
+			if wiki.ChapterPages == nil {
+				wiki.ChapterPages = GenerateChapterPages(wiki, graph)
+			}
+			for theme, html := range wiki.ChapterPages {
+				fname := safeThemeName(theme) + ".html"
+				chapPath := filepath.Join(chaptersDir, fname)
+				if err := os.WriteFile(chapPath, []byte(html), 0644); err != nil {
+					fmt.Printf("警告：写入章节页面 %s 失败 (%v)\n", fname, err)
+				}
+			}
+		}
+	}
 	// PDF export (best-effort: don't block other exports on font missing)
 	if pdfBytes, err := GeneratePDF(wiki); err == nil {
 		pdfPath := filepath.Join(outputDir, "wiki.pdf")
@@ -2395,142 +3218,141 @@ func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
 	// mermaid code blocks, so RenderMarkdownBody already renders them inline.
 	// No standalone diagram sections needed.
 
-	// Module docs
-	if len(wiki.ModuleDocs) > 0 {
-		var modNames []string
-		for name := range wiki.ModuleDocs {
-			modNames = append(modNames, name)
-		}
-		sort.Strings(modNames)
-		for _, name := range modNames {
-			secID := "module-" + mermaidEscape(name)
-			body.WriteString(fmt.Sprintf(`<section id="%s">` + "\n", secID))
-			body.WriteString(RenderMarkdownBody([]byte(wiki.ModuleDocs[name])))
-			body.WriteString("\n</section>\n")
-		}
-	}
 
+	// Chapter listing — links to standalone chapter pages with contextual sidebar
+	if len(wiki.ModuleThemes) > 0 {
+		body.WriteString(`<section id="chapters">` + "\n")
+		body.WriteString(`<h2>📕 深入剖析</h2>` + "\n")
+		body.WriteString(`<p>以下章节按功能主题组织，每个章节包含相关模块的详细文档和上下文源码导航。</p>` + "\n")
+		body.WriteString(`<div class="chapter-grid">` + "\n")
+		for _, theme := range sortedThemeKeys(wiki.ModuleThemes) {
+			safeName := safeThemeName(theme)
+			ct, ok := wiki.ChapterTitles[theme]
+			title := theme
+			subtitle := ""
+			diff := "⭐⭐ 进阶"
+			if ok {
+				title = ct.Title
+				subtitle = ct.Subtitle
+				if ct.Difficulty != "" {
+					diff = ct.Difficulty
+				}
+			}
+			modCount := len(wiki.ModuleThemes[theme])
+			body.WriteString(fmt.Sprintf(`<a class="chapter-card" href="chapters/%s.html">`, safeName))
+			body.WriteString(fmt.Sprintf(`<span class="chapter-card-title">%s</span>`, title))
+			if subtitle != "" {
+				body.WriteString(fmt.Sprintf(`<span class="chapter-card-subtitle">%s</span>`, subtitle))
+			}
+			body.WriteString(fmt.Sprintf(`<span class="chapter-card-meta"><span>%s</span><span>%d 个模块</span></span>`, diff, modCount))
+			body.WriteString(`</a>` + "\n")
+		}
+		body.WriteString(`</div>` + "\n")
+		body.WriteString(`</section>` + "\n")
+	}
 	var nav strings.Builder
 	nav.WriteString(`<nav class="sidebar">
 <div class="sidebar-header"><span class="logo-dot"></span><a href="#" style="color:inherit;text-decoration:none;font-weight:700;">`)
 	nav.WriteString(HTMLEscape(wiki.ProjectName))
 	nav.WriteString(`</a></div>
 `)
-	// Dynamic three-layer navigation built from graph analysis
-	entries := []*grapher.Node{}
-	entrySet := map[string]bool{}
-	coreTop := []*grapher.Node{}
-	themeSet := map[string]bool{}
-	if graph != nil {
-		entries = graph.EntryPoints()
-		for _, e := range entries {
-			entrySet[e.Name] = true
+
+		sectionIcons := map[string]string{
+			"overview": "📊", "what-it-does": "🚀", "architecture": "🏗️",
+			"project-structure": "📁", "key-concepts": "💡", "learning-path": "📚",
+			"api-reference": "📖",
 		}
-		pr := graph.PageRank()
-		type ps struct {
-			n *grapher.Node
-			s float64
-		}
-		var ranked []ps
-		for _, n := range graph.Nodes {
-			ranked = append(ranked, ps{n, pr[n.Name]})
-		}
-		sort.Slice(ranked, func(i, j int) bool { return ranked[i].s > ranked[j].s })
-		for i := 0; i < 5 && i < len(ranked); i++ {
-			coreTop = append(coreTop, ranked[i].n)
-		}
-		for _, t := range wiki.ModuleThemes {
-			for _, m := range t {
-				themeSet[m] = true
+
+		// 📘 认识项目
+		introItems := filterSections(sections, "overview", "what-it-does")
+		nav.WriteString(`<div class="nav-group">
+	<div class="nav-group-header"><span class="nav-group-label">📘 认识项目</span><span class="nav-group-count">`)
+		nav.WriteString(fmt.Sprintf("%d", len(introItems)))
+		nav.WriteString(`</span><span class="chevron">&#9660;</span></div>
+	<ul class="nav-group-items">
+	`)
+		for _, s := range introItems {
+			icon := sectionIcons[s.id]
+			if icon == "" {
+				icon = "📄"
 			}
+			nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">%s</span><span class="nav-title">%s</span></a></li>`+"\n", s.id, icon, s.title))
 		}
-	}
+		nav.WriteString("</ul>\n</div>\n")
 
-	sectionIcons := map[string]string{
-		"overview": "📊", "what-it-does": "🚀", "architecture": "🏗️",
-		"project-structure": "📁", "key-concepts": "💡", "learning-path": "📚",
-		"api-reference": "📖",
-	}
-	writeNavItem := func(id, title string) {
-		icon := sectionIcons[id]
-		if icon == "" {
-			icon = "📄"
-		}
-		nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">%s</span>%s</a></li>`+"\n", id, icon, title))
-	}
-
-	// 入门 ⭐
-	nav.WriteString(`<div class="nav-group">
-<div class="nav-group-header"><span>⭐ 入门</span><span class="chevron">&#9660;</span></div>
-<ul class="nav-group-items">
-`)
-	for _, s := range filterSections(sections, "overview", "what-it-does", "architecture") {
-		writeNavItem(s.id, s.title)
-	}
-	if len(entries) > 0 {
-		for _, e := range entries {
-			if e.Name == "" {
-				continue
+		// 📗 开始阅读
+		readItems := filterSections(sections, "architecture", "project-structure")
+		readCount := len(readItems)
+		nav.WriteString(`<div class="nav-group">
+	<div class="nav-group-header"><span class="nav-group-label">📗 开始阅读</span><span class="nav-group-count">`)
+		nav.WriteString(fmt.Sprintf("%d", readCount))
+		nav.WriteString(`</span><span class="chevron">&#9660;</span></div>
+	<ul class="nav-group-items">
+	`)
+		for _, s := range readItems {
+			icon := sectionIcons[s.id]
+			if icon == "" {
+				icon = "📄"
 			}
-			secID := "module-" + mermaidEscape(e.Name)
-			nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">🚪</span>入口：%s</a></li>`+"\n", secID, filepath.Base(e.Name)))
+			nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">%s</span><span class="nav-title">%s</span></a></li>`+"\n", s.id, icon, s.title))
 		}
-	}
-	nav.WriteString("</ul>\n</div>\n")
+		nav.WriteString("</ul>\n</div>\n")
 
-	// 动态 ⚡
-	nav.WriteString(`<div class="nav-group">
-<div class="nav-group-header"><span>⚡ 动态</span><span class="chevron">&#9660;</span></div>
-<ul class="nav-group-items">
-`)
-	for _, s := range filterSections(sections, "learning-path", "project-structure") {
-		writeNavItem(s.id, s.title)
-	}
-	nav.WriteString("</ul>\n</div>\n")
-
-	// 探索 🔭
-	nav.WriteString(`<div class="nav-group">
-<div class="nav-group-header"><span>🔭 探索</span><span class="chevron">&#9660;</span></div>
-<ul class="nav-group-items">
-`)
-	for _, s := range filterSections(sections, "key-concepts", "api-reference") {
-		writeNavItem(s.id, s.title)
-	}
-	for _, n := range coreTop {
-		if entrySet[n.Name] || themeSet[n.Name] {
-			continue
-		}
-		secID := "module-" + mermaidEscape(n.Name)
-		nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">📦</span>%s</a></li>`+"\n", secID, filepath.Base(n.Name)))
-	}
-	if len(wiki.ModuleDocs) > 0 && len(wiki.ModuleThemes) > 0 {
-		for _, theme := range sortedThemeKeys(wiki.ModuleThemes) {
-			firstMod := ""
-			for _, name := range wiki.ModuleThemes[theme] {
-				if _, ok := wiki.ModuleDocs[name]; ok {
-					firstMod = name
+		// 📕 深入剖析
+		nav.WriteString(`<div class="nav-group">
+	<div class="nav-group-header"><span class="nav-group-label">📕 深入剖析</span><span class="nav-group-count">`)
+		nav.WriteString(fmt.Sprintf("%d", len(wiki.ModuleThemes)))
+		nav.WriteString(`</span><span class="chevron">&#9660;</span></div>
+	<ul class="nav-group-items">
+	`)
+		if len(wiki.ModuleThemes) > 0 {
+			for _, theme := range sortedThemeKeys(wiki.ModuleThemes) {
+				safeName := safeThemeName(theme)
+				ct, ok := wiki.ChapterTitles[theme]
+				title := theme
+				if ok {
+					title = ct.Title
+				}
+				icon := "📦"
+				if ok {
+					icon = "🏷️"
+				}
+				nav.WriteString(fmt.Sprintf(`<li><a href="chapters/%s.html"><span class="nav-icon">%s</span><span class="nav-title">%s</span>`, safeName, icon, title))
+				if ct.Difficulty != "" {
+					nav.WriteString(fmt.Sprintf(`<span class="nav-meta"><span class="nav-diff">%s</span></span>`, ct.Difficulty))
+				}
+				nav.WriteString("</a></li>\n")
+			}
+		} else if len(wiki.ModuleDocs) > 0 {
+			var count int
+			for name := range wiki.ModuleDocs {
+				if count >= 8 {
 					break
 				}
+				secID := "module-" + mermaidEscape(name)
+				nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">📦</span><span class="nav-title">%s</span></a></li>`+"\n", secID, filepath.Base(name)))
+				count++
 			}
-			if firstMod == "" {
-				continue
-			}
-			secID := "module-" + mermaidEscape(firstMod)
-			nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">🏷️</span>%s</a></li>`+"\n", secID, theme))
 		}
-	} else if len(wiki.ModuleDocs) > 0 {
-		var count int
-		for name := range wiki.ModuleDocs {
-			if count >= 8 {
-				break
+		nav.WriteString("</ul>\n</div>\n")
+
+		// 📓 速查
+		refItems := filterSections(sections, "key-concepts", "learning-path", "api-reference")
+		nav.WriteString(`<div class="nav-group">
+	<div class="nav-group-header"><span class="nav-group-label">📓 速查</span><span class="nav-group-count">`)
+		nav.WriteString(fmt.Sprintf("%d", len(refItems)))
+		nav.WriteString(`</span><span class="chevron">&#9660;</span></div>
+	<ul class="nav-group-items">
+	`)
+		for _, s := range refItems {
+			icon := sectionIcons[s.id]
+			if icon == "" {
+				icon = "📄"
 			}
-			secID := "module-" + mermaidEscape(name)
-			nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">📦</span>%s</a></li>`+"\n", secID, filepath.Base(name)))
-			count++
+			nav.WriteString(fmt.Sprintf(`<li><a href="#%s"><span class="nav-icon">%s</span><span class="nav-title">%s</span></a></li>`+"\n", s.id, icon, s.title))
 		}
-	}
-	nav.WriteString("</ul>\n</div>\n")
-	nav.WriteString("</nav>\n")
+		nav.WriteString("</ul>\n</div>\n")
+		nav.WriteString("</nav>\n")
 
 	var out strings.Builder
 	out.WriteString(`<!DOCTYPE html>
@@ -2593,7 +3415,7 @@ section { animation:fadeUp2 .4s ease-out; }
 	out.WriteString(` Wiki</div>
 <div class="topbar-search">
 <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-<input type="text" id="topbar-search-trigger" placeholder="搜索章节..." readonly>
+<input type="text" id="topbar-search-trigger" placeholder="搜索文章、模块..." readonly>
 <kbd>Ctrl+K</kbd>
 </div>
 <div class="topbar-actions">
@@ -2622,7 +3444,7 @@ section { animation:fadeUp2 .4s ease-out; }
 <!-- Search overlay for static HTML -->
 <div class="search-overlay" onclick="if(event.target===this)this.classList.remove('active')">
 <div class="search-modal">
-<input type="text" id="static-search-input" placeholder="搜索章节、模块..." oninput="filterStaticSearch(this.value)">
+<input type="text" id="static-search-input" placeholder="搜索文章、模块..." oninput="filterStaticSearch(this.value)">
 <div class="search-results" id="static-search-results"></div>
 </div>
 </div>

@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -205,7 +207,7 @@ func TestWikiHandler(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, 200, rr.Code)
-	assert.Contains(t, rr.Body.String(), "<h1>Test</h1>")
+	assert.Contains(t, rr.Body.String(), `<h1 id="Test">Test</h1>`)
 	assert.Contains(t, rr.Body.String(), `<nav class="sidebar">`)
 	assert.Equal(t, "text/html; charset=utf-8", rr.Header().Get("Content-Type"))
 }
@@ -388,6 +390,7 @@ func TestHandleAskAPIWithHistory(t *testing.T) {
 type mockAskProvider struct {
 	answer     string
 	answerErr  error
+	streamErr  error // if set, CompleteStream returns this error
 	lastPrompt string
 }
 
@@ -401,6 +404,9 @@ func (m *mockAskProvider) Complete(ctx context.Context, prompt string) (string, 
 
 func (m *mockAskProvider) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
 	m.lastPrompt = prompt
+	if m.streamErr != nil {
+		return nil, m.streamErr
+	}
 	ch := make(chan string)
 	go func() {
 		defer close(ch)
@@ -413,6 +419,9 @@ func (m *mockAskProvider) CompleteStream(ctx context.Context, prompt string) (<-
 }
 
 func (m *mockAskProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if m.streamErr != nil {
+		return nil, m.streamErr
+	}
 	vecs := make([][]float32, len(texts))
 	for i := range texts {
 		vecs[i] = []float32{1, 0, 0}
@@ -420,15 +429,49 @@ func (m *mockAskProvider) Embed(ctx context.Context, texts []string) ([][]float3
 	return vecs, nil
 }
 
+func TestHandleAskAPIEngineError(t *testing.T) {
+	mock := &mockAskProvider{streamErr: errors.New("embed failed")}
+	store := vectorstore.New()
+	// Don't upsert any chunks — store is empty, but engine error comes first
+	store.Upsert("c1", []float32{1, 0, 0}, &chunker.Chunk{ID: "c1", Filename: "test.go", Name: "Test", Type: chunker.TypeFunction, Content: "func Test() {}"})
+	engine := rag.NewEngine(mock, store)
+	handler := newServerHandler(t.TempDir(), engine)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/ask", strings.NewReader(`{"question":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, 500, rr.Code)
+	assert.Contains(t, rr.Body.String(), "embed failed")
+}
+
+func TestInitRAGEngineNoConfig(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "main.py"), []byte("def main():\n    pass\n"), 0644)
+
+	// LoadAppConfig always returns defaults even when file is missing,
+	// so initRAGEngine proceeds to vector store creation, which fails.
+	engine, err := initRAGEngine(dir, "python", filepath.Join(dir, "nonexistent.yaml"))
+	assert.Nil(t, engine)
+	assert.Error(t, err)
+}
+
+
 func TestContentTypeFor(t *testing.T) {
 	assert.Equal(t, "text/html; charset=utf-8", contentTypeFor("index.html"))
+	assert.Equal(t, "text/html; charset=utf-8", contentTypeFor("page.htm"))
 	assert.Equal(t, "text/css; charset=utf-8", contentTypeFor("style.css"))
 	assert.Equal(t, "application/javascript; charset=utf-8", contentTypeFor("app.js"))
 	assert.Equal(t, "application/json; charset=utf-8", contentTypeFor("data.json"))
+	assert.Equal(t, "text/markdown; charset=utf-8", contentTypeFor("readme.md"))
+	assert.Equal(t, "text/plain; charset=utf-8", contentTypeFor("diagram.mmd"))
 	assert.Equal(t, "image/png", contentTypeFor("icon.png"))
 	assert.Equal(t, "image/jpeg", contentTypeFor("photo.jpg"))
+	assert.Equal(t, "image/jpeg", contentTypeFor("photo.jpeg"))
 	assert.Equal(t, "image/svg+xml", contentTypeFor("logo.svg"))
 	assert.Equal(t, "text/plain; charset=utf-8", contentTypeFor("readme.txt"))
+	assert.Equal(t, "text/plain; charset=utf-8", contentTypeFor("noextension"))
 }
 
 func TestRunServeMissingWikiDir(t *testing.T) {
@@ -564,6 +607,10 @@ func TestMaskKey(t *testing.T) {
 func TestReadLine(t *testing.T) {
 	scanner := bufio.NewScanner(bytes.NewReader([]byte("hello\n")))
 	assert.Equal(t, "hello", readLine(scanner))
+
+	// EOF returns empty string
+	scanner = bufio.NewScanner(strings.NewReader(""))
+	assert.Equal(t, "", readLine(scanner))
 }
 
 func TestRunConfig(t *testing.T) {
@@ -787,4 +834,241 @@ func TestRunServeStarts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 	resp.Body.Close()
+}
+
+func TestInferModuleDiffFromName(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected string
+	}{
+		{"cmd", "⭐ 入门"},
+		{"cmd_main", "⭐⭐ 进阶"},
+		{"cmd_main_server", "⭐⭐⭐ 深入"},
+		{"auth", "⭐ 入门"},
+		{"auth_login.md", "⭐⭐ 进阶"},
+		{"", "⭐ 入门"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, inferModuleDiffFromName(tt.name))
+		})
+	}
+}
+
+func TestExtractZip(t *testing.T) {
+	srcDir := t.TempDir()
+	os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("hello"), 0644)
+
+	// Create zip
+	zipPath := filepath.Join(srcDir, "test.zip")
+	cmd := exec.Command("powershell", "-Command",
+		"Compress-Archive -Path '"+filepath.Join(srcDir, "test.txt")+"' -DestinationPath '"+zipPath+"'")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to create zip: %s", string(out))
+
+	// Extract
+	destDir := filepath.Join(srcDir, "extracted")
+	os.MkdirAll(destDir, 0755)
+	err = extractZip(zipPath, destDir)
+	require.NoError(t, err)
+
+	// Verify
+	extracted := filepath.Join(destDir, "test.txt")
+	data, err := os.ReadFile(extracted)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(data))
+}
+
+func TestExtractTarGz(t *testing.T) {
+	srcDir := t.TempDir()
+	os.WriteFile(filepath.Join(srcDir, "hello.txt"), []byte("world"), 0644)
+
+	// Create tar.gz using tar command
+	tgzPath := filepath.Join(srcDir, "test.tar.gz")
+	absSrc := srcDir
+	cmd := exec.Command("tar", "-czf", tgzPath, "-C", absSrc, "hello.txt")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Skipf("tar not available, skipping: %s", string(out))
+	}
+
+	// Extract (dest must exist for tar -C)
+	destDir := filepath.Join(srcDir, "extracted")
+	os.MkdirAll(destDir, 0755)
+	err = extractTarGz(tgzPath, destDir)
+	require.NoError(t, err)
+
+	// Verify
+	extracted := filepath.Join(destDir, "hello.txt")
+	data, err := os.ReadFile(extracted)
+	require.NoError(t, err)
+	assert.Equal(t, "world", string(data))
+}
+
+func TestBuildNavSections(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create wiki markdown files
+	os.WriteFile(filepath.Join(dir, "00-overview.md"), []byte("# Overview\n\nSome content here for reading time."), 0644)
+	os.WriteFile(filepath.Join(dir, "01-what-it-does.md"), []byte("# What It Does\n\nMore content."), 0644)
+	os.WriteFile(filepath.Join(dir, "02-architecture.md"), []byte("# Architecture\n\nArchitecture content."), 0644)
+	os.WriteFile(filepath.Join(dir, "03-project-structure.md"), []byte("# Structure\n\nStructure content."), 0644)
+	os.WriteFile(filepath.Join(dir, "04-key-concepts.md"), []byte("# Concepts\n\nKey concepts."), 0644)
+	os.WriteFile(filepath.Join(dir, "api-reference.md"), []byte("# API\n\nAPI reference content."), 0644)
+
+	// Non-md file should be ignored
+	os.WriteFile(filepath.Join(dir, "diagram.mmd"), []byte("graph TD\nA-->B"), 0644)
+
+	sections, totalArticles, totalMinutes := buildNavSections(dir)
+
+	// Should have 4 sections: 认识项目, 开始阅读, 深入剖析, 速查
+	require.Len(t, sections, 4)
+
+	// 认识项目: 00- and 01- files
+	assert.Equal(t, "认识项目", sections[0].Label)
+	assert.Len(t, sections[0].Items, 2)
+
+	// 开始阅读: 02- and 03- files
+	assert.Equal(t, "开始阅读", sections[1].Label)
+	assert.Len(t, sections[1].Items, 2)
+
+	// 深入剖析: 04- and 05- files
+	assert.Equal(t, "深入剖析", sections[2].Label)
+
+	// 速查: api-reference and .mmd files
+	assert.Equal(t, "速查", sections[3].Label)
+	assert.Len(t, sections[3].Items, 2) // api-reference.md + diagram.mmd
+
+	// Total articles should count .md files only (6 articles)
+	assert.Equal(t, 6, totalArticles)
+	assert.Greater(t, totalMinutes, 0)
+}
+
+func TestBuildNavSectionsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	sections, total, minutes := buildNavSections(dir)
+	assert.Nil(t, sections)
+	assert.Equal(t, 0, total)
+	assert.Equal(t, 0, minutes)
+}
+
+func TestBuildNavSectionsWithModules(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a module file
+	modulesDir := filepath.Join(dir, "modules")
+	os.MkdirAll(modulesDir, 0755)
+	os.WriteFile(filepath.Join(modulesDir, "auth_login.md"), []byte("# Auth\n\nContent."), 0644)
+	os.WriteFile(filepath.Join(modulesDir, "utils_helper.md"), []byte("# Utils\n\nContent."), 0644)
+
+	// Need at least one regular wiki file to trigger section processing
+	os.WriteFile(filepath.Join(dir, "00-overview.md"), []byte("# Overview\n\nContent."), 0644)
+
+	sections, total, _ := buildNavSections(dir)
+
+	// 深入剖析 section should have module items
+	var found bool
+	for _, sec := range sections {
+		if sec.Label == "深入剖析" {
+			found = true
+			// Should include module items
+			assert.GreaterOrEqual(t, len(sec.Items), 2)
+		}
+	}
+	assert.True(t, found, "深入剖析 section should exist")
+	assert.Equal(t, 3, total) // 1 regular + 2 modules
+}
+
+func TestRunUpdateDevVersion(t *testing.T) {
+	// Dev version should return nil immediately
+	assert.NoError(t, RunUpdate(&Config{Version: ""}))
+	assert.NoError(t, RunUpdate(&Config{Version: "dev"}))
+}
+
+func TestArticleDifficulty(t *testing.T) {
+	tests := []struct {
+		path     string
+		expected string
+	}{
+		{"00-overview.md", "⭐ 入门"},
+		{"01-what-it-does.md", "⭐ 入门"},
+		{"02-architecture.md", "⭐⭐ 进阶"},
+		{"03-project-structure.md", "⭐⭐ 进阶"},
+		{"05-learning-path.md", "⭐⭐ 进阶"},
+		{"04-key-concepts.md", "⭐⭐⭐ 高级"},
+		{"api-reference.md", "⭐⭐⭐ 高级"},
+		{"unknown-file.md", "📖 参考"},
+		{"00_intro.md", "⭐ 入门"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			assert.Equal(t, tt.expected, articleDifficulty(tt.path).label)
+		})
+	}
+}
+
+func TestOpenBrowser(t *testing.T) {
+	// openBrowser should not crash with a file:// URL
+	err := openBrowser("file:///nonexistent/index.html")
+	// On Windows, cmd.Start() starts the process and may or may not return an error
+	// depending on whether cmd.exe is available (it always is on Windows)
+	// We just verify it doesn't panic
+	_ = err
+}
+
+func TestWikiHandlerRawFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "style.css"), []byte("body { color: red; }"), 0644)
+
+	handler := newServerHandler(tmpDir, nil)
+	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, 200, rr.Code)
+	assert.Equal(t, "text/css; charset=utf-8", rr.Header().Get("Content-Type"))
+	assert.Contains(t, rr.Body.String(), "body { color: red; }")
+}
+
+func TestWikiHandlerRawJavaScript(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "app.js"), []byte("console.log('hi');"), 0644)
+
+	handler := newServerHandler(tmpDir, nil)
+	req := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, 200, rr.Code)
+	assert.Equal(t, "application/javascript; charset=utf-8", rr.Header().Get("Content-Type"))
+}
+
+func TestServeAskPageEnabled(t *testing.T) {
+	mock := &mockAskProvider{}
+	store := vectorstore.New()
+	engine := rag.NewEngine(mock, store)
+	handler := newServerHandler(t.TempDir(), engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/ask", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, 200, rr.Code)
+	assert.Contains(t, rr.Body.String(), "问答终端")
+	// Should NOT show "RAG 引擎未启用" when engine is available
+	assert.NotContains(t, rr.Body.String(), "RAG 引擎未启用")
+}
+
+func TestRunBrowseWikiExists(t *testing.T) {
+	dir := t.TempDir()
+	wikiDir := filepath.Join(dir, ".codewiki", "wiki")
+	os.MkdirAll(wikiDir, 0755)
+	os.WriteFile(filepath.Join(wikiDir, "index.html"), []byte("<html></html>"), 0644)
+
+	cfg := &Config{
+		SourceDir: dir,
+		OutputDir: wikiDir,
+	}
+	// openBrowser will try to open the browser; on Windows cmd.Start returns quickly
+	_ = RunBrowse(cfg)
 }

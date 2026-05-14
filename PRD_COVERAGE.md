@@ -1,7 +1,7 @@
 # PRD 覆盖追踪文档
 
 > 本文档将 PRD 中的能力、测试、里程碑、发布门禁映射到实际实现状态。每次提交前更新对应条目，确保无遗漏。
-> 文档版本：v0.3 | 最后更新：2026-05-12
+> 文档版本：v0.4 | 最后更新：2026-05-15
 
 ---
 
@@ -11,7 +11,7 @@
 |--------|------|----------|--------|
 | M1 — 核心可行原型 | ✅ 已完成 | AST/文档/图表/CLI/Web | 无 |
 | M2 — 问答与图表增强 | ✅ 已完成 | RAG/时序图/本地LLM/配置/中文 | 无 |
-| M3 — 产品化打磨 | 🔄 接近完成 | 见下方详细拆解 | 分发渠道(3.8)待补，其余核心项均已完成 |
+| M3 — 产品化打磨 | 🔄 接近完成 | LLM 可靠性工程已完成（流式优先+渐进降级+thinking模式）；Web UI 14项特性+JS修复；叙事生成已可靠 | 分发渠道(3.8)待补，其余核心项均已完成 |
 | M4 — 生态扩展 | ⏳ 未开始 | IDE/CI/图查询/1.0发布 | 无 |
 
 ---
@@ -108,6 +108,8 @@
 | 3.6 | 导出静态 HTML | `internal/docgen/docgen.go` + `internal/cli/cli.go` | ✅ | `GenerateStaticHTML()` 生成单文件离线 HTML（含导航、Mermaid.js CDN、CSS）；`WriteWikiFiles` 自动输出 `index.html`；`serve` 保留实时渲染 |
 | 3.7 | 导出 PDF | `internal/docgen/pdf.go` | ✅ | `GeneratePDF()` + `WriteWikiFiles` 集成；跨平台 CJK 字体自动探测；Markdown 渲染（标题/段落/列表/代码块/表格/分隔线）；图表附录以 DSL 代码块输出 |
 | 3.7b | **Web UI 体验升级** | `internal/docgen/render.go` + `internal/cli/cli.go` | ✅ | **14 项 UI 特性：** 磨砂玻璃态(backdrop-filter)、暗色主题(CSS 变量+localStorage)、阅读进度条、代码块语言标签+复制、图表全屏展开、折叠导航分组(入门/动态/探索)、Ctrl+K 搜索覆盖层、Ask AI 快捷入口、滚动导航高亮(IntersectionObserver)、阅读时长徽章(EstimateReadingTime)、难度星级徽章(articleDifficulty)、Mermaid 点击导航(navigateToModule)、版本历史备份(.bak)、生成时间戳；Serve/Static 双路径共享 wikiPageCSS + wikiPageJS |
+| 3.7c | **章节叙事 LLM 生成** | `internal/docgen/docgen.go` + `internal/docgen/chapter_page.go` | ✅ | `buildChapterNarrativePrompt()` 构建跨模块教学叙事 prompt；`generateChapterNarratives()` 逐主题 LLM 调用（5 分钟超时、清单检测、降级回退）；`GenerateChapterPage()` 叙事优先 + 折叠式模块详情参考区；checkpoint 持久化；无 LLM 时保持原有拼接行为 |
+| 3.7d | **LLM 生成可靠性工程 (P0)** | `internal/llm/llm.go` + `internal/docgen/docgen.go` | ✅ | **流式优先架构**：所有 LLM 调用改为 `streamComplete()` 流式优先 + 非流式自动降级；**超时机制重构**：移除 `http.Client.Timeout`，新增 `StreamClient`（无 Timeout），所有超时由 context deadline 控制；**渐进降级**：章节叙事 3 级降级（完整 prompt 流式 15min → 精简 prompt 流式 10min → 极简 prompt 非流式 8min）；**Thinking/Reasoning 模式**：DeepSeek `thinking: {type: "enabled"}` + OpenAI `reasoning_effort: "high"` 双注入，`CODEWIKI_THINKING` 环境变量控制；**Prompt 规模控制**：模块/函数数量截断 + prompt 字符数日志；**活性检测**：流式接收 3 分钟无新 token 自动超时降级；所有 context 超时适配 thinking 模式（8-15 分钟） |
 | 3.8 | Homebrew/npm/winget 分发 | `scripts/install.sh` + `scripts/install.ps1` + `.github/workflows/release.yml` | 🟡 | GitHub Releases + 一键安装脚本已就绪；Homebrew tap 仓库/npm/winget manifest 待创建 |
 | 3.9 | 大规模仓库性能优化 | `internal/cli/cli.go` (RunAsk) + `benchmark/benchmark_test.go` | ✅ | AST+Graph 缓存已实现，增量索引已实现；`BenchmarkEndToEnd100K` 验证 100K 行生成 < 4s；CI 性能门禁已配置 |
 | 3.10 | 提示词优化（按语言）+ Prompt 快照回归 | `internal/docgen/docgen.go` | ✅ | prompt 已统一中文；按语言定制模板已实现（Python/Go/JS/Java/Rust/C++）；快照回归机制已建立 (`testdata/expected/prompts/`) |
@@ -123,6 +125,7 @@
 | 模块角色推断 | 依赖图 + PageRank | ✅ `InferModuleRoles()` 已实现并集成 | #3.2 |
 | 图表语义层 | Mermaid `%%` 注释 | ✅ 基础静态注释已覆盖四种图表类型；LLM 深度场景描述通过 `Sequence.Description` 和架构/概述增强实现 | #3.4 |
 | 调用链语义描述 | 时序图场景文字 | ✅ `Sequence.Description` 已集成到 compilation.md / HTML / PDF | #3.3 |
+| 章节页面"文档拼接"体验 | LLM 跨模块叙事 | ✅ `generateChapterNarratives()` 为每个主题生成教学叙事文章，模块文档降级为折叠参考区；无 LLM 时向后兼容；含 3 级渐进降级 + 流式活性检测保障可靠性 | #3.7c, #3.7d |
 
 ### M3 成功标准核对
 
@@ -142,6 +145,8 @@
 | **Serve 与 Static HTML 双路径视觉一致** | ✅ | 共享 `wikiPageCSS` + `wikiPageJS`，渲染测试覆盖 |
 | **新开发者 5 分钟内理解项目定位** | ✅ | 阅读时长徽章 + 难度星级 + "下一步阅读 →"导航 + 五分钟快速上手路径 |
 | **暗色模式可用** | ✅ | CSS 变量双主题 + `localStorage` 持久化 + 顶栏一键切换 |
+| **章节页面为教学叙事而非文档拼接** | ✅ | `generateChapterNarratives()` LLM 生成跨模块叙事；叙事优先 + 折叠模块参考区；`isChecklistLike` 清单检测 + 降级回退 |
+| **LLM 生成全流程可靠性** | ✅ | 流式优先架构 + HTTP 超时机制重构（context-only timeout）+ 渐进降级 + 活性检测；thinking 模式默认启用；实际运行无 context deadline exceeded 超时 |
 
 ### M3 测试计划核对
 
@@ -173,6 +178,20 @@
 | **难度星级标注** | ✅ | `articleDifficulty()` 按文件名前缀分级 + 颜色编码 |
 | **暗色主题** | ✅ | CSS `[data-theme="dark"]` + `localStorage` 持久化 |
 | **Serve/Static 双路径一致性** | ✅ | `wikiPageCSS` + `wikiPageJS` 共享常量，两路径渲染测试覆盖 |
+| **章节叙事 LLM 生成** | ✅ | `TestGenerateChapterPageWithNarrative` 验证叙事渲染 + 折叠模块详情；`TestGenerateChapterPageNarrativeFallback` 验证无叙事降级；`TestBuildChapterNarrativePrompt` 验证 prompt 要素；`TestGenerateChapterNarrativesFallback` 验证 provider=nil 降级 |
+| **Sidebar 章节展开模块列表** | ✅ | `TestBuildStaticNavSectionsWithSubItems` 验证当前章节 NavItem 包含模块 SubItems；非当前章节无 SubItems；`nav-sub-items` CSS 嵌套渲染 |
+| **学习目标/前置知识字段** | ✅ | `TestGenerateChapterPageWithGoals` 验证 ChapterTitle.LearningGoals/Prerequisites 渲染；`chapter-goals`/`chapter-prereqs` HTML 区块；LLM prompt 已请求 learning_goals/prerequisites 字段 |
+| **右侧 TOC 锚点导航** | ✅ | `TestGenerateChapterPageTOC` 验证本章目录区域 + toc-list/toc-item；`TestExtractHeadings` 验证 h2/h3 提取；`TestExtractHeadingsStripsInnerHTML` 验证内联标签剥离；IntersectionObserver 滚动高亮 |
+| **Markdown 标题 ID 属性** | ✅ | `RenderMarkdownBody` 为所有 h1-h6 生成 `id` 属性（`headingSlug` 函数）；`TestMarkdownToHTMLHeaders` 验证 |
+| **流式优先架构** | ✅ | `TestGenerateChapterNarrativesStreamSuccess` 验证流式生成成功路径；`TestStreamCollectWithLiveness` 验证活性检测超时降级 |
+| **渐进降级（3 级）** | ✅ | `TestGenerateChapterNarrativesProgressiveDegradation` 验证 L1 失败→L2 重试→L3 最终回退；`TestGenerateChapterNarrativesAllLevelsFail` 验证全失败回退 |
+| **Prompt 规模控制** | ✅ | `TestBuildSimplifiedNarrativePrompt` 验证精简格式 + 10 模块上限；`TestBuildMinimalNarrativePrompt` 验证极简格式 + 15 模块上限；`TestBuildChapterNarrativePromptModuleCap` 验证完整 prompt 10 模块 + 3 函数上限 |
+| **Thinking 模式** | ✅ | `injectThinking()` DeepSeek/OpenAI 双注入 + `CODEWIKI_THINKING` 环境变量；`TestApplyDefaultsThinkingEnabled` 验证默认启用 |
+| **StreamClient 超时隔离** | ✅ | `OpenAIProvider.StreamClient` / `OllamaProvider.StreamClient` 无 `http.Client.Timeout`，仅由 context 控制 |
+| **学习路径清单检测移除** | ✅ | 移除 `isChecklistLike` 对学习路径的验证（仅检查空内容）；学习路径自然含列表，不应被误判为清单 |
+| **代码块样式一致性** | ✅ | `:not(pre) > code` 选择器隔离内联代码样式；移除 `pre code { color: inherit }` 让 highlight.js 语法高亮生效 |
+| **入口点导航移除** | ✅ | 删除 EntryPoints 侧栏入口渲染（`graph.EntryPoints()` 返回零入度模块无意义）；项目结构区已覆盖所有模块 |
+| **JS 语法错误修复** | ✅ | 删除 `wikiPageJS` 中多余的 `}` 和 `});` 闭合括号，恢复主题切换、代码复制、图表全屏、搜索、导航折叠、滚动监听所有 JS 功能 |
 
 ---
 

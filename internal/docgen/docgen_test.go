@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/splitsword/fine-codewiki/internal/analyzer"
 	"github.com/splitsword/fine-codewiki/internal/grapher"
@@ -248,8 +250,9 @@ func TestGenerateWikiFromGraph(t *testing.T) {
 // ---------- Mock LLM Tests ----------
 
 type mockProvider struct {
-	response string
-	err      error
+	response  string
+	err       error
+	streamErr error
 }
 
 func (m *mockProvider) Complete(ctx context.Context, prompt string) (string, error) {
@@ -257,8 +260,16 @@ func (m *mockProvider) Complete(ctx context.Context, prompt string) (string, err
 }
 
 func (m *mockProvider) CompleteStream(ctx context.Context, prompt string) (<-chan string, error) {
-	ch := make(chan string)
-	go func() { defer close(ch) }()
+	if m.streamErr != nil {
+		return nil, m.streamErr
+	}
+	ch := make(chan string, 1)
+	go func() {
+		defer close(ch)
+		if m.response != "" {
+			ch <- m.response
+		}
+	}()
 	return ch, nil
 }
 
@@ -631,9 +642,9 @@ func TestGenerateStaticHTML(t *testing.T) {
 	assert.NotContains(t, html, `<section id="sequence-diagram">`)
 
 	// Markdown 已渲染为 HTML
-	assert.Contains(t, html, "<h1>html-demo</h1>")
-	assert.Contains(t, html, "<h1>架构</h1>")
-	assert.Contains(t, html, "<h1>API 参考</h1>")
+	assert.Contains(t, html, `<h1 id="html-demo">html-demo</h1>`)
+	assert.Contains(t, html, `<h1 id="架构">架构</h1>`)
+	assert.Contains(t, html, `<h1 id="API-参考">API 参考</h1>`)
 
 	// Mermaid 图表嵌入
 	assert.Contains(t, html, `<div class="mermaid">`)
@@ -968,11 +979,14 @@ func TestGenerateStaticHTMLWithThemes(t *testing.T) {
 
 	html := GenerateStaticHTML(wiki, nil)
 
-	// Should contain theme sections in sidebar
+	// Should contain theme sections in sidebar as chapter links
 	assert.Contains(t, html, "入口与命令行")
 	assert.Contains(t, html, "数据模型与实体")
-	assert.Contains(t, html, `href="#module-cmd_main"`)
-	assert.Contains(t, html, `href="#module-models_user"`)
+	assert.Contains(t, html, `chapters/入口与命令行.html`)
+	assert.Contains(t, html, `chapters/数据模型与实体.html`)
+	// Should still contain inline module sections via the old module docs path
+	// (module docs are now replaced by chapter listing, so module anchors no longer appear)
+	assert.NotContains(t, html, `href="#module-cmd_main"`)
 }
 
 func TestGenerateMarkdownCompilationWithThemes(t *testing.T) {
@@ -1315,12 +1329,38 @@ func TestInferCapabilityFromName(t *testing.T) {
 	tests := []struct {
 		name, role, wantCap, wantDesc string
 	}{
+		// 入口层
 		{"api_router", "入口层", "API 服务", "接收并分发外部请求"},
 		{"cli_tool", "入口层", "命令行交互", "提供终端命令接口"},
+		{"web_server", "入口层", "Web 服务", "运行 HTTP 服务"},
+		{"gui_view", "入口层", "界面交互", "提供图形或 Web 界面"},
+		{"main", "入口层", "程序入口", "系统启动入口"},
+		// 核心领域
 		{"models/user", "核心领域", "用户与认证", "管理用户身份"},
 		{"services/order", "核心领域", "交易与订单", "处理订单生命周期"},
+		{"product/catalog", "核心领域", "商品与目录", "维护商品信息"},
+		{"chat/message", "核心领域", "消息通知", "负责消息发送"},
+		{"storage/file", "核心领域", "文件与存储", "管理文件上传"},
+		{"models/entity", "核心领域", "数据模型", "定义数据实体"},
+		{"config/setting", "核心领域", "配置管理", "管理系统配置"},
+		{"search/index", "核心领域", "搜索查询", "提供全文检索"},
+		{"job/worker", "核心领域", "异步任务", "处理后台任务"},
+		{"analytics/report", "核心领域", "报表分析", "生成统计报表"},
+		{"cache/redis", "核心领域", "缓存加速", "提供数据缓存"},
+		{"log/monitor", "核心领域", "日志监控", "记录运行日志"},
+		// 工具库
 		{"utils/helpers", "工具库", "通用工具", "提供跨模块复用"},
-		{"cache_redis", "工具库", "缓存加速", "提供数据缓存"},
+		{"tests/mock", "工具库", "测试辅助", "提供测试固件"},
+		{"format/parse", "工具库", "数据转换", "负责格式解析"},
+		{"valid/check", "工具库", "校验验证", "提供输入校验"},
+		{"net/client", "工具库", "网络通信", "封装网络请求"},
+		{"crypto/hash", "工具库", "安全加密", "提供加密"},
+		{"i18n/locale", "工具库", "国际化", "支持多语言"},
+		// Fallback patterns
+		{"core/business", "核心领域", "业务处理", "承载项目核心业务逻辑"},
+		// "router/gateway" contains "route" and role is 入口层 → matches "API 服务"
+		{"entry/startup", "入口层", "程序入口", "系统启动入口"},
+		{"gateway/proxy", "入口层", "请求处理", "接收外部输入"},
 		{"unknown_module", "", "功能模块", "提供特定领域的功能实现"},
 	}
 	for _, tt := range tests {
@@ -1393,4 +1433,588 @@ func TestBuildSourcesFooterFileLevel(t *testing.T) {
 	})
 	footer2 := buildSourcesFooter(graph2, 10)
 	assert.Contains(t, footer2, "`models/order.py:7`", "footer should cite filename with class line when no functions")
+}
+
+func TestWriteWikiFilesChapterPages(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "cmd/main.go", Functions: []analyzer.FunctionInfo{{Name: "main"}}},
+		{Filename: "models/user.go", Imports: []analyzer.ImportInfo{{Module: "cmd/main"}}, Classes: []analyzer.ClassInfo{{Name: "User"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	wiki := &Wiki{
+		ProjectName: "chapter-test",
+		Overview:    "# overview\n",
+		Architecture: "# arch\n",
+		ModuleDocs: map[string]string{
+			"cmd/main":    "# cmd/main\n\nentry point module.\n",
+			"models/user": "# models/user\n\ndata model.\n",
+		},
+		ModuleThemes: map[string][]string{
+			"入口与命令行":  {"cmd/main"},
+			"数据模型与实体": {"models/user"},
+		},
+		ChapterTitles: map[string]ChapterTitle{
+			"入口与命令行":  {Title: "入口与命令行", Difficulty: "⭐"},
+			"数据模型与实体": {Title: "数据模型", Difficulty: "⭐⭐"},
+		},
+		APIReference: "# api ref\n",
+	}
+
+	// Pre-generate chapter pages (normally done via LLM pipeline)
+	wiki.ChapterPages = GenerateChapterPages(wiki, graph)
+
+	tmpDir := t.TempDir()
+	outDir := filepath.Join(tmpDir, "wiki")
+
+	err := WriteWikiFiles(outDir, wiki, graph)
+	require.NoError(t, err)
+
+	// Verify chapter directory and files
+	chaptersDir := filepath.Join(outDir, "chapters")
+	assert.DirExists(t, chaptersDir)
+
+	chap1 := filepath.Join(chaptersDir, "入口与命令行.html")
+	assert.FileExists(t, chap1)
+	content1, err := os.ReadFile(chap1)
+	require.NoError(t, err)
+	assert.Contains(t, string(content1), "入口与命令行")
+	assert.Contains(t, string(content1), "⭐")
+
+	chap2 := filepath.Join(chaptersDir, "数据模型与实体.html")
+	assert.FileExists(t, chap2)
+	content2, err := os.ReadFile(chap2)
+	require.NoError(t, err)
+	assert.Contains(t, string(content2), "数据模型")
+	assert.Contains(t, string(content2), "⭐⭐")
+
+	// Verify index.html has chapter links in sidebar
+	indexHTML, err := os.ReadFile(filepath.Join(outDir, "index.html"))
+	require.NoError(t, err)
+	assert.Contains(t, string(indexHTML), `chapters/入口与命令行.html`)
+	assert.Contains(t, string(indexHTML), `chapters/数据模型与实体.html`)
+	assert.Contains(t, string(indexHTML), "深入剖析")
+
+	// Verify index.html does NOT have inline module links in nav sidebar
+	// (file tree links in right sidebar are expected and correct)
+	assert.NotContains(t, string(indexHTML), `"nav-icon">📦<`)
+}
+
+func TestWriteWikiFilesNoThemes(t *testing.T) {
+	wiki := &Wiki{
+		ProjectName: "no-themes",
+		Overview:    "# overview\n",
+		ModuleDocs: map[string]string{
+			"pkg/util": "# util\n",
+		},
+	}
+	tmpDir := t.TempDir()
+	outDir := filepath.Join(tmpDir, "wiki")
+
+	err := WriteWikiFiles(outDir, wiki, nil)
+	require.NoError(t, err)
+
+	// Without graph and themes, chapters dir should not exist
+	chaptersDir := filepath.Join(outDir, "chapters")
+	_, err = os.Stat(chaptersDir)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestKeywordOverlap(t *testing.T) {
+	tests := []struct {
+		source, target string
+		expected       int
+	}{
+		{"services/user_service", "业务逻辑与服务", 0},   // Chinese vs English
+		{"api/handler/auth", "接口与路由", 0},            // no overlap
+		{"models/user", "models", 1},                     // "models" matches
+		{"cmd/main", "cmd", 1},                           // "cmd" matches
+		{"utils/helper/common", "util", 1},               // "util" found in "utils"
+		{"config/server/settings", "config", 1},          // matches
+	}
+	for _, tt := range tests {
+		t.Run(tt.source+"_"+tt.target, func(t *testing.T) {
+			assert.Equal(t, tt.expected, keywordOverlap(tt.source, tt.target))
+		})
+	}
+}
+
+func TestFindClosestTheme(t *testing.T) {
+	// Use English theme names where keywordOverlap gives deterministic results
+	themes := map[string][]*grapher.Node{
+		"cmd-and-cli":   {},
+		"data-models":   {},
+		"business-logic": {},
+	}
+	// "cmd/main" contains "cmd" → should match "cmd-and-cli"
+	assert.Equal(t, "cmd-and-cli", findClosestTheme("cmd/main", themes))
+
+	// "models/user" contains "models" → should match "data-models"
+	assert.Equal(t, "data-models", findClosestTheme("models/user", themes))
+
+	// No overlap with any theme → returns any (map iteration order is random)
+	result := findClosestTheme("services/user_service", themes)
+	assert.Contains(t, []string{"cmd-and-cli", "data-models", "business-logic"}, result)
+}
+
+func TestTakeFirstN(t *testing.T) {
+	tests := []struct {
+		ss       []string
+		n        int
+		expected []string
+	}{
+		{[]string{"a", "b", "c"}, 2, []string{"a", "b"}},
+		{[]string{"a"}, 2, []string{"a"}},
+		{[]string{"a", "b"}, 0, []string{}},
+		{nil, 5, nil},
+	}
+	for _, tt := range tests {
+		result := takeFirstN(tt.ss, tt.n)
+		assert.Equal(t, tt.expected, result)
+	}
+}
+
+func TestFirstOf(t *testing.T) {
+	assert.Equal(t, "a", firstOf([]string{"a", "b", "c"}))
+	assert.Equal(t, "", firstOf(nil))
+	assert.Equal(t, "", firstOf([]string{}))
+}
+
+func TestFirstOr(t *testing.T) {
+	assert.Equal(t, "a", firstOr([]string{"a", "b"}, "default"))
+	assert.Equal(t, "default", firstOr(nil, "default"))
+	assert.Equal(t, "default", firstOr([]string{}, "default"))
+}
+
+func TestSortedKeys(t *testing.T) {
+	// Root entries come first
+	m := map[string][]*grapher.Node{
+		"services": {},
+		".":        {},
+		"models":   {},
+	}
+	keys := sortedKeys(m)
+	assert.Equal(t, ".", keys[0])
+	assert.Equal(t, []string{".", "models", "services"}, keys)
+
+	// No root entry — pure alphabetical
+	m2 := map[string][]*grapher.Node{
+		"b": {},
+		"a": {},
+		"c": {},
+	}
+	assert.Equal(t, []string{"a", "b", "c"}, sortedKeys(m2))
+
+	// Empty map
+	assert.Empty(t, sortedKeys(map[string][]*grapher.Node{}))
+}
+
+func TestInferLanguageFromFilename(t *testing.T) {
+	tests := []struct {
+		filename string
+		expected string
+	}{
+		{"main.py", "python"},
+		{"main.go", "go"},
+		{"app.js", "javascript"},
+		{"app.ts", "typescript"},
+		{"app.tsx", "typescript"},
+		{"App.java", "java"},
+		{"lib.rs", "rust"},
+		{"main.cpp", "cpp"},
+		{"main.cc", "cpp"},
+		{"main.c", "cpp"},
+		{"README.md", ""},
+		{"Dockerfile", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.filename, func(t *testing.T) {
+			assert.Equal(t, tt.expected, inferLanguageFromFilename(tt.filename))
+		})
+	}
+}
+
+func TestNodesToFileResults(t *testing.T) {
+	nodes := []*grapher.Node{
+		{
+			Name: "models/user", Filename: "models/user.py",
+			Classes:   []analyzer.ClassInfo{{Name: "User"}},
+			Functions: []analyzer.FunctionInfo{{Name: "create_user"}},
+		},
+		{
+			Name: "main", Filename: "main.py",
+			Functions: []analyzer.FunctionInfo{{Name: "main"}},
+		},
+	}
+	files := nodesToFileResults(nodes)
+	require.Len(t, files, 2)
+	assert.Equal(t, "models/user.py", files[0].Filename)
+	assert.Len(t, files[0].Classes, 1)
+	assert.Len(t, files[0].Functions, 1)
+	assert.Equal(t, "main.py", files[1].Filename)
+
+	// Nil input returns empty slice (make with cap=0)
+	assert.Empty(t, nodesToFileResults(nil))
+}
+
+func TestFormatSnippetMarkdown(t *testing.T) {
+	s := CodeSnippet{
+		Label:     "main函数",
+		Filename:  "main.py",
+		StartLine: 10,
+		EndLine:   15,
+		Language:  "python",
+		Code:      "def main():\n    pass",
+	}
+	result := FormatSnippetMarkdown(s)
+	assert.Contains(t, result, "**main函数**")
+	assert.Contains(t, result, "`main.py:10-15`")
+	assert.Contains(t, result, "```python")
+	assert.Contains(t, result, "def main():\n    pass")
+}
+
+func TestClearWikiCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	checkpointDir := filepath.Join(dir, ".codewiki", "checkpoint")
+	os.MkdirAll(checkpointDir, 0755)
+	checkpointPath := filepath.Join(checkpointDir, "wiki.json")
+	os.WriteFile(checkpointPath, []byte("{}"), 0644)
+
+	// Verify file exists
+	_, err := os.Stat(checkpointPath)
+	require.NoError(t, err)
+
+	ClearWikiCheckpoint(dir)
+
+	// Verify file removed
+	_, err = os.Stat(checkpointPath)
+	assert.True(t, os.IsNotExist(err))
+
+	// Calling on non-existent dir should not panic
+	ClearWikiCheckpoint(filepath.Join(dir, "nonexistent"))
+}
+
+func TestStripInlineMarkdown(t *testing.T) {
+	tests := []struct {
+		input, expected string
+	}{
+		{"**bold** text", "bold text"},
+		{"__underline__ text", "underline text"},
+		{"inline `code` here", "inline code here"},
+		{"[link text](url)", "link text"},
+		{"**bold** and `code`", "bold and code"},
+		{"no formatting", "no formatting"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, stripInlineMarkdown(tt.input))
+		})
+	}
+}
+
+func TestCollectCoreClasses(t *testing.T) {
+	graph := grapher.BuildGraph([]*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Classes:  []analyzer.ClassInfo{{Name: "User"}, {Name: "UserProfile"}},
+		},
+		{
+			Filename: "models/base.py",
+			Classes:  []analyzer.ClassInfo{{Name: "BaseModel"}},
+		},
+		{
+			Filename: "services/user_service.py",
+			Classes:  []analyzer.ClassInfo{{Name: "UserService"}},
+			Imports:  []analyzer.ImportInfo{{Module: "..models.user", IsRelative: true}},
+		},
+	})
+
+	// Get all classes
+	all := collectCoreClasses(graph, 10)
+	require.Len(t, all, 4)
+	names := make([]string, len(all))
+	for i, c := range all {
+		names[i] = c.Name
+	}
+	assert.Contains(t, names, "User")
+	assert.Contains(t, names, "BaseModel")
+	assert.Contains(t, names, "UserService")
+	assert.Contains(t, names, "UserProfile")
+
+	// Limit to 2 — should get top 2 by PageRank
+	top2 := collectCoreClasses(graph, 2)
+	assert.Len(t, top2, 2)
+
+	// Empty graph
+	assert.Empty(t, collectCoreClasses(&grapher.Graph{}, 5))
+
+	// Graph with no classes
+	noClasses := grapher.BuildGraph([]*analyzer.FileResult{
+		{Filename: "utils/logger.py", Functions: []analyzer.FunctionInfo{{Name: "get_logger"}}},
+	})
+	assert.Empty(t, collectCoreClasses(noClasses, 5))
+}
+
+func TestLoadProjectReadme(t *testing.T) {
+	// Empty dir
+	assert.Empty(t, loadProjectReadme(""))
+
+	dir := t.TempDir()
+
+	// No readme
+	assert.Empty(t, loadProjectReadme(dir))
+
+	// README.md
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("Hello World"), 0644)
+	assert.Equal(t, "Hello World", loadProjectReadme(dir))
+
+	// readme.md (case insensitive via filename list)
+	dir2 := t.TempDir()
+	os.WriteFile(filepath.Join(dir2, "readme.md"), []byte("lowercase"), 0644)
+	assert.Equal(t, "lowercase", loadProjectReadme(dir2))
+
+	// Long content gets truncated
+	dir3 := t.TempDir()
+	long := strings.Repeat("a", 5000)
+	os.WriteFile(filepath.Join(dir3, "README.md"), []byte(long), 0644)
+	result := loadProjectReadme(dir3)
+	assert.Contains(t, result, "...（README 内容已截断）")
+	assert.Len(t, result, 4000+len("\n...（README 内容已截断）"))
+}
+
+func TestAddFrontmatterFallback(t *testing.T) {
+	// fileTitleMap has no entry for this filename, and content has no heading → uses filename
+	result := addFrontmatter("unknown-file.md", "plain text without heading", "test-project", 5)
+	assert.Contains(t, result, "title: \"unknown-file.md\"")
+	assert.Contains(t, result, "project: \"test-project\"")
+	assert.Contains(t, result, "source_modules: 5")
+	assert.Contains(t, result, "plain text without heading")
+
+	// Content has heading → extract title from first heading
+	result2 := addFrontmatter("some-file.md", "# My Title\n\ncontent here", "proj", 3)
+	assert.Contains(t, result2, "title: \"My Title\"")
+}
+
+func TestCleanupOldHistory(t *testing.T) {
+	// Non-existent dir returns nil
+	assert.NoError(t, cleanupOldHistory(filepath.Join(t.TempDir(), "nonexistent"), 5))
+
+	// Empty dir with keep=0 → nothing to remove
+	dir := t.TempDir()
+	assert.NoError(t, cleanupOldHistory(dir, 5))
+
+	// Fewer entries than keep
+	os.MkdirAll(filepath.Join(dir, "v1"), 0755)
+	os.MkdirAll(filepath.Join(dir, "v2"), 0755)
+	assert.NoError(t, cleanupOldHistory(dir, 5))
+	assert.DirExists(t, filepath.Join(dir, "v1"))
+	assert.DirExists(t, filepath.Join(dir, "v2"))
+
+	// More entries than keep → oldest removed
+	dir2 := t.TempDir()
+	os.MkdirAll(filepath.Join(dir2, "v1"), 0755)
+	os.MkdirAll(filepath.Join(dir2, "v2"), 0755)
+	os.MkdirAll(filepath.Join(dir2, "v3"), 0755)
+	assert.NoError(t, cleanupOldHistory(dir2, 2))
+	assert.NoDirExists(t, filepath.Join(dir2, "v1"))
+	assert.DirExists(t, filepath.Join(dir2, "v2"))
+	assert.DirExists(t, filepath.Join(dir2, "v3"))
+}
+
+func TestBuildChapterNarrativePrompt(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{
+			Filename:  "auth/middleware.go",
+			Functions: []analyzer.FunctionInfo{{Name: "Authenticate"}, {Name: "ValidateToken"}},
+			Imports:   []analyzer.ImportInfo{{Module: "auth/session"}},
+		},
+		{
+			Filename:  "auth/session.go",
+			Functions: []analyzer.FunctionInfo{{Name: "CreateSession"}, {Name: "DestroySession"}},
+		},
+	}
+	graph := grapher.BuildGraph(files)
+	modules := []string{"auth/middleware.go", "auth/session.go"}
+	title := ChapterTitle{Title: "用户认证", Subtitle: "身份验证与会话管理", Difficulty: "⭐⭐"}
+
+	prompt := buildChapterNarrativePrompt("test-project", "认证系统", title, modules, graph)
+
+	assert.Contains(t, prompt, "test-project")
+	assert.Contains(t, prompt, "用户认证")
+	assert.Contains(t, prompt, "身份验证与会话管理")
+	assert.Contains(t, prompt, "⭐⭐")
+	assert.Contains(t, prompt, "auth/middleware.go")
+	assert.Contains(t, prompt, "auth/session.go")
+	assert.Contains(t, prompt, "叙事式组织")
+	assert.Contains(t, prompt, "设计决策")
+	assert.Contains(t, prompt, "关键收获")
+	assert.Contains(t, prompt, "来源标注")
+}
+
+func TestGenerateChapterNarrativesFallback(t *testing.T) {
+	themes := map[string][]string{
+		"主题A": {"mod1", "mod2"},
+	}
+	titles := map[string]ChapterTitle{
+		"主题A": {Title: "标题A"},
+	}
+	files := []*analyzer.FileResult{
+		{Filename: "mod1.go"},
+		{Filename: "mod2.go"},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// provider=nil should return nil
+	result := generateChapterNarratives(context.Background(), nil, "proj", themes, titles, graph)
+	assert.Nil(t, result)
+}
+
+func TestFilterInTheme(t *testing.T) {
+	themeModules := []string{"auth/middleware", "auth/session", "auth/token"}
+	names := []string{"auth/middleware", "db/store", "auth/token", "config/loader"}
+
+	filtered := filterInTheme(names, themeModules)
+	assert.Equal(t, []string{"auth/middleware", "auth/token"}, filtered)
+}
+
+func TestFilterInThemeEmpty(t *testing.T) {
+	result := filterInTheme(nil, []string{"a", "b"})
+	assert.Nil(t, result)
+
+	result = filterInTheme([]string{"a"}, nil)
+	assert.Nil(t, result)
+}
+
+func TestGenerateChapterNarrativesStreamSuccess(t *testing.T) {
+	themes := map[string][]string{
+		"主题A": {"mod1.go", "mod2.go"},
+	}
+	titles := map[string]ChapterTitle{
+		"主题A": {Title: "标题A"},
+	}
+	files := []*analyzer.FileResult{
+		{Filename: "mod1.go", Functions: []analyzer.FunctionInfo{{Name: "Func1"}}},
+		{Filename: "mod2.go", Functions: []analyzer.FunctionInfo{{Name: "Func2"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	mock := &mockProvider{response: "## 概述\n\n这是一篇关于主题A的叙事文章，介绍了认证与会话管理系统如何协作。整个系统通过中间件模式实现请求拦截，对令牌进行校验后转发至下游服务。\n\n## 设计决策\n\n> 采用无状态令牌而非服务端会话，减少存储依赖。\n\n## 关键收获\n\n这里是关键收获的详细讨论段落，解释了为什么这种设计模式在微服务架构中尤为重要。它不仅降低了系统复杂度，还提高了水平扩展能力。"}
+
+	result := generateChapterNarratives(context.Background(), mock, "proj", themes, titles, graph)
+	require.NotNil(t, result)
+	assert.Contains(t, result, "主题A")
+	assert.Contains(t, result["主题A"], "概述")
+}
+
+func TestGenerateChapterNarrativesProgressiveDegradation(t *testing.T) {
+	themes := map[string][]string{
+		"主题A": {"mod1.go"},
+	}
+	titles := map[string]ChapterTitle{
+		"主题A": {Title: "标题A"},
+	}
+	files := []*analyzer.FileResult{
+		{Filename: "mod1.go"},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// Stream fails but Complete succeeds → Level 3 non-streaming should work
+	mock := &mockProvider{
+		streamErr: errors.New("stream connect failed"),
+		response:  "## 主题概述\n\n这是极简模式生成的文章。",
+		err:       nil,
+	}
+	result := generateChapterNarratives(context.Background(), mock, "proj", themes, titles, graph)
+	require.NotNil(t, result)
+	assert.Contains(t, result["主题A"], "主题概述")
+}
+
+func TestGenerateChapterNarrativesAllLevelsFail(t *testing.T) {
+	themes := map[string][]string{
+		"主题A": {"mod1.go"},
+	}
+	titles := map[string]ChapterTitle{
+		"主题A": {Title: "标题A"},
+	}
+	files := []*analyzer.FileResult{
+		{Filename: "mod1.go"},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// Both stream and complete fail
+	mock := &mockProvider{
+		streamErr: errors.New("stream failed"),
+		err:       errors.New("complete failed"),
+	}
+	result := generateChapterNarratives(context.Background(), mock, "proj", themes, titles, graph)
+	assert.Nil(t, result)
+}
+
+func TestCleanNarrativeResponse(t *testing.T) {
+	assert.Equal(t, "content", cleanNarrativeResponse("```markdown\ncontent\n```"))
+	assert.Equal(t, "plain text", cleanNarrativeResponse("plain text"))
+	assert.Equal(t, "", cleanNarrativeResponse(""))
+	assert.Equal(t, "hello", cleanNarrativeResponse("  hello  "))
+}
+
+func TestBuildSimplifiedNarrativePrompt(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "a.go", Functions: []analyzer.FunctionInfo{{Name: "DoA"}}},
+		{Filename: "b.go", Functions: []analyzer.FunctionInfo{{Name: "DoB"}}},
+	}
+	graph := grapher.BuildGraph(files)
+	title := ChapterTitle{Title: "测试主题"}
+	prompt := buildSimplifiedNarrativePrompt("proj", "theme", title, []string{"a.go", "b.go"}, graph)
+
+	assert.Contains(t, prompt, "proj")
+	assert.Contains(t, prompt, "测试主题")
+	assert.Contains(t, prompt, "a.go")
+	assert.Contains(t, prompt, "b.go")
+	assert.Contains(t, prompt, "600-1000")
+	// Should NOT contain function details or dependency details
+	assert.NotContains(t, prompt, "关键函数")
+	assert.NotContains(t, prompt, "主题内依赖")
+}
+
+func TestBuildMinimalNarrativePrompt(t *testing.T) {
+	title := ChapterTitle{Title: "极简主题"}
+	prompt := buildMinimalNarrativePrompt("proj", "theme", title, []string{"a.go", "b.go"})
+
+	assert.Contains(t, prompt, "proj")
+	assert.Contains(t, prompt, "极简主题")
+	assert.Contains(t, prompt, "a.go")
+	assert.Contains(t, prompt, "b.go")
+	assert.Contains(t, prompt, "400-800")
+}
+
+func TestBuildChapterNarrativePromptModuleCap(t *testing.T) {
+	var files []*analyzer.FileResult
+	var modules []string
+	for i := 0; i < 15; i++ {
+		name := fmt.Sprintf("mod%d.go", i)
+		files = append(files, &analyzer.FileResult{Filename: name})
+		modules = append(modules, name)
+	}
+	graph := grapher.BuildGraph(files)
+	title := ChapterTitle{Title: "大量模块主题"}
+
+	prompt := buildChapterNarrativePrompt("proj", "theme", title, modules, graph)
+	// Should only include 10 modules, not all 15
+	assert.Contains(t, prompt, "展示前 10 个关键模块")
+	assert.Contains(t, prompt, "mod0.go")
+	assert.Contains(t, prompt, "mod9.go")
+	assert.NotContains(t, prompt, "mod14.go")
+}
+
+func TestStreamCollectWithLiveness(t *testing.T) {
+	ch := make(chan string, 3)
+	ch <- "hello "
+	ch <- "world"
+	close(ch)
+
+	result, completed := streamCollectWithLiveness(context.Background(), ch, 5*time.Second)
+	assert.True(t, completed)
+	assert.Equal(t, "hello world", result)
 }

@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+- 2026-05-15 — ﻿feat(llm, docgen): LLM 生成可靠性工程 — P0/P1 三合一修复 + 4项 Bug 修复 (4bbc4e5)
+
+- 2026-05-15 — @ feat(llm, docgen): LLM 生成可靠性工程 — P0/P1 三合一修复 + 4项 Bug 修复 (3fc72ce)
+
 - 2026-05-12 — feat(docgen, cli): Web UI 全面升级 — 14项交互特性 + Zread 体验对标 (27cac31)
 
 - 2026-05-12 — @ feat(docgen, cli): Web UI 全面升级 — 14项交互特性 + Zread 体验对标 (4183ef0)

@@ -448,6 +448,136 @@ func TestInferModuleRolesDisconnected(t *testing.T) {
 	}
 }
 
+func makeTestGraph() *Graph {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Classes:  []analyzer.ClassInfo{{Name: "User"}, {Name: "UserProfile"}},
+			Imports:  []analyzer.ImportInfo{{Module: ".base", Name: "BaseModel", IsRelative: true}},
+		},
+		{
+			Filename: "models/base.py",
+			Classes:  []analyzer.ClassInfo{{Name: "BaseModel"}},
+		},
+		{
+			Filename: "services/user_service.py",
+			Classes:  []analyzer.ClassInfo{{Name: "UserService"}},
+			Imports:  []analyzer.ImportInfo{
+				{Module: "..models.user", Name: "User", IsRelative: true},
+				{Module: "..utils.crypto", Name: "hash_password", IsRelative: true},
+			},
+		},
+		{
+			Filename: "utils/crypto.py",
+			Functions: []analyzer.FunctionInfo{{Name: "hash_password"}, {Name: "verify_password"}},
+		},
+		{
+			Filename: "main.py",
+			Functions: []analyzer.FunctionInfo{{Name: "main"}},
+			Imports:  []analyzer.ImportInfo{{Module: "services.user_service", Name: "UserService"}},
+		},
+	}
+	return BuildGraph(files)
+}
+
+func TestSubGraphForNodes(t *testing.T) {
+	g := makeTestGraph()
+	sub := g.SubGraphForNodes([]string{"models/user", "models/base"})
+	require.NotNil(t, sub)
+	assert.Len(t, sub.Nodes, 2)
+	assert.Len(t, sub.Edges, 1) // models/user imports models/base
+}
+
+func TestSubGraphForNodesEmpty(t *testing.T) {
+	g := makeTestGraph()
+	sub := g.SubGraphForNodes([]string{"nonexistent"})
+	require.NotNil(t, sub)
+	assert.Empty(t, sub.Nodes)
+	assert.Empty(t, sub.Edges)
+}
+
+func TestSubGraphForDirectory(t *testing.T) {
+	g := makeTestGraph()
+	sub := g.SubGraphForDirectory("models")
+	require.NotNil(t, sub)
+	assert.Len(t, sub.Nodes, 2) // models/user, models/base
+}
+
+func TestSubGraphForDirectoryNoMatch(t *testing.T) {
+	g := makeTestGraph()
+	sub := g.SubGraphForDirectory("nonexistent")
+	require.NotNil(t, sub)
+	assert.Empty(t, sub.Nodes)
+}
+
+func TestNeighborSubGraph(t *testing.T) {
+	g := makeTestGraph()
+	sub := g.NeighborSubGraph("services/user_service")
+	require.NotNil(t, sub)
+	// services/user_service depends on models/user and utils/crypto
+	// main depends on services/user_service
+	// So 1-hop neighbor includes user_service itself + user + crypto + main = 4
+	assert.Len(t, sub.Nodes, 4)
+}
+
+func TestNeighborSubGraphIsolated(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "a.py"},
+		{Filename: "b.py"},
+	}
+	g := BuildGraph(files)
+	sub := g.NeighborSubGraph("a")
+	require.NotNil(t, sub)
+	assert.Len(t, sub.Nodes, 1) // only a itself
+}
+
+func TestTopLevelGraph(t *testing.T) {
+	g := makeTestGraph()
+	top := g.TopLevelGraph()
+	require.NotNil(t, top)
+	// models, services, utils
+	assert.GreaterOrEqual(t, len(top.Nodes), 3)
+	// Cross-directory edges: services->models, services->utils
+	assert.GreaterOrEqual(t, len(top.Edges), 1)
+}
+
+func TestTopLevelGraphSingleDir(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "pkg/a.py", Imports: []analyzer.ImportInfo{{Module: "pkg.b", Name: "B"}}},
+		{Filename: "pkg/b.py"},
+	}
+	g := BuildGraph(files)
+	top := g.TopLevelGraph()
+	require.NotNil(t, top)
+	assert.Len(t, top.Nodes, 1) // only "pkg" dir
+	assert.Empty(t, top.Edges)  // intra-directory edges excluded
+}
+
+func TestClassesForDirectory(t *testing.T) {
+	g := makeTestGraph()
+	classes := g.ClassesForDirectory("models")
+	assert.Len(t, classes, 3) // User + UserProfile + BaseModel
+}
+
+func TestClassesForDirectoryEmpty(t *testing.T) {
+	g := makeTestGraph()
+	classes := g.ClassesForDirectory("nonexistent")
+	assert.Empty(t, classes)
+}
+
+func TestNodeByName(t *testing.T) {
+	g := makeTestGraph()
+	n := g.NodeByName("models/user")
+	require.NotNil(t, n)
+	assert.Equal(t, "models/user.py", n.Filename)
+}
+
+func TestNodeByNameNotFound(t *testing.T) {
+	g := makeTestGraph()
+	n := g.NodeByName("nonexistent")
+	assert.Nil(t, n)
+}
+
 func TestBuildGraphLargeGraph(t *testing.T) {
 	var files []*analyzer.FileResult
 	// Create 100 nodes in a chain: module_0 -> module_1 -> ... -> module_99

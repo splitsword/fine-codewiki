@@ -699,6 +699,7 @@ W2-W5 ─ LLM 适配层测试
 | 函数级逻辑分析 | 30%+ 函数覆盖率，职责+执行逻辑+调用关联三层面描述 | W1-W3 | ✅ 已完成 |
 | 导出功能 | Wiki 导出为 Markdown 合辑、静态 HTML（含图表）、PDF | W2-W4 | ✅ 已完成 |
 | **Web UI 体验升级** | **打磨玻璃态侧栏/顶栏、暗色主题、阅读进度条、代码块语言标签+复制、图表全屏、折叠导航、Ctrl+K 搜索、Ask AI 快捷入口、滚动导航高亮、阅读时长+难度徽章** | **W3** | **✅ 已完成** |
+| **LLM 生成可靠性工程** | **流式优先架构、HTTP 超时机制重构（StreamClient）、3 级渐进降级、Thinking 模式默认启用、Prompt 规模控制、流式活性检测、context 超时全面适配** | **W4** | **✅ 已完成** |
 | 安装分发 | Homebrew Tap + npm + winget + 直接下载，全平台支持 | W3-W5 | ❌ 未开始 |
 | 性能优化 | 大规模仓库（百万行+）优化、缓存策略、并发控制、增量索引 | W2-W5 | 🟡 部分 |
 | 提示词优化 | 针对不同语言的 Prompt 模板优化；Prompt 快照回归机制 | W3-W5 | 🟡 部分 |
@@ -1084,6 +1085,27 @@ AST → 类/接口定义 → 关系提取 → 自动布局 → Mermaid classDiag
 └─────────────────────────────────────────────────┘
 ```
 
+**LLM 调用可靠性架构（v0.8 新增）**：
+
+所有 LLM 调用统一采用 **流式优先** 架构：
+
+```
+streamComplete(ctx, provider, prompt)
+  ├── 1. provider.CompleteStream(ctx, prompt)     ← 流式优先
+  │     ├── 成功 → streamCollectWithLiveness()   ← 活性检测（3 分钟无 token 超时）
+  │     │     ├── 正常完成 → 返回响应
+  │     │     └── 活性超时 → 降级到步骤 2
+  │     └── 失败 → 降级到步骤 2
+  └── 2. provider.Complete(ctx, prompt)           ← 非流式降级
+        └── 返回响应 / 错误
+```
+
+**关键设计决策**：
+- **StreamClient**：流式 HTTP 客户端不设 `http.Client.Timeout`，所有超时由 context deadline 控制，避免 HTTP 层先于 context 超时切断连接
+- **Thinking 模式**：DeepSeek 使用 `thinking: {type: "enabled"}`，OpenAI 使用 `reasoning_effort: "high"`，两种格式同时发送以兼容 API 网关
+- **3 级渐进降级**（章节叙事）：完整 prompt 流式(15min) → 精简 prompt 流式(10min) → 极简 prompt 非流式(8min)
+- **Prompt 规模控制**：完整 prompt 模块上限 10 个/函数 3 个；精简 prompt 模块上限 10 个；极简 prompt 模块上限 15 个
+
 ### 7.4 多语言支持路线
 
 | 优先级 | 语言 | AST 引擎 | 计划 |
@@ -1104,6 +1126,7 @@ AST → 类/接口定义 → 关系提取 → 自动布局 → Mermaid classDiag
 | 风险 | 概率 | 影响 | 应对措施 |
 |------|------|------|----------|
 | LLM 幻觉导致文档不准确 | 高 | 高 | AST 精确数据注入约束 Prompt；Mermaid 语法校验 + 自动修复；基准评测集持续监控 |
+| LLM 调用超时导致 Wiki 价值丧失 | 中 | 高 | ✅ 已修复：流式优先架构 + StreamClient(context-only timeout) + 3级渐进降级 + 活性检测 + thinking 模式超时适配 |
 | 本地 LLM 生成质量不足 | 中 | 中 | 推荐经过验证的模型列表；质量下降时引导用户切换 API 模式；建立模型评测榜单 |
 | 大规模仓库性能瓶颈 | 中 | 中 | 文件过滤（排除 vendor/node_modules）；并行 AST 解析；缓存解析结果 |
 | tree-sitter 语法覆盖不足 | 低 | 中 | 优先支持成熟语法；对不支持的语言提供 LLM-only fallback |
@@ -1269,15 +1292,13 @@ generate:
 
 ---
 
-> 文档版本：v0.7
-> 最后更新：2026-05-12
+> 文档版本：v0.8
+> 最后更新：2026-05-15
 > 仓库地址：https://github.com/splitsword/fine-codewiki
 >
-> **v0.7 变更摘要**：
-> - 扩展 Zread 竞品分析：新增 UI/UX 设计借鉴子节，详细记录阅读时长、难度分级、导航折叠、代码块、主题切换等 8 个设计元素的借鉴要点
-> - M3 新增 Web UI 体验升级任务：磨砂玻璃态侧栏/顶栏、暗色主题、阅读进度条、代码块语言标签+复制、图表全屏展开、折叠导航、Ctrl+K 搜索覆盖层、Ask AI 快捷入口、滚动联动导航高亮、阅读时长+难度徽章
-> - 新增 M3.1 Web UI 体验升级详细设计子节：设计系统（CSS 变量双主题）、页面架构（Serve 两栏 / 静态 HTML 三栏）、14 项核心 UI 特性清单含技术实现、渲染双路径统一架构、对标 Zread 体验差距闭合表
-> - 导出功能状态更新为已完成（Markdown 合辑 / 静态 HTML / PDF 均已完成）
+> **v0.8 变更摘要**：
+> - **LLM 生成可靠性工程 (P0)**：流式优先架构（所有 LLM 调用改为 `streamComplete()` 流式优先+非流式降级）；HTTP 超时机制重构（移除 `http.Client.Timeout`，新增 `StreamClient` 仅由 context 控制超时）；章节叙事 3 级渐进降级（完整流式→精简流式→极简非流式）；Thinking/Reasoning 模式默认启用（DeepSeek `thinking` + OpenAI `reasoning_effort` 双注入，`CODEWIKI_THINKING` 环境变量）；Prompt 规模控制（模块/函数数量截断）；流式活性检测（3 分钟无新 token 自动降级）；所有 context 超时适配 thinking 模式（8-15 分钟）
+> - **Bug 修复 (P1)**：主题切换按钮 JS 语法错误修复（`wikiPageJS` 中多余的 `}` `});` 导致整个 script 解析失败）；代码块样式不一致修复（`:not(pre) > code` 隔离内联代码样式，移除 `color:inherit` 让 highlight.js 语法高亮生效）；侧栏无意义"入口：xxx"导航移除（`graph.EntryPoints()` 零入度模块无实际意义）；学习路径误判为清单修复（移除 `isChecklistLike` 对学习路径的验证）
 >
 > **v0.6 变更摘要**：
 > - 产品哲学转变：从"代码结构说明书"转向"学习百科"，对标 Zread 的人性化学习体验

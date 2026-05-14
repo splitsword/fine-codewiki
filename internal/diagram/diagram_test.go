@@ -370,3 +370,92 @@ func TestGenerateDependencyDiagramStability(t *testing.T) {
 		assert.Equal(t, outputs[0], outputs[i], "dependency diagram should be deterministic")
 	}
 }
+
+func makeDiagramTestGraph() *grapher.Graph {
+	files := []*analyzer.FileResult{
+		{
+			Filename: "models/user.py",
+			Classes:  []analyzer.ClassInfo{{Name: "User"}, {Name: "UserProfile"}},
+			Imports:  []analyzer.ImportInfo{{Module: ".base", Name: "BaseModel", IsRelative: true}},
+		},
+		{
+			Filename: "models/base.py",
+			Classes:  []analyzer.ClassInfo{{Name: "BaseModel"}},
+		},
+		{
+			Filename: "services/user_service.py",
+			Classes:  []analyzer.ClassInfo{{Name: "UserService"}},
+			Imports:  []analyzer.ImportInfo{{Module: "..models.user", Name: "User", IsRelative: true}},
+		},
+		{Filename: "main.py", Functions: []analyzer.FunctionInfo{{Name: "main"}},
+			Imports: []analyzer.ImportInfo{{Module: "services.user_service", Name: "UserService"}}},
+	}
+	return grapher.BuildGraph(files)
+}
+
+func TestGenerateTopLevelDiagram(t *testing.T) {
+	g := makeDiagramTestGraph()
+	dsl, err := GenerateTopLevelDiagram(g)
+	require.NoError(t, err)
+	assert.Contains(t, dsl, "graph TD")
+	assert.Contains(t, dsl, "%% 顶层架构概览")
+}
+
+func TestGenerateTopLevelDiagramEmpty(t *testing.T) {
+	dsl, err := GenerateTopLevelDiagram(&grapher.Graph{})
+	require.NoError(t, err)
+	assert.Empty(t, dsl)
+}
+
+func TestGenerateSubArchDiagram(t *testing.T) {
+	g := makeDiagramTestGraph()
+	sub := g.SubGraphForDirectory("models")
+	dsl, err := GenerateSubArchDiagram(sub, "数据模型")
+	require.NoError(t, err)
+	assert.Contains(t, dsl, "graph TD")
+	assert.Contains(t, dsl, "%% 数据模型")
+	assert.Contains(t, dsl, "user")
+}
+
+func TestGenerateSubArchDiagramEmpty(t *testing.T) {
+	dsl, err := GenerateSubArchDiagram(&grapher.Graph{}, "empty")
+	require.NoError(t, err)
+	assert.Empty(t, dsl)
+}
+
+func TestGenerateSubClassDiagram(t *testing.T) {
+	classes := []analyzer.ClassInfo{
+		{Name: "User", Bases: []string{"BaseModel"}, Methods: []analyzer.FunctionInfo{
+			{Name: "__init__", Params: []string{"self", "name"}, ReturnType: ""},
+		}},
+		{Name: "BaseModel", Methods: []analyzer.FunctionInfo{
+			{Name: "save", Params: []string{"self"}, ReturnType: "bool"},
+		}},
+	}
+	dsl, err := GenerateSubClassDiagram(classes, "数据模型")
+	require.NoError(t, err)
+	assert.Contains(t, dsl, "classDiagram")
+	assert.Contains(t, dsl, "%% 数据模型")
+	assert.Contains(t, dsl, "User")
+	assert.Contains(t, dsl, "BaseModel")
+}
+
+func TestGenerateSubClassDiagramEmpty(t *testing.T) {
+	dsl, err := GenerateSubClassDiagram(nil, "empty")
+	require.NoError(t, err)
+	assert.Empty(t, dsl)
+}
+
+func TestGenerateSubClassDiagramDedup(t *testing.T) {
+	// Same class from different files should be deduplicated
+	classes := []analyzer.ClassInfo{
+		{Name: "User", Methods: []analyzer.FunctionInfo{{Name: "foo"}}},
+		{Name: "User", Methods: []analyzer.FunctionInfo{{Name: "foo"}, {Name: "bar"}}},
+	}
+	dsl, err := GenerateSubClassDiagram(classes, "test")
+	require.NoError(t, err)
+	// Should keep the one with more methods
+	assert.Contains(t, dsl, "bar")
+	// Should only appear once
+	assert.Equal(t, 1, strings.Count(dsl, "class User {"))
+}
