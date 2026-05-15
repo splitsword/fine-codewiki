@@ -48,6 +48,6 @@ func TestArchitecturePromptSnapshot(t *testing.T) {
 	}
 	graph := grapher.BuildGraph(files)
 
-	prompt := buildArchitecturePrompt(graph, "")
+	prompt := buildArchitecturePrompt(graph, "demo-app", "", "")
 	testutil.SnapshotCompare(t, prompt, filepath.Join("..", "..", "testdata", "expected", "prompts", "architecture.txt"))
 }

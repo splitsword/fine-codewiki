@@ -332,7 +332,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			archNarrative = cp.ArchNarrative
 		} else {
 			fmt.Println("[LLM] 正在生成架构描述...")
-			prompt := buildArchitecturePrompt(graph, language)
+			prompt := buildArchitecturePrompt(graph, projectName, readme, language)
 			enhanced, err := streamComplete(ctx, provider, prompt)
 			if err != nil {
 				fmt.Printf("警告：LLM 生成架构描述失败 (%v)\n", err)
@@ -352,7 +352,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		}
 	}
 
-	arch, err := GenerateArchitectureMarkdown(graph, archDSL, archNarrative)
+	arch, err := GenerateArchitectureMarkdown(graph, archNarrative)
 	if err != nil {
 		return nil, fmt.Errorf("generate architecture doc: %w", err)
 	}
@@ -934,35 +934,154 @@ func buildAutoDescription(graph *grapher.Graph, projectName string, classCount, 
 	return b.String()
 }
 
-func buildArchitecturePrompt(graph *grapher.Graph, language string) string {
+func buildArchitecturePrompt(graph *grapher.Graph, projectName, readme, language string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "分析以下模块依赖结构，用 2-3 段文字描述系统架构、设计模式及层级关系。\n\n")
-	fmt.Fprintf(&b, "要求：\n")
-	fmt.Fprintf(&b, "1. 描述整体架构分层、模块职责划分及关键设计模式\n")
-	fmt.Fprintf(&b, "2. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：\n")
-	fmt.Fprintf(&b, "   系统采用分层架构，将控制器、服务和数据访问层解耦。\n")
-	fmt.Fprintf(&b, "   *来源：`controllers/user.go`、`services/user.go`、`repositories/user.go`*\n")
-	fmt.Fprintf(&b, "3. 使用简体中文\n\n")
+
+	// --- 角色设定 ---
+	fmt.Fprintf(&b, "你是一位资深软件架构师，正在为 %s 项目的代码 Wiki 撰写架构说明。\n", projectName)
+	fmt.Fprintf(&b, "目标读者是刚加入团队的开发者，他们需要在 5 分钟内理解系统的整体结构和设计逻辑。\n\n")
+
+	// --- README 摘要 ---
+	if readme != "" {
+		trimmed := readme
+		if len(trimmed) > 1500 {
+			trimmed = trimmed[:1500] + "..."
+		}
+		fmt.Fprintf(&b, "【项目 README 摘要】\n%s\n\n", trimmed)
+	}
+
+	// --- 项目基本信息 ---
+	cleanNodes := filterNonNoiseModules(graph.Nodes)
+	fmt.Fprintf(&b, "项目：%s\n", projectName)
+	fmt.Fprintf(&b, "有效模块数：%d（已过滤测试和调试模块）\n", len(cleanNodes))
+	fmt.Fprintf(&b, "依赖边数：%d\n", len(graph.Edges))
 	if language != "" {
 		fmt.Fprintf(&b, "编程语言：%s\n", language)
 	}
 	if hint := languagePromptHint(language); hint != "" {
-		fmt.Fprintf(&b, "语言特性提示：%s\n\n", hint)
+		fmt.Fprintf(&b, "语言特性提示：%s\n", hint)
 	}
-	fmt.Fprintf(&b, "模块及其依赖：\n")
-	maxModules := 20
-	for i, n := range graph.Nodes {
-		if i >= maxModules {
-			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(graph.Nodes)-maxModules)
+	fmt.Fprintln(&b)
+
+	// --- 架构模式推断 ---
+	pattern, rationale := inferArchitecturePattern(graph)
+	fmt.Fprintf(&b, "【静态分析推断的架构模式】\n")
+	fmt.Fprintf(&b, "模式：%s\n", pattern)
+	fmt.Fprintf(&b, "判据：%s\n\n", rationale)
+
+	// --- 入口点 ---
+	entries := graph.EntryPoints()
+	if len(entries) > 0 {
+		fmt.Fprintf(&b, "【入口模块】\n")
+		for _, e := range entries {
+			resp := inferModuleResponsibility(e)
+			fmt.Fprintf(&b, "- %s — %s\n", e.Name, resp)
+		}
+		fmt.Fprintln(&b)
+	}
+
+	// --- 模块角色（PageRank 推断） ---
+	roles := graph.InferModuleRoles()
+	roleMap := make(map[string]string, len(roles))
+	for _, r := range roles {
+		roleMap[r.Name] = r.Role
+	}
+	fmt.Fprintf(&b, "【模块角色分布（PageRank 推断）】\n")
+	for _, r := range roles {
+		if isNoiseModule(r.Name) {
+			continue
+		}
+		if r.Role == "核心领域" || r.Role == "入口层" || r.Role == "工具库" {
+			deps := graph.DependenciesOf(r.Name)
+			dependents := graph.DependentsOf(r.Name)
+			fmt.Fprintf(&b, "- %s（%s，依赖 %d，被依赖 %d）\n", r.Name, r.Role, len(deps), len(dependents))
+		}
+	}
+	fmt.Fprintln(&b)
+
+	// --- 循环依赖 ---
+	cycles := graph.DetectCycles()
+	if len(cycles) > 0 {
+		fmt.Fprintf(&b, "【循环依赖】\n")
+		for _, c := range cycles {
+			fmt.Fprintf(&b, "- %s\n", strings.Join(c.Nodes, " → "))
+		}
+		fmt.Fprintln(&b)
+	}
+
+	// --- 核心模块详情（关键函数签名） ---
+	coreNodes := selectCoreNodes(graph, 8)
+	fmt.Fprintf(&b, "【核心模块详情】\n")
+	for _, node := range coreNodes {
+		if isNoiseModule(node.Name) {
+			continue
+		}
+		resp := inferModuleResponsibility(node)
+		role := roleMap[node.Name]
+		if role == "" {
+			role = "通用"
+		}
+		fmt.Fprintf(&b, "- **%s**（%s）\n  职责：%s\n", node.Name, role, resp)
+		funcs := node.Functions
+		if len(funcs) > 5 {
+			funcs = funcs[:5]
+		}
+		if len(funcs) > 0 {
+			names := make([]string, len(funcs))
+			for i, f := range funcs {
+				sig := f.Name + "("
+				if len(f.Params) > 0 {
+					sig += strings.Join(f.Params, ", ")
+				}
+				sig += ")"
+				if f.ReturnType != "" {
+					sig += " " + f.ReturnType
+				}
+				names[i] = sig
+			}
+			fmt.Fprintf(&b, "  关键函数：%s\n", strings.Join(names, ", "))
+		}
+		deps := graph.DependenciesOf(node.Name)
+		if len(deps) > 0 {
+			fmt.Fprintf(&b, "  依赖：%s\n", strings.Join(deps, ", "))
+		}
+		fmt.Fprintln(&b)
+	}
+
+	// --- 模块依赖列表（非噪音模块） ---
+	fmt.Fprintf(&b, "【全部有效模块及依赖】\n")
+	maxModules := 40
+	count := 0
+	for _, n := range cleanNodes {
+		if count >= maxModules {
+			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(cleanNodes)-maxModules)
 			break
 		}
 		deps := graph.DependenciesOf(n.Name)
 		if len(deps) > 0 {
-			fmt.Fprintf(&b, "- %s 依赖：%s\n", n.Name, strings.Join(deps, ", "))
+			fmt.Fprintf(&b, "- %s → %s\n", n.Name, strings.Join(deps, ", "))
 		} else {
 			fmt.Fprintf(&b, "- %s（无内部依赖）\n", n.Name)
 		}
+		count++
 	}
+	fmt.Fprintln(&b)
+
+	// --- 写作要求 ---
+	fmt.Fprintf(&b, "## 写作要求\n\n")
+	fmt.Fprintf(&b, "请撰写一篇 800-1500 字的架构说明（Markdown 格式），要求：\n\n")
+	fmt.Fprintf(&b, "1. **开篇定义**：用一句话说清系统是什么，由哪几个核心子系统组成。\n")
+	fmt.Fprintf(&b, "2. **系统拓扑**：用一个完整段落讲清数据/控制流如何在子系统间流动，\n")
+	fmt.Fprintf(&b, "   读完这段，读者能画出系统的「因果链」。\n")
+	fmt.Fprintf(&b, "3. **结构模式解剖**：如果发现多个模块共享相似的目录结构或接口模式，\n")
+	fmt.Fprintf(&b, "   专门用一段讲清这种重复结构（如插件模式、中间件链、适配器层）。\n")
+	fmt.Fprintf(&b, "4. **关键设计权衡**：挑出 1-2 个值得注意的架构决策，用引用块（> 开头）说明权衡。\n")
+	fmt.Fprintf(&b, "5. **来源标注**：每段末尾用 `*来源：\\`文件路径\\`*` 标注涉及的核心文件。\n")
+	fmt.Fprintf(&b, "6. **格式**：使用 ## 和 ### 级别标题组织段落，不要包含一级标题（# ）。\n")
+	fmt.Fprintf(&b, "7. **风格**：叙事式，像高质量技术博客一样。不要逐模块罗列，不要生成表格或清单。\n")
+	fmt.Fprintf(&b, "   如果你的输出中出现了超过 5 行的列表，请停下来改写成连贯段落。\n\n")
+	fmt.Fprintf(&b, "直接输出 Markdown 文章正文，不要加任何 JSON 包装或代码围栏。")
+
 	return b.String()
 }
 
@@ -2743,6 +2862,37 @@ func inferModuleResponsibility(n *grapher.Node) string {
 	}
 }
 
+// isNoiseModule reports whether a module name corresponds to test, debug, or
+// benchmark scaffolding that should be excluded from architecture analysis.
+func isNoiseModule(name string) bool {
+	clean := strings.ReplaceAll(name, "\\", "/")
+	lower := strings.ToLower(clean)
+	if strings.HasSuffix(lower, "_test") || strings.HasSuffix(lower, "_test.go") {
+		return true
+	}
+	if strings.Contains(lower, "testdata/") || strings.Contains(lower, "/testdata") {
+		return true
+	}
+	if strings.Contains(lower, "scripts/debug/") || strings.Contains(lower, "/scripts/debug") {
+		return true
+	}
+	if strings.HasPrefix(lower, "benchmark/") && strings.HasSuffix(lower, "_test") {
+		return true
+	}
+	return false
+}
+
+// filterNonNoiseModules returns only the nodes that are not test/debug noise.
+func filterNonNoiseModules(nodes []*grapher.Node) []*grapher.Node {
+	result := make([]*grapher.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if !isNoiseModule(n.Name) {
+			result = append(result, n)
+		}
+	}
+	return result
+}
+
 // stripSelfParamStr removes 'self' and 'cls' from parameter lists for cleaner docs.
 func stripSelfParamStr(params string) string {
 	var parts []string
@@ -2846,9 +2996,9 @@ func GenerateAPIReferenceMarkdown(graph *grapher.Graph, llmDesc map[string]strin
 	return b.String(), nil
 }
 
-// GenerateArchitectureMarkdown creates an architecture document with embedded diagrams.
-// If narrative is non-empty, it is placed before the module overview table.
-func GenerateArchitectureMarkdown(graph *grapher.Graph, archDSL, narrative string) (string, error) {
+// GenerateArchitectureMarkdown creates a narrative-driven architecture document
+// with a top-level diagram and per-directory sub-system diagrams.
+func GenerateArchitectureMarkdown(graph *grapher.Graph, narrative string) (string, error) {
 	var b strings.Builder
 	b.WriteString("# 架构\n\n")
 
@@ -2857,58 +3007,60 @@ func GenerateArchitectureMarkdown(graph *grapher.Graph, archDSL, narrative strin
 		b.WriteString("\n\n")
 	}
 
-	// Module overview table
-	b.WriteString("## 模块概览\n\n")
-	// Module overview table with roles
+	// Top-level architecture diagram (package-level, typically < 10 nodes)
+	if topDSL, err := diagram.GenerateTopLevelDiagram(graph); err == nil && topDSL != "" {
+		b.WriteString("## 顶层架构图\n\n")
+		b.WriteString("```mermaid\n")
+		b.WriteString(topDSL)
+		b.WriteString("```\n\n")
+	}
+
+	// Design decisions inferred from graph analysis
 	roles := graph.InferModuleRoles()
 	roleMap := make(map[string]string)
 	for _, r := range roles {
 		roleMap[r.Name] = r.Role
 	}
-
-	b.WriteString("| 模块 | 角色 | 类型 | 依赖 | 被依赖 |\n")
-	b.WriteString("|------|------|------|------|--------|\n")
-
-	for _, n := range graph.Nodes {
-		nodeType := "模块"
-		if len(n.Classes) > 0 {
-			nodeType = "类模块"
-		} else if len(n.Functions) > 0 {
-			nodeType = "函数模块"
-		}
-
-		deps := graph.DependenciesOf(n.Name)
-		depsStr := "—"
-		if len(deps) > 0 {
-			depsStr = "`" + strings.Join(deps, "`，`") + "`"
-		}
-
-		dependents := graph.DependentsOf(n.Name)
-		depStr := "—"
-		if len(dependents) > 0 {
-			depStr = "`" + strings.Join(dependents, "`，`") + "`"
-		}
-
-		role := roleMap[n.Name]
-		if role == "" {
-			role = "—"
-		}
-
-		b.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s | %s |\n", n.Name, role, nodeType, depsStr, depStr))
-	}
-	b.WriteString("\n")
-
-	// Design decisions inferred from graph analysis
 	b.WriteString("## 关键设计决策\n\n")
 	b.WriteString(buildDesignDecisions(graph, roles, roleMap))
 	b.WriteString("\n")
 
-	// Embedded architecture diagram
-	if archDSL != "" {
-		b.WriteString("## 依赖图\n\n")
-		b.WriteString("```mermaid\n")
-		b.WriteString(archDSL)
-		b.WriteString("```\n\n")
+	// Sub-system diagrams: one per directory group that has internal edges
+	groups := graph.GroupByDirectory()
+	type dirGroup struct {
+		dir   string
+		nodes []*grapher.Node
+	}
+	var validGroups []dirGroup
+	for dir, nodes := range groups {
+		clean := filterNonNoiseModules(nodes)
+		if len(clean) < 2 {
+			continue
+		}
+		sub := graph.SubGraphForDirectory(dir)
+		if len(sub.Edges) == 0 {
+			continue
+		}
+		validGroups = append(validGroups, dirGroup{dir: dir, nodes: clean})
+	}
+	sort.Slice(validGroups, func(i, j int) bool {
+		return validGroups[i].dir < validGroups[j].dir
+	})
+
+	if len(validGroups) > 0 {
+		b.WriteString("## 子系统详图\n\n")
+		for _, g := range validGroups {
+			sub := graph.SubGraphForDirectory(g.dir)
+			title := g.dir + " 模块关系"
+			dsl, err := diagram.GenerateSubArchDiagram(sub, title)
+			if err != nil || dsl == "" {
+				continue
+			}
+			b.WriteString(fmt.Sprintf("### %s\n\n", g.dir))
+			b.WriteString("```mermaid\n")
+			b.WriteString(dsl)
+			b.WriteString("```\n\n")
+		}
 	}
 
 	return b.String(), nil

@@ -129,19 +129,15 @@ func TestGenerateArchitectureMarkdown(t *testing.T) {
 		{Filename: "utils/logger.py"},
 	}
 	graph := grapher.BuildGraph(files)
-	archDSL := "graph TD\n    models_user --> models_base\n"
 
-	md, err := GenerateArchitectureMarkdown(graph, archDSL, "")
+	md, err := GenerateArchitectureMarkdown(graph, "")
 	require.NoError(t, err)
 	require.NotEmpty(t, md)
 
 	assert.Contains(t, md, "# 架构")
-	assert.Contains(t, md, "## 模块概览")
-	assert.Contains(t, md, "| 模块 | 角色 | 类型 | 依赖 | 被依赖 |")
-	assert.Contains(t, md, "## 依赖图")
-	assert.Contains(t, md, "```mermaid")
-	assert.Contains(t, md, archDSL)
-	assert.Contains(t, md, "```")
+	assert.Contains(t, md, "## 关键设计决策")
+	assert.NotContains(t, md, "## 模块概览")
+	assert.NotContains(t, md, "## 依赖图")
 }
 
 func TestWriteWikiFiles(t *testing.T) {
@@ -242,9 +238,11 @@ func TestGenerateWikiFromGraph(t *testing.T) {
 	assert.Contains(t, wiki.Overview, "test-project")
 	assert.Contains(t, wiki.Overview, "models/user")
 
-	// Verify architecture doc contains embedded diagram
+	// Verify architecture doc contains top-level diagram and sub-system diagrams
 	assert.Contains(t, wiki.Architecture, "```mermaid")
-	assert.Contains(t, wiki.Architecture, archDSL)
+	assert.Contains(t, wiki.Architecture, "## 关键设计决策")
+	assert.NotContains(t, wiki.Architecture, "## 模块概览")
+	assert.NotContains(t, wiki.Architecture, "## 依赖图")
 }
 
 // ---------- Mock LLM Tests ----------
@@ -445,7 +443,7 @@ func TestGenerateWikiEmptyRepo(t *testing.T) {
 	assert.Contains(t, wiki.Overview, "empty")
 	assert.Contains(t, wiki.Overview, "未在项目中找到模块")
 	assert.Contains(t, wiki.APIReference, "未找到 API 符号")
-	assert.Contains(t, wiki.Architecture, "模块概览")
+	assert.Contains(t, wiki.Architecture, "关键设计决策")
 }
 
 func TestDescribeFunction(t *testing.T) {
