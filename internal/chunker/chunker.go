@@ -2,6 +2,8 @@ package chunker
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/splitsword/fine-codewiki/internal/analyzer"
@@ -15,6 +17,7 @@ const (
 	TypeFunction ChunkType = "function"
 	TypeModule   ChunkType = "module"
 	TypeImport   ChunkType = "import"
+	TypeDocument ChunkType = "document"
 )
 
 // Chunk represents a semantic unit of code ready for embedding.
@@ -31,11 +34,14 @@ type Chunk struct {
 }
 
 // Chunker creates semantic chunks from analyzer results.
-type Chunker struct{}
+type Chunker struct {
+	sourceDir string
+}
 
-// New creates a new Chunker.
-func New() *Chunker {
-	return &Chunker{}
+// New creates a new Chunker. sourceDir is the project root directory,
+// used for reading source code lines to include in chunks.
+func New(sourceDir string) *Chunker {
+	return &Chunker{sourceDir: sourceDir}
 }
 
 // ChunkFiles splits parsed file results into semantic chunks.
@@ -119,6 +125,12 @@ func (c *Chunker) buildClassChunk(filename string, cls analyzer.ClassInfo) *Chun
 		}
 	}
 
+	if src := c.readSourceLines(filename, cls.StartLine, cls.EndLine); src != "" {
+		b.WriteString("\n```\n")
+		b.WriteString(src)
+		b.WriteString("\n```\n")
+	}
+
 	return &Chunk{
 		ID:        fmt.Sprintf("%s#%s", filename, cls.Name),
 		Type:      TypeClass,
@@ -141,6 +153,12 @@ func (c *Chunker) buildFunctionChunk(filename string, fn analyzer.FunctionInfo) 
 	}
 	b.WriteString("\n")
 
+	if src := c.readSourceLines(filename, fn.StartLine, fn.EndLine); src != "" {
+		b.WriteString("\n```\n")
+		b.WriteString(src)
+		b.WriteString("\n```\n")
+	}
+
 	return &Chunk{
 		ID:         fmt.Sprintf("%s#%s", filename, fn.Name),
 		Type:       TypeFunction,
@@ -151,4 +169,129 @@ func (c *Chunker) buildFunctionChunk(filename string, fn analyzer.FunctionInfo) 
 		ReturnType: fn.ReturnType,
 		StartLine:  fn.StartLine,
 	}
+}
+
+// readSourceLines reads source code lines for a symbol from its source file.
+// Returns empty string if the file cannot be read or line range is invalid.
+// Caps output at 60 lines to prevent oversized chunks.
+func (c *Chunker) readSourceLines(filename string, startLine, endLine int) string {
+	if c.sourceDir == "" || startLine <= 0 || endLine <= startLine {
+		return ""
+	}
+
+	fullPath := filepath.Join(c.sourceDir, filename)
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if startLine > len(lines) {
+		return ""
+	}
+	if endLine > len(lines) {
+		endLine = len(lines)
+	}
+
+	const maxLines = 60
+	if endLine-startLine+1 > maxLines {
+		endLine = startLine + maxLines - 1
+	}
+
+	return strings.Join(lines[startLine-1:endLine], "\n")
+}
+
+// ChunkWikiDocs splits wiki-generated documents into semantic chunks for RAG indexing.
+// Keys are document names (e.g. "architecture"), values are markdown content.
+// Splits by h2 headings with a per-section cap of ~800 characters.
+func (c *Chunker) ChunkWikiDocs(docs map[string]string) []*Chunk {
+	var chunks []*Chunk
+
+	for docName, content := range docs {
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		sections := splitByH2(content)
+		for _, sec := range sections {
+			if strings.TrimSpace(sec.body) == "" {
+				continue
+			}
+			slug := slugify(sec.heading)
+			id := fmt.Sprintf("wiki/%s#%s", docName, slug)
+			filename := fmt.Sprintf("wiki/%s.md", docName)
+
+			// Cap section body at ~800 characters to keep chunks manageable
+			body := sec.body
+			if len([]rune(body)) > 800 {
+				body = string([]rune(body)[:800]) + "..."
+			}
+
+			chunks = append(chunks, &Chunk{
+				ID:       id,
+				Type:     TypeDocument,
+				Content:  fmt.Sprintf("文档: %s\n章节: %s\n\n%s", docName, sec.heading, body),
+				Filename: filename,
+				Name:     sec.heading,
+			})
+		}
+	}
+
+	return chunks
+}
+
+// wikiSection holds a parsed h2 heading section.
+type wikiSection struct {
+	heading string
+	body    string
+}
+
+// splitByH2 splits markdown content by "## " headings.
+// Content before the first heading is assigned heading "" (preamble).
+func splitByH2(content string) []wikiSection {
+	lines := strings.Split(content, "\n")
+	var sections []wikiSection
+	var current *wikiSection
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "## ") {
+			if current != nil {
+				sections = append(sections, *current)
+			}
+			current = &wikiSection{
+				heading: strings.TrimSpace(strings.TrimPrefix(line, "## ")),
+			}
+		} else if current != nil {
+			if current.body != "" {
+				current.body += "\n"
+			}
+			current.body += line
+		}
+	}
+
+	if current != nil {
+		sections = append(sections, *current)
+	}
+
+	return sections
+}
+
+// slugify converts a heading string to a URL-friendly slug.
+func slugify(s string) string {
+	if s == "" {
+		return "top"
+	}
+	slug := strings.TrimSpace(s)
+	slug = strings.ReplaceAll(slug, " ", "-")
+	slug = strings.ReplaceAll(slug, "/", "-")
+	// Remove non-ASCII for clean anchor IDs
+	var result strings.Builder
+	for _, r := range slug {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			result.WriteRune(r)
+		}
+	}
+	if result.Len() == 0 {
+		return "section"
+	}
+	return strings.ToLower(result.String())
 }

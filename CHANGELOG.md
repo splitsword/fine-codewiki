@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-15 — feat(docgen, rag, chunker): RAG 问答系统改造 + 生成管线异步并行化 (57b9d5e)
+
 - 2026-05-15 — feat(docgen): 架构说明叙事化重构 — 对标 Zread 从数据展示转向叙事构建 (468f757)
 
 - 2026-05-15 — ﻿feat(llm, docgen): LLM 生成可靠性工程 — P0/P1 三合一修复 + 4项 Bug 修复 (4bbc4e5)

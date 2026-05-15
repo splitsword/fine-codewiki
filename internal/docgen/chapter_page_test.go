@@ -382,45 +382,77 @@ func TestGenerateChapterPageNarrativeWithEmptyModuleDocs(t *testing.T) {
 }
 
 func TestBuildStaticNavSectionsWithSubItems(t *testing.T) {
-	wiki := &Wiki{
-		Overview: "# overview",
-		ModuleThemes: map[string][]string{
-			"认证系统": {"auth/middleware", "auth/session"},
-			"数据层":  {"db/postgres"},
-		},
-		ChapterTitles: map[string]ChapterTitle{
-			"认证系统": {Title: "用户认证", Subtitle: "身份验证", Difficulty: "⭐⭐"},
-			"数据层":  {Title: "数据层", Subtitle: "持久化", Difficulty: "⭐"},
-		},
-	}
-
-	sections := buildStaticNavSections(wiki, nil, "认证系统")
-
-	// 深入剖析 section should have 2 items
-	require.Len(t, sections[2].Items, 2)
-
-	// Current theme ("认证系统") should have sub-items
-	var authItem NavItem
-	for _, item := range sections[2].Items {
-		if item.Title == "用户认证" {
-			authItem = item
-			break
+	t.Run("without narrative fallback to modules", func(t *testing.T) {
+		wiki := &Wiki{
+			Overview: "# overview",
+			ModuleThemes: map[string][]string{
+				"认证系统": {"auth/middleware", "auth/session"},
+				"数据层":  {"db/postgres"},
+			},
+			ChapterTitles: map[string]ChapterTitle{
+				"认证系统": {Title: "用户认证", Subtitle: "身份验证", Difficulty: "⭐⭐"},
+				"数据层":  {Title: "数据层", Subtitle: "持久化", Difficulty: "⭐"},
+			},
 		}
-	}
-	require.Len(t, authItem.SubItems, 2)
-	assert.Equal(t, "middleware", authItem.SubItems[0].Title)
-	assert.Equal(t, "session", authItem.SubItems[1].Title)
-	assert.Contains(t, authItem.SubItems[0].URL, "#module-")
 
-	// Non-current theme should have no sub-items
-	var dbItem NavItem
-	for _, item := range sections[2].Items {
-		if item.Title == "数据层" {
-			dbItem = item
-			break
+		sections := buildStaticNavSections(wiki, nil, "认证系统")
+		require.Len(t, sections[2].Items, 2)
+
+		var authItem NavItem
+		for _, item := range sections[2].Items {
+			if item.Title == "用户认证" {
+				authItem = item
+				break
+			}
 		}
-	}
-	assert.Empty(t, dbItem.SubItems)
+		require.Len(t, authItem.SubItems, 2)
+		assert.Equal(t, "middleware", authItem.SubItems[0].Title)
+		assert.Equal(t, "session", authItem.SubItems[1].Title)
+		assert.Contains(t, authItem.SubItems[0].URL, "#module-")
+
+		var dbItem NavItem
+		for _, item := range sections[2].Items {
+			if item.Title == "数据层" {
+				dbItem = item
+				break
+			}
+		}
+		assert.Empty(t, dbItem.SubItems)
+	})
+
+	t.Run("with narrative uses h2 headings", func(t *testing.T) {
+		wiki := &Wiki{
+			Overview: "# overview",
+			ModuleThemes: map[string][]string{
+				"认证系统": {"auth/middleware", "auth/session"},
+				"数据层":  {"db/postgres"},
+			},
+			ChapterTitles: map[string]ChapterTitle{
+				"认证系统": {Title: "用户认证", Subtitle: "身份验证", Difficulty: "⭐⭐"},
+				"数据层":  {Title: "数据层", Subtitle: "持久化", Difficulty: "⭐"},
+			},
+			ChapterNarratives: map[string]string{
+				"认证系统": "## 认证流程概览\n\n描述认证流程。\n\n## 关键收获\n\n总结要点。",
+			},
+		}
+
+		sections := buildStaticNavSections(wiki, nil, "认证系统")
+		require.Len(t, sections[2].Items, 2)
+
+		var authItem NavItem
+		for _, item := range sections[2].Items {
+			if item.Title == "用户认证" {
+				authItem = item
+				break
+			}
+		}
+		require.Len(t, authItem.SubItems, 2)
+		assert.Equal(t, "认证流程概览", authItem.SubItems[0].Title)
+		assert.Equal(t, "关键收获", authItem.SubItems[1].Title)
+		assert.Equal(t, "📑", authItem.SubItems[0].Icon)
+		assert.Contains(t, authItem.SubItems[0].URL, "#")
+		assert.NotContains(t, authItem.SubItems[0].URL, "#module-")
+	})
 }
 
 func TestGenerateChapterPageWithGoals(t *testing.T) {
@@ -493,6 +525,17 @@ func TestExtractHeadings(t *testing.T) {
 	assert.Equal(t, 2, headings[2].level)
 	assert.Equal(t, "section-2", headings[2].id)
 	assert.Equal(t, "第二节", headings[2].text)
+}
+
+func TestExtractMarkdownH2s(t *testing.T) {
+	md := "## 认证流程概览\n\n正文段落。\n\n## 关键收获\n\n- 要点一\n\n### 三级标题\n\n不应包含"
+	titles := extractMarkdownH2s(md)
+	require.Len(t, titles, 2)
+	assert.Equal(t, "认证流程概览", titles[0])
+	assert.Equal(t, "关键收获", titles[1])
+
+	assert.Empty(t, extractMarkdownH2s("no headings here"))
+	assert.Empty(t, extractMarkdownH2s(""))
 }
 
 func TestExtractHeadingsEmpty(t *testing.T) {

@@ -304,6 +304,9 @@ func RunServe(cfg *Config) error {
 	fmt.Println("按 Ctrl+C 停止")
 
 	handler := newServerHandler(cfg.OutputDir, engine)
+	if engine != nil {
+		defer engine.Close()
+	}
 	return http.ListenAndServe(addr, handler)
 }
 
@@ -327,7 +330,6 @@ func initRAGEngine(sourceDir, language, configPath string) (*rag.Engine, error) 
 	if err != nil {
 		return nil, fmt.Errorf("open vector store: %w", err)
 	}
-	defer store.Close()
 
 	files, err := analyzer.ParseDirectory(sourceDir, language)
 	if err != nil {
@@ -348,12 +350,10 @@ func initRAGEngine(sourceDir, language, configPath string) (*rag.Engine, error) 
 	}
 	store.PruneFiles(currentPaths)
 
+	var allChunks []*chunker.Chunk
 	if len(changedFiles) > 0 {
-		chunks := chunker.New().ChunkFiles(changedFiles)
-		emb := embedder.New(provider, store)
-		if err := emb.EmbedChunks(context.Background(), chunks); err != nil {
-			return nil, fmt.Errorf("embed chunks: %w", err)
-		}
+		chunks := chunker.New(sourceDir).ChunkFiles(changedFiles)
+		allChunks = append(allChunks, chunks...)
 		for _, f := range changedFiles {
 			info, err := os.Stat(f.Filename)
 			if err != nil {
@@ -363,7 +363,56 @@ func initRAGEngine(sourceDir, language, configPath string) (*rag.Engine, error) 
 		}
 	}
 
-	return rag.NewEngine(provider, store), nil
+	// Index wiki documents for richer RAG context
+	wikiDir := filepath.Join(sourceDir, ".codewiki", "wiki")
+	wikiChunks := loadAndChunkWikiDocs(wikiDir)
+	allChunks = append(allChunks, wikiChunks...)
+
+	if len(allChunks) > 0 {
+		emb := embedder.New(provider, store)
+		if err := emb.EmbedChunks(context.Background(), allChunks); err != nil {
+			return nil, fmt.Errorf("embed chunks: %w", err)
+		}
+	}
+
+	engine := rag.NewEngine(provider, store)
+	engine.SetProjectContext(filepath.Base(sourceDir), "")
+	return engine, nil
+}
+
+// loadAndChunkWikiDocs reads wiki markdown files from a directory and converts
+// them to semantic chunks for RAG indexing.
+func loadAndChunkWikiDocs(wikiDir string) []*chunker.Chunk {
+	entries, err := os.ReadDir(wikiDir)
+	if err != nil {
+		return nil
+	}
+
+	docs := make(map[string]string)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		// Skip compilation (full-archive) and module README (index, not content)
+		if name == "compilation.md" {
+			continue
+		}
+		path := filepath.Join(wikiDir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		docName := strings.TrimSuffix(name, ".md")
+		docs[docName] = string(data)
+	}
+
+	if len(docs) == 0 {
+		return nil
+	}
+
+	chk := chunker.New("")
+	return chk.ChunkWikiDocs(docs)
 }
 
 // serverHandler serves wiki files and optionally the /ask RAG Q&A endpoint.
@@ -1039,16 +1088,11 @@ func RunAsk(cfg *Config) error {
 	}
 
 	// Index changed files
+	var allChunks []*chunker.Chunk
 	if len(changedFiles) > 0 {
 		fmt.Printf("正在索引 %d 个变更文件...\n", len(changedFiles))
-		chunks := chunker.New().ChunkFiles(changedFiles)
-		fmt.Printf("创建了 %d 个分块\n", len(chunks))
-
-		emb := embedder.New(provider, store)
-		if err := emb.EmbedChunks(context.Background(), chunks); err != nil {
-			return fmt.Errorf("embed chunks: %w", err)
-		}
-		fmt.Printf("嵌入了 %d 个分块\n", store.Count())
+		chunks := chunker.New(cfg.SourceDir).ChunkFiles(changedFiles)
+		allChunks = append(allChunks, chunks...)
 
 		// Mark files as indexed
 		for _, f := range changedFiles {
@@ -1064,7 +1108,22 @@ func RunAsk(cfg *Config) error {
 		fmt.Println("向量索引已是最新。")
 	}
 
+	// Index wiki documents for richer RAG context
+	wikiDir := filepath.Join(cfg.SourceDir, ".codewiki", "wiki")
+	wikiChunks := loadAndChunkWikiDocs(wikiDir)
+	allChunks = append(allChunks, wikiChunks...)
+
+	if len(allChunks) > 0 {
+		fmt.Printf("创建了 %d 个分块（含 %d 个文档分块）\n", len(allChunks), len(wikiChunks))
+		emb := embedder.New(provider, store)
+		if err := emb.EmbedChunks(context.Background(), allChunks); err != nil {
+			return fmt.Errorf("embed chunks: %w", err)
+		}
+		fmt.Printf("嵌入了 %d 个分块\n", store.Count())
+	}
+
 	engine := rag.NewEngine(provider, store)
+	engine.SetProjectContext(filepath.Base(cfg.SourceDir), "")
 
 	if cfg.Interactive {
 		return runInteractiveAsk(engine)

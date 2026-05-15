@@ -31,6 +31,7 @@ type SearchResult struct {
 type VectorStore struct {
 	records map[string]*Record
 	db      *sql.DB
+	cache   map[string]*Record // in-memory cache for SQLite-backed stores
 }
 
 // New creates an empty in-memory VectorStore.
@@ -41,6 +42,7 @@ func New() *VectorStore {
 }
 
 // NewSQLite opens (or creates) a SQLite-backed vector store.
+// Loads all existing records into an in-memory cache for fast search.
 func NewSQLite(path string) (*VectorStore, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -65,7 +67,16 @@ func NewSQLite(path string) (*VectorStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
-	return &VectorStore{db: db}, nil
+
+	vs := &VectorStore{db: db}
+	// Preload all records into cache
+	records := vs.loadAllFromSQLite()
+	vs.cache = make(map[string]*Record, len(records))
+	for _, rec := range records {
+		vs.cache[rec.ID] = rec
+	}
+
+	return vs, nil
 }
 
 // Close releases the SQLite connection if any.
@@ -78,6 +89,11 @@ func (vs *VectorStore) Close() error {
 
 // Upsert inserts or updates a record by ID.
 func (vs *VectorStore) Upsert(id string, vector []float32, chunk *chunker.Chunk) {
+	rec := &Record{
+		ID:     id,
+		Vector: append([]float32(nil), vector...),
+		Chunk:  chunk,
+	}
 	if vs.db != nil {
 		vecBlob := vectorToBlob(vector)
 		var chunkJSON []byte
@@ -87,13 +103,10 @@ func (vs *VectorStore) Upsert(id string, vector []float32, chunk *chunker.Chunk)
 			sourceFile = chunk.Filename
 		}
 		_, _ = vs.db.Exec("INSERT OR REPLACE INTO vectors (id, vector, chunk_json, source_file) VALUES (?, ?, ?, ?)", id, vecBlob, string(chunkJSON), sourceFile)
+		vs.cache[id] = rec
 		return
 	}
-	vs.records[id] = &Record{
-		ID:     id,
-		Vector: append([]float32(nil), vector...),
-		Chunk:  chunk,
-	}
+	vs.records[id] = rec
 }
 
 // ShouldIndexFile returns true if the file is new or has changed since last index.
@@ -147,9 +160,18 @@ func (vs *VectorStore) PruneFiles(keepPaths []string) int {
 
 	removed := 0
 	for _, path := range toRemove {
+		// Remove from cache first (need to know IDs)
+		for id, rec := range vs.cache {
+			if rec.Chunk != nil && rec.Chunk.Filename == path {
+				delete(vs.cache, id)
+				removed++
+			}
+		}
 		res, _ := vs.db.Exec("DELETE FROM vectors WHERE source_file = ?", path)
 		n, _ := res.RowsAffected()
-		removed += int(n)
+		if removed == 0 {
+			removed = int(n)
+		}
 		_, _ = vs.db.Exec("DELETE FROM file_index WHERE path = ?", path)
 	}
 	return removed
@@ -163,6 +185,9 @@ func (vs *VectorStore) Delete(id string) bool {
 			return false
 		}
 		n, _ := res.RowsAffected()
+		if n > 0 {
+			delete(vs.cache, id)
+		}
 		return n > 0
 	}
 	if _, ok := vs.records[id]; ok {
@@ -175,20 +200,10 @@ func (vs *VectorStore) Delete(id string) bool {
 // Get retrieves a single record by ID.
 func (vs *VectorStore) Get(id string) (*Record, bool) {
 	if vs.db != nil {
-		var vecBlob []byte
-		var chunkJSON string
-		err := vs.db.QueryRow("SELECT vector, chunk_json FROM vectors WHERE id = ?", id).Scan(&vecBlob, &chunkJSON)
-		if err != nil {
-			return nil, false
+		if rec, ok := vs.cache[id]; ok {
+			return rec, true
 		}
-		rec := &Record{
-			ID:     id,
-			Vector: blobToVector(vecBlob),
-		}
-		if chunkJSON != "" {
-			_ = json.Unmarshal([]byte(chunkJSON), &rec.Chunk)
-		}
-		return rec, true
+		return nil, false
 	}
 	r, ok := vs.records[id]
 	return r, ok
@@ -204,9 +219,10 @@ func (vs *VectorStore) Count() int {
 	return len(vs.records)
 }
 
-// Search performs a cosine-similarity Top-K search.
+// Search performs a cosine-similarity Top-K search with an optional minimum
+// similarity threshold. Results below minSimilarity are filtered out.
 // Returns results sorted by similarity descending.
-func (vs *VectorStore) Search(query []float32, topK int) []SearchResult {
+func (vs *VectorStore) Search(query []float32, topK int, minSimilarity float64) []SearchResult {
 	if len(query) == 0 {
 		return nil
 	}
@@ -218,7 +234,10 @@ func (vs *VectorStore) Search(query []float32, topK int) []SearchResult {
 
 	var records []*Record
 	if vs.db != nil {
-		records = vs.loadAllFromSQLite()
+		records = make([]*Record, 0, len(vs.cache))
+		for _, rec := range vs.cache {
+			records = append(records, rec)
+		}
 	} else {
 		records = make([]*Record, 0, len(vs.records))
 		for _, rec := range vs.records {
@@ -236,10 +255,12 @@ func (vs *VectorStore) Search(query []float32, topK int) []SearchResult {
 			continue
 		}
 		sim := cosineSimilarity(query, rec.Vector, qNorm)
-		results = append(results, SearchResult{
-			Record:     rec,
-			Similarity: sim,
-		})
+		if sim >= minSimilarity {
+			results = append(results, SearchResult{
+				Record:     rec,
+				Similarity: sim,
+			})
+		}
 	}
 
 	sort.Slice(results, func(i, j int) bool {

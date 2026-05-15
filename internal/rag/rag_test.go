@@ -73,6 +73,7 @@ func TestAskBasic(t *testing.T) {
 
 	engine := NewEngine(mock, store)
 	engine.SetTopK(2)
+	engine.SetMinSimilarity(0) // disable threshold for test
 
 	ans, err := engine.Ask(context.Background(), "How do I create a user?")
 	require.NoError(t, err)
@@ -164,11 +165,13 @@ func TestBuildRAGPrompt(t *testing.T) {
 		},
 	}
 
-	prompt := buildRAGPrompt("What is User?", results, nil)
-	assert.Contains(t, prompt, "You are a code assistant")
+	engine := NewEngine(nil, nil)
+	engine.SetProjectContext("test-project", "")
+	prompt := engine.buildRAGPrompt("What is User?", results, nil)
+	assert.Contains(t, prompt, "test-project")
+	assert.Contains(t, prompt, "代码助手")
 	assert.Contains(t, prompt, "Class User extends BaseModel")
 	assert.Contains(t, prompt, "What is User?")
-	assert.Contains(t, prompt, "## Answer")
 }
 
 func TestBuildRAGPromptWithSession(t *testing.T) {
@@ -188,11 +191,13 @@ func TestBuildRAGPromptWithSession(t *testing.T) {
 	session := NewSession()
 	session.AddTurn("What is BaseModel?", "It is the base class.")
 
-	prompt := buildRAGPrompt("What is User?", results, session)
-	assert.Contains(t, prompt, "Conversation History")
-	assert.Contains(t, prompt, "Q: What is BaseModel?")
-	assert.Contains(t, prompt, "A: It is the base class.")
+	engine := NewEngine(nil, nil)
+	prompt := engine.buildRAGPrompt("What is User?", results, session)
+	assert.Contains(t, prompt, "对话历史")
+	assert.Contains(t, prompt, "What is BaseModel?")
+	assert.Contains(t, prompt, "It is the base class.")
 	assert.Contains(t, prompt, "Class User extends BaseModel")
+	assert.Contains(t, prompt, "## 问题")
 }
 
 func TestAskWithSession(t *testing.T) {
@@ -218,6 +223,8 @@ func TestAskWithSession(t *testing.T) {
 	assert.Contains(t, capturedPrompt, "Previous question?")
 	assert.Contains(t, capturedPrompt, "Previous answer.")
 	assert.Contains(t, capturedPrompt, "func create_user(name)")
+	assert.Contains(t, capturedPrompt, "对话历史")
+	assert.Contains(t, capturedPrompt, "## 问题")
 }
 
 func TestSessionTurns(t *testing.T) {

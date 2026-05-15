@@ -317,12 +317,26 @@ func buildStaticNavSections(wiki *Wiki, graph *grapher.Graph, currentTheme strin
 			Difficulty: diff,
 		}
 		if theme == currentTheme {
-			for _, modName := range wiki.ModuleThemes[theme] {
-				item.SubItems = append(item.SubItems, NavItem{
-					Icon:  "📄",
-					Title: filepath.Base(modName),
-					URL:   "#module-" + mermaidEscape(modName),
-				})
+			narrative := ""
+			if wiki.ChapterNarratives != nil {
+				narrative = wiki.ChapterNarratives[theme]
+			}
+			if narrative != "" {
+				for _, h2 := range extractMarkdownH2s(narrative) {
+					item.SubItems = append(item.SubItems, NavItem{
+						Icon:  "📑",
+						Title: h2,
+						URL:   "#" + headingSlug(h2),
+					})
+				}
+			} else {
+				for _, modName := range wiki.ModuleThemes[theme] {
+					item.SubItems = append(item.SubItems, NavItem{
+						Icon:  "📄",
+						Title: filepath.Base(modName),
+						URL:   "#module-" + mermaidEscape(modName),
+					})
+				}
 			}
 		}
 		sections[2].Items = append(sections[2].Items, item)
@@ -334,6 +348,17 @@ func buildStaticNavSections(wiki *Wiki, graph *grapher.Graph, currentTheme strin
 	}
 
 	return sections
+}
+
+var markdownH2Re = regexp.MustCompile(`(?m)^## (.+)$`)
+
+func extractMarkdownH2s(markdown string) []string {
+	matches := markdownH2Re.FindAllStringSubmatch(markdown, -1)
+	var titles []string
+	for _, m := range matches {
+		titles = append(titles, strings.TrimSpace(m[1]))
+	}
+	return titles
 }
 
 // safeThemeName converts a theme name to a safe filename.

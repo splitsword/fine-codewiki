@@ -52,24 +52,49 @@ func (s *Session) Turns() []Turn {
 
 // Engine performs RAG retrieval and generation.
 type Engine struct {
-	provider llm.Provider
-	store    *vectorstore.VectorStore
-	topK     int
+	provider       llm.Provider
+	store          *vectorstore.VectorStore
+	topK           int
+	projectName    string
+	projectContext string
+	minSimilarity  float64
 }
 
 // NewEngine creates a RAG engine.
 func NewEngine(provider llm.Provider, store *vectorstore.VectorStore) *Engine {
 	return &Engine{
-		provider: provider,
-		store:    store,
-		topK:     5,
+		provider:      provider,
+		store:         store,
+		topK:          5,
+		minSimilarity: 0.3,
 	}
+}
+
+// Close releases resources held by the engine (e.g. the vector store).
+func (e *Engine) Close() error {
+	if e.store != nil {
+		return e.store.Close()
+	}
+	return nil
+}
+
+// SetProjectContext provides project-level metadata used in RAG prompts.
+func (e *Engine) SetProjectContext(name, contextSummary string) {
+	e.projectName = name
+	e.projectContext = contextSummary
 }
 
 // SetTopK configures how many chunks to retrieve.
 func (e *Engine) SetTopK(k int) {
 	if k > 0 {
 		e.topK = k
+	}
+}
+
+// SetMinSimilarity sets the minimum cosine similarity threshold for search results.
+func (e *Engine) SetMinSimilarity(s float64) {
+	if s >= 0 {
+		e.minSimilarity = s
 	}
 }
 
@@ -97,13 +122,13 @@ func (e *Engine) AskWithSession(ctx context.Context, question string, session *S
 	}
 
 	// 2. Retrieve top-K chunks
-	results := e.store.Search(queryVecs[0], e.topK)
+	results := e.store.Search(queryVecs[0], e.topK, e.minSimilarity)
 	if len(results) == 0 {
 		return nil, fmt.Errorf("no relevant code found for the question")
 	}
 
 	// 3. Build context prompt
-	prompt := buildRAGPrompt(question, results, session)
+	prompt := e.buildRAGPrompt(question, results, session)
 
 	// 4. Generate answer
 	text, err := e.provider.Complete(ctx, prompt)
@@ -146,13 +171,13 @@ func (e *Engine) AskStreamWithSession(ctx context.Context, question string, sess
 	}
 
 	// 2. Retrieve top-K chunks
-	results := e.store.Search(queryVecs[0], e.topK)
+	results := e.store.Search(queryVecs[0], e.topK, e.minSimilarity)
 	if len(results) == 0 {
 		return nil, nil, fmt.Errorf("no relevant code found for the question")
 	}
 
 	// 3. Build context prompt
-	prompt := buildRAGPrompt(question, results, session)
+	prompt := e.buildRAGPrompt(question, results, session)
 
 	// 4. Start streaming
 	textCh, err := e.provider.CompleteStream(ctx, prompt)
@@ -189,36 +214,48 @@ func collectSources(results []vectorstore.SearchResult) []Source {
 	return sources
 }
 
-func buildRAGPrompt(question string, results []vectorstore.SearchResult, session *Session) string {
+func (e *Engine) buildRAGPrompt(question string, results []vectorstore.SearchResult, session *Session) string {
 	var b strings.Builder
-	b.WriteString("You are a code assistant. Use the following code context to answer the question. " +
-		"If the context is insufficient, say so. Always cite source files when referencing code.\n\n")
 
-	// Include conversation history if present
-	if session != nil && len(session.turns) > 0 {
-		b.WriteString("## Conversation History\n\n")
-		for _, turn := range session.turns {
-			b.WriteString(fmt.Sprintf("Q: %s\n", turn.Question))
-			b.WriteString(fmt.Sprintf("A: %s\n\n", turn.Answer))
-		}
+	// System persona with project context
+	if e.projectName != "" {
+		b.WriteString(fmt.Sprintf("你是 %s 项目的代码助手。", e.projectName))
+	} else {
+		b.WriteString("你是项目代码助手。")
+	}
+	b.WriteString("基于下面的代码上下文回答用户的问题。")
+	b.WriteString("如果上下文不足以回答问题，诚实说明缺少哪些信息。")
+	b.WriteString("引用代码时请标注源文件路径。")
+	b.WriteString("用提问者使用的语言回答。\n")
+
+	if e.projectContext != "" {
+		b.WriteString(fmt.Sprintf("\n## 项目背景\n%s\n", e.projectContext))
 	}
 
-	b.WriteString("## Code Context\n\n")
+	b.WriteString("\n## 代码上下文\n\n")
 	for i, r := range results {
 		ch := r.Record.Chunk
 		if ch == nil {
 			continue
 		}
-		b.WriteString(fmt.Sprintf("### Context %d (%s - %s)\n", i+1, ch.Filename, ch.Type))
+		b.WriteString(fmt.Sprintf("### 上下文 %d (%s - %s)\n", i+1, ch.Filename, ch.Type))
 		b.WriteString("```\n")
 		b.WriteString(ch.Content)
 		b.WriteString("\n```\n\n")
 	}
 
-	b.WriteString("## Question\n")
+	// Include conversation history if present
+	if session != nil && len(session.turns) > 0 {
+		b.WriteString("## 对话历史\n\n")
+		for _, turn := range session.turns {
+			b.WriteString(fmt.Sprintf("问：%s\n", turn.Question))
+			b.WriteString(fmt.Sprintf("答：%s\n\n", turn.Answer))
+		}
+	}
+
+	b.WriteString("## 问题\n")
 	b.WriteString(question)
-	b.WriteString("\n\n")
-	b.WriteString("## Answer\n")
+	b.WriteString("\n")
 
 	return b.String()
 }

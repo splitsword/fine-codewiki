@@ -67,12 +67,12 @@ func TestSQLiteSearchTopK(t *testing.T) {
 	vs.Upsert("y", []float32{0, 1, 0}, &chunker.Chunk{ID: "y", Content: "y-axis"})
 	vs.Upsert("z", []float32{0, 0, 1}, &chunker.Chunk{ID: "z", Content: "z-axis"})
 
-	results := vs.Search([]float32{1, 0.1, 0}, 2)
+	results := vs.Search([]float32{1, 0.1, 0}, 2, 0.0)
 	require.Len(t, results, 2)
 	assert.Equal(t, "x", results[0].Record.ID)
 	assert.InDelta(t, 1.0, results[0].Similarity, 0.01)
 
-	results = vs.Search([]float32{0.1, 1, 0}, 1)
+	results = vs.Search([]float32{0.1, 1, 0}, 1, 0.0)
 	require.Len(t, results, 1)
 	assert.Equal(t, "y", results[0].Record.ID)
 }
@@ -121,7 +121,7 @@ func TestDelete(t *testing.T) {
 
 func TestSearchEmptyStore(t *testing.T) {
 	vs := New()
-	results := vs.Search([]float32{1, 0, 0}, 3)
+	results := vs.Search([]float32{1, 0, 0}, 3, 0.0)
 	assert.Nil(t, results)
 }
 
@@ -133,13 +133,13 @@ func TestSearchTopK(t *testing.T) {
 	vs.Upsert("z", []float32{0, 0, 1}, &chunker.Chunk{ID: "z", Content: "z-axis"})
 
 	// Query closest to x
-	results := vs.Search([]float32{1, 0.1, 0}, 2)
+	results := vs.Search([]float32{1, 0.1, 0}, 2, 0.0)
 	require.Len(t, results, 2)
 	assert.Equal(t, "x", results[0].Record.ID)
 	assert.InDelta(t, 1.0, results[0].Similarity, 0.01)
 
 	// Query closest to y
-	results = vs.Search([]float32{0.1, 1, 0}, 1)
+	results = vs.Search([]float32{0.1, 1, 0}, 1, 0.0)
 	require.Len(t, results, 1)
 	assert.Equal(t, "y", results[0].Record.ID)
 }
@@ -147,7 +147,7 @@ func TestSearchTopK(t *testing.T) {
 func TestSearchZeroVector(t *testing.T) {
 	vs := New()
 	vs.Upsert("a", []float32{1, 0, 0}, &chunker.Chunk{Content: "a"})
-	results := vs.Search([]float32{0, 0, 0}, 3)
+	results := vs.Search([]float32{0, 0, 0}, 3, 0.0)
 	assert.Nil(t, results)
 }
 
@@ -192,7 +192,7 @@ func TestSearchSimilarityOrdering(t *testing.T) {
 	vs.Upsert("b", []float32{0.8, 0.6, 0}, &chunker.Chunk{ID: "b"})
 	vs.Upsert("c", []float32{0.5, 0.5, 0.5}, &chunker.Chunk{ID: "c"})
 
-	results := vs.Search([]float32{1, 0, 0}, 3)
+	results := vs.Search([]float32{1, 0, 0}, 3, 0.0)
 	require.Len(t, results, 3)
 	assert.Equal(t, "a", results[0].Record.ID)
 	assert.Equal(t, "b", results[1].Record.ID)
@@ -206,7 +206,7 @@ func TestSearchDifferentDimensionVectors(t *testing.T) {
 	vs.Upsert("a", []float32{1, 0}, &chunker.Chunk{ID: "a"})
 	vs.Upsert("b", []float32{0, 1, 0}, &chunker.Chunk{ID: "b"})
 
-	results := vs.Search([]float32{1, 0, 0}, 2)
+	results := vs.Search([]float32{1, 0, 0}, 2, 0.0)
 	require.Len(t, results, 2)
 	// a matches in first 2 dims, b matches in dims 2-3
 	// query [1,0,0] vs a [1,0] -> dot=1, |a|=1, sim=1
@@ -283,6 +283,22 @@ func BenchmarkSearch1000(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		vs.Search(query, 5)
+		vs.Search(query, 5, 0.0)
 	}
+}
+
+func TestSearchMinSimilarity(t *testing.T) {
+	vs := New()
+	vs.Upsert("a", []float32{1, 0, 0}, &chunker.Chunk{ID: "a", Content: "high-match"})
+	vs.Upsert("b", []float32{0, 0.2, 0}, &chunker.Chunk{ID: "b", Content: "low-match"})
+
+	// With threshold 0.0 — both returned
+	all := vs.Search([]float32{1, 0, 0}, 5, 0.0)
+	assert.Len(t, all, 2)
+
+	// With threshold 0.5 — only high-match returned
+	filtered := vs.Search([]float32{1, 0, 0}, 5, 0.5)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "a", filtered[0].Record.ID)
+	assert.Greater(t, filtered[0].Similarity, 0.5)
 }

@@ -260,7 +260,7 @@ func TestRAGAccuracy(t *testing.T) {
 	require.NotEmpty(t, files)
 
 	// 3. Chunk files
-	chk := chunker.New()
+	chk := chunker.New("")
 	chunks := chk.ChunkFiles(files)
 	require.NotEmpty(t, chunks)
 

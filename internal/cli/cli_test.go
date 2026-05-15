@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -383,7 +384,7 @@ func TestHandleAskAPIWithHistory(t *testing.T) {
 
 	assert.Equal(t, 200, rr.Code)
 	assert.Contains(t, rr.Body.String(), "Answer with history.")
-	assert.Contains(t, mock.lastPrompt, "Conversation History", "prompt should include conversation history when history is provided")
+	assert.Contains(t, mock.lastPrompt, "对话历史", "prompt should include conversation history when history is provided")
 }
 
 // mockAskProvider implements llm.Provider for ask API tests.
@@ -1008,10 +1009,11 @@ func TestArticleDifficulty(t *testing.T) {
 }
 
 func TestOpenBrowser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("跳过 Windows：cmd /c start 会弹出文件不存在对话框")
+	}
 	// openBrowser should not crash with a file:// URL
 	err := openBrowser("file:///nonexistent/index.html")
-	// On Windows, cmd.Start() starts the process and may or may not return an error
-	// depending on whether cmd.exe is available (it always is on Windows)
 	// We just verify it doesn't panic
 	_ = err
 }
@@ -1060,6 +1062,9 @@ func TestServeAskPageEnabled(t *testing.T) {
 }
 
 func TestRunBrowseWikiExists(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("跳过 Windows：cmd /c start 会打开浏览器窗口并可能弹出文件不存在对话框（TempDir 先于浏览器读取被清理）")
+	}
 	dir := t.TempDir()
 	wikiDir := filepath.Join(dir, ".codewiki", "wiki")
 	os.MkdirAll(wikiDir, 0755)

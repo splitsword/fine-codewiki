@@ -1,10 +1,13 @@
 package chunker
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/splitsword/fine-codewiki/internal/analyzer"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestChunkerBasicFile(t *testing.T) {
@@ -28,7 +31,7 @@ func TestChunkerBasicFile(t *testing.T) {
 		},
 	}
 
-	c := New()
+	c := New("")
 	chunks := c.ChunkFiles(files)
 
 	assert.Len(t, chunks, 3)
@@ -62,7 +65,7 @@ func TestChunkerEmptyFile(t *testing.T) {
 		{Filename: "empty.py"},
 	}
 
-	c := New()
+	c := New("")
 	chunks := c.ChunkFiles(files)
 
 	assert.Len(t, chunks, 1)
@@ -86,7 +89,7 @@ func TestChunkerMultipleFiles(t *testing.T) {
 		},
 	}
 
-	c := New()
+	c := New("")
 	chunks := c.ChunkFiles(files)
 
 	assert.Len(t, chunks, 6)
@@ -122,7 +125,7 @@ func TestChunkerClassWithMultipleMethods(t *testing.T) {
 		},
 	}
 
-	c := New()
+	c := New("")
 	chunks := c.ChunkFiles(files)
 
 	assert.Len(t, chunks, 1)
@@ -144,7 +147,7 @@ func TestChunkerFunctionWithDecorators(t *testing.T) {
 		},
 	}
 
-	c := New()
+	c := New("")
 	chunks := c.ChunkFiles(files)
 
 	assert.Len(t, chunks, 1)
@@ -164,11 +167,89 @@ func TestChunkerOnlyImports(t *testing.T) {
 		},
 	}
 
-	c := New()
+	c := New("")
 	chunks := c.ChunkFiles(files)
 
 	assert.Len(t, chunks, 1)
 	assert.Equal(t, TypeImport, chunks[0].Type)
 	assert.Contains(t, chunks[0].Content, "User from models.user")
 	assert.Contains(t, chunks[0].Content, "Order from models.order")
+}
+
+func TestChunkerWithSourceCode(t *testing.T) {
+	dir := t.TempDir()
+	srcFile := filepath.Join(dir, "hello.py")
+	content := "def greet(name):\n    return f\"Hello, {name}!\"\n\ndef add(a, b):\n    return a + b\n"
+	require.NoError(t, os.WriteFile(srcFile, []byte(content), 0644))
+
+	files := []*analyzer.FileResult{
+		{
+			Filename: "hello.py",
+			Functions: []analyzer.FunctionInfo{
+				{Name: "greet", Params: []string{"name"}, StartLine: 1, EndLine: 2},
+				{Name: "add", Params: []string{"a", "b"}, StartLine: 4, EndLine: 5},
+			},
+		},
+	}
+
+	c := New(dir)
+	chunks := c.ChunkFiles(files)
+	require.Len(t, chunks, 2)
+
+	assert.Contains(t, chunks[0].Content, "def greet(name):")
+	assert.Contains(t, chunks[0].Content, `"Hello, {name}!"`)
+	assert.Contains(t, chunks[1].Content, "def add(a, b):")
+	assert.Contains(t, chunks[1].Content, "return a + b")
+}
+
+func TestChunkerSourceCodeFallback(t *testing.T) {
+	// sourceDir="" → graceful degradation to signature-only
+	files := []*analyzer.FileResult{
+		{
+			Filename: "nonexistent.py",
+			Functions: []analyzer.FunctionInfo{
+				{Name: "foo", StartLine: 1, EndLine: 3},
+			},
+		},
+	}
+
+	c := New("")
+	chunks := c.ChunkFiles(files)
+	require.Len(t, chunks, 1)
+	assert.Contains(t, chunks[0].Content, "Function foo()")
+	assert.NotContains(t, chunks[0].Content, "```")
+}
+
+func TestChunkWikiDocs(t *testing.T) {
+	docs := map[string]string{
+		"architecture": "## 系统分层\n\n项目采用三层架构，分离入口、业务和工具。\n\n## 关键设计决策\n\n选择模块化设计以支持独立部署。",
+		"overview":     "## 项目简介\n\n这是一个演示项目。",
+	}
+
+	c := New("")
+	chunks := c.ChunkWikiDocs(docs)
+	require.Len(t, chunks, 3)
+
+	// All should be TypeDocument
+	for _, ch := range chunks {
+		assert.Equal(t, TypeDocument, ch.Type)
+	}
+
+	// Check content
+	var headings []string
+	for _, ch := range chunks {
+		headings = append(headings, ch.Name)
+		assert.Contains(t, ch.Filename, "wiki/")
+	}
+	assert.Contains(t, headings, "系统分层")
+	assert.Contains(t, headings, "关键设计决策")
+	assert.Contains(t, headings, "项目简介")
+}
+
+func TestChunkWikiDocsEmpty(t *testing.T) {
+	c := New("")
+
+	assert.Empty(t, c.ChunkWikiDocs(nil))
+	assert.Empty(t, c.ChunkWikiDocs(map[string]string{}))
+	assert.Empty(t, c.ChunkWikiDocs(map[string]string{"empty": ""}))
 }
