@@ -854,6 +854,23 @@ func sourceExts(lang string) map[string]bool {
 
 // WalkSourceFiles traverses a directory and returns paths of all supported
 // source files, skipping common build/output directories.
+// skipDirs lists directory names that should never be parsed as project source.
+var skipDirs = map[string]bool{
+	"testdata":  true,
+	"test":      true,
+	"tests":     true,
+	"__tests__": true,
+	"spec":      true,
+	"fixtures":  true,
+	".git":      true,
+	".hg":       true,
+	".svn":      true,
+}
+
+func isSkipDir(name string) bool {
+	return skipDirs[name]
+}
+
 func WalkSourceFiles(dir string, lang string) ([]string, error) {
 	exts := sourceExts(lang)
 	var paths []string
@@ -863,7 +880,7 @@ func WalkSourceFiles(dir string, lang string) ([]string, error) {
 		}
 		if info.IsDir() {
 			name := filepath.Base(path)
-			if path != dir && (strings.HasPrefix(name, ".") || name == "node_modules" || name == "__pycache__" || name == "vendor" || name == "dist" || name == "build" || name == "out") {
+			if path != dir && (strings.HasPrefix(name, ".") || name == "node_modules" || name == "__pycache__" || name == "vendor" || name == "dist" || name == "build" || name == "out" || isSkipDir(name)) {
 				return filepath.SkipDir
 			}
 			return nil

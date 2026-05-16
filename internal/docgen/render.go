@@ -399,6 +399,7 @@ p { margin:12px 0; }
 .code-block pre { margin:0; border-radius:0; box-shadow:none; border:none; }
 pre { background:var(--pre-bg); color:var(--pre-text); padding:18px 20px; overflow:auto; border-radius:var(--radius); box-shadow:var(--shadow); position:relative; }
 pre code { background:none; padding:0; font-size:13px; line-height:1.65; font-weight:400; font-family:"Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace; }
+pre code.hljs { background:inherit !important; }
 
 /* ---- Blockquote ---- */
 blockquote { margin:20px 0; padding:14px 20px; color:var(--text2); border-left:3px solid; border-image:var(--accent-gradient) 1; background:var(--accent-glow); border-radius:0 var(--radius) var(--radius) 0; }
@@ -496,11 +497,7 @@ const wikiPageJS = `
       document.documentElement.setAttribute('data-theme',t);
       localStorage.setItem('codewiki-theme',t);
       btn.textContent=t==='dark'?'☀️':'🌙';
-      document.getElementById('hljs-light').disabled=t==='dark';
-      document.getElementById('hljs-dark').disabled=t!=='dark';
     });
-    document.getElementById('hljs-light').disabled=theme==='dark';
-    document.getElementById('hljs-dark').disabled=theme!=='dark';
   });
 })();
 
@@ -608,13 +605,11 @@ func BuildWikiPage(title, body, currentURL string, sections []NavSection, totalA
 <style>`)
 	out.WriteString(wikiPageCSS)
 	out.WriteString(`</style>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" id="hljs-light">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" id="hljs-dark" disabled>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <script type="module">
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
   mermaid.initialize({ startOnLoad:true, securityLevel:'loose', theme:'neutral' });
-  window.addEventListener('load',function(){ hljs.highlightAll(); });
 </script>
 `)
 	out.WriteString(wikiPageJS)
@@ -735,6 +730,7 @@ function filterSearch(q){
 `, contentStyle))
 	out.WriteString(body)
 	out.WriteString(`</div>
+<script>hljs.highlightAll();</script>
 </body>
 </html>
 `)

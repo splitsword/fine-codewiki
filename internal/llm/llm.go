@@ -90,6 +90,18 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// defaultEmbeddingConfig returns a default config tuned for embedding tasks.
+// Uses a small dedicated embedding model instead of the generation model.
+func defaultEmbeddingConfig() Config {
+	return Config{
+		Provider:   "ollama",
+		BaseURL:    "http://localhost:11434",
+		Model:      "nomic-embed-text",
+		MaxRetries: 3,
+		Timeout:    120,
+	}
+}
+
 // LoadAppConfig reads the dual-model configuration from a YAML file.
 // Supports both new format (generation + embedding blocks) and old format
 // (single flat config, which is copied to both generation and embedding).
@@ -98,7 +110,7 @@ func LoadConfig(path string) (*Config, error) {
 func LoadAppConfig(path string) (*AppConfig, error) {
 	appCfg := &AppConfig{
 		Generation: defaultConfig(),
-		Embedding:  defaultConfig(),
+		Embedding:  defaultEmbeddingConfig(),
 	}
 
 	if path == "" {
@@ -567,6 +579,13 @@ func (p *OllamaProvider) Embed(ctx context.Context, texts []string) ([][]float32
 
 	var resp ollamaEmbedResponse
 	if err := p.post(ctx, "/api/embed", reqBody, &resp); err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("Ollama 嵌入端点不可用：请确认 "+
+				"1) Ollama 版本 >= v0.1.26（支持 /api/embed）"+
+				"2) 配置的嵌入模型 '%s' 存在（运行: ollama pull %s）"+
+				"3) 或更换为专用嵌入模型，例如: ollama pull nomic-embed-text"+
+				"，然后运行 codewiki config 修改嵌入模型", p.Model, p.Model)
+		}
 		return nil, err
 	}
 	return resp.Embeddings, nil

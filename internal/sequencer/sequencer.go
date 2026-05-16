@@ -38,9 +38,10 @@ type Sequence struct {
 
 // Message is a single interaction between two participants.
 type Message struct {
-	From  string
-	To    string
-	Label string
+	From     string
+	To       string
+	Label    string
+	IsReturn bool // true if this is a response back to the caller
 }
 
 // BuildCallGraph scans source files to discover inter-function calls.
@@ -583,10 +584,20 @@ func pathToSequence(path []CallEdge) Sequence {
 	for _, e := range path {
 		getParticipantIndex(e.From.Module)
 		getParticipantIndex(e.To.Module)
+		action := inferAction(e.To.Name)
+		// Detect return pattern: A→B immediately followed by B→A
+		isReturn := false
+		if len(messages) > 0 {
+			prev := messages[len(messages)-1]
+			if prev.From == e.To.Module && prev.To == e.From.Module {
+				isReturn = true
+			}
+		}
 		messages = append(messages, Message{
-			From:  e.From.Module,
-			To:    e.To.Module,
-			Label: e.To.Name,
+			From:     e.From.Module,
+			To:       e.To.Module,
+			Label:    fmt.Sprintf("%s() — %s", e.To.Name, action),
+			IsReturn: isReturn,
 		})
 	}
 
@@ -702,7 +713,13 @@ func GenerateSequenceDiagram(seq Sequence) string {
 		}
 		fromID := mermaidEscape(m.From)
 		toID := mermaidEscape(m.To)
-		b.WriteString(fmt.Sprintf("    %s->>%s: %s\n", fromID, toID, m.Label))
+		var arrow string
+		if m.IsReturn {
+			arrow = fmt.Sprintf("%s-->>%s", fromID, toID)
+		} else {
+			arrow = fmt.Sprintf("%s->>%s", fromID, toID)
+		}
+		b.WriteString(fmt.Sprintf("    %s: %s\n", arrow, m.Label))
 		lastMsg = &m
 	}
 

@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-16 — feat(diagram, rag): 图表质量全面升级 + RAG 检索增强 (88eb127)
+
 - 2026-05-15 — feat(docgen, rag, chunker): RAG 问答系统改造 + 生成管线异步并行化 (57b9d5e)
 
 - 2026-05-15 — feat(docgen): 架构说明叙事化重构 — 对标 Zread 从数据展示转向叙事构建 (468f757)

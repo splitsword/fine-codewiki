@@ -10,7 +10,7 @@ import (
 )
 
 // GenerateArchitectureDiagram generates a Mermaid flowchart (graph TD)
-// representing the module dependency structure.
+// representing the module dependency structure with role annotations.
 func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 	var b strings.Builder
 	b.WriteString("%% 架构图：展示项目模块间的依赖关系与层级结构\n")
@@ -19,6 +19,9 @@ func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 	if len(graph.Nodes) == 0 {
 		return b.String(), nil
 	}
+
+	// Build role map for node annotations
+	roleMap := buildRoleMap(graph)
 
 	// Collect standalone nodes (not in any named group) and grouped nodes
 	groups := graph.GroupByDirectory()
@@ -45,7 +48,7 @@ func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 		b.WriteString(fmt.Sprintf("    subgraph %s\n", mermaidEscape(dir)))
 		for _, n := range nodes {
 			nodeID := mermaidEscape(n.Name)
-			b.WriteString(fmt.Sprintf("        %s[%s]\n", nodeID, n.Name))
+			b.WriteString(fmt.Sprintf("        %s[%s]\n", nodeID, formatNodeLabel(n.Name, roleMap[n.Name])))
 			written[n.Name] = true
 		}
 		b.WriteString("    end\n")
@@ -55,7 +58,7 @@ func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 	for _, n := range graph.Nodes {
 		if !written[n.Name] {
 			nodeID := mermaidEscape(n.Name)
-			b.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID, n.Name))
+			b.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID, formatNodeLabel(n.Name, roleMap[n.Name])))
 		}
 	}
 
@@ -65,8 +68,9 @@ func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 		b.WriteString(fmt.Sprintf("    click %s \"javascript:navigateToModule('%s')\"\n", nodeID, n.Name))
 	}
 
-	// Inject semantic role-based styling
+	// Inject semantic role-based styling + color legend
 	writeRoleStyling(&b, graph)
+	writeColorLegend(&b, graph)
 
 	// Detect cycles for annotation
 	cycles := graph.DetectCycles()
@@ -78,18 +82,99 @@ func GenerateArchitectureDiagram(graph *grapher.Graph) (string, error) {
 		}
 	}
 
-	// Write edges
+	// Write edges — use different styles for import/call/inherit
 	for _, e := range graph.Edges {
 		fromID := mermaidEscape(e.From)
 		toID := mermaidEscape(e.To)
-		if cycleEdges[e.From+"->"+e.To] {
+		switch {
+		case cycleEdges[e.From+"->"+e.To]:
 			b.WriteString(fmt.Sprintf("    %s -.-> %s\n", fromID, toID))
-		} else {
+		case e.Type == "call":
+			b.WriteString(fmt.Sprintf("    %s -.->|调用| %s\n", fromID, toID))
+		case e.Type == "inherit":
+			b.WriteString(fmt.Sprintf("    %s ==|继承|> %s\n", fromID, toID))
+		default:
 			b.WriteString(fmt.Sprintf("    %s --> %s\n", fromID, toID))
 		}
 	}
 
 	return b.String(), nil
+}
+
+// buildRoleMap returns a map of module name → inferred role label.
+func buildRoleMap(graph *grapher.Graph) map[string]string {
+	m := make(map[string]string)
+	for _, r := range graph.InferModuleRoles() {
+		if r.Role != "" {
+			m[r.Name] = r.Role
+		}
+	}
+	return m
+}
+
+// formatNodeLabel returns a Mermaid node label with an optional role annotation.
+func formatNodeLabel(name, role string) string {
+	if role == "" {
+		return name
+	}
+	shortLabel := roleShortName(name)
+	if shortLabel == name || strings.Contains(name, "/") {
+		// Multi-segment path: show last segment + role
+		parts := strings.Split(name, "/")
+		return fmt.Sprintf("%s<br/>%s", parts[len(parts)-1], role)
+	}
+	return fmt.Sprintf("%s<br/>%s", shortLabel, role)
+}
+
+// roleShortName picks a concise display name for a module from its full path.
+func roleShortName(fullName string) string {
+	if idx := strings.LastIndex(fullName, "/"); idx >= 0 {
+		return fullName[idx+1:]
+	}
+	return fullName
+}
+
+// writeColorLegend appends a hidden subgraph that acts as a color legend for the diagram.
+func writeColorLegend(b *strings.Builder, graph *grapher.Graph) {
+	roles := graph.InferModuleRoles()
+	if len(roles) == 0 {
+		return
+	}
+
+	// Collect which roles are actually used
+	usedRoles := make(map[string]bool)
+	for _, r := range roles {
+		if _, ok := roleStyleMap[r.Role]; ok {
+			usedRoles[r.Role] = true
+		}
+	}
+	if len(usedRoles) == 0 {
+		return
+	}
+
+	// Legend role order with Chinese labels
+	type legendEntry struct{ role, className, label string }
+	var entries []legendEntry
+	allEntries := []legendEntry{
+		{"入口层", "entry", "🔵 入口层"},
+		{"核心领域", "core", "🟠 核心领域"},
+		{"工具库", "util", "🟣 工具库"},
+		{"支撑模块", "support", "🟢 支撑模块"},
+		{"业务模块", "business", "⚫ 业务模块"},
+		{"独立模块", "independent", "🟡 独立模块"},
+	}
+	for _, e := range allEntries {
+		if usedRoles[e.role] {
+			entries = append(entries, e)
+		}
+	}
+
+	b.WriteString("\n    subgraph 图例\n")
+	for _, e := range entries {
+		b.WriteString(fmt.Sprintf("        %s[%s]:::legend\n", mermaidEscape("legend_"+e.className), e.label))
+		b.WriteString(fmt.Sprintf("        class %s %s\n", mermaidEscape("legend_"+e.className), e.className))
+	}
+	b.WriteString("    end\n")
 }
 
 // GenerateClassDiagram generates a Mermaid classDiagram from the code graph.
@@ -343,18 +428,162 @@ func GenerateTopLevelDiagram(graph *grapher.Graph) (string, error) {
 	if len(top.Nodes) == 0 {
 		return "", nil
 	}
+	roleMap := buildRoleMap(graph)
 	var b strings.Builder
-	b.WriteString("%% 顶层架构概览：展示各模块包之间的依赖关系\n")
+	b.WriteString("%% 顶层架构概览：展示各顶层模块包之间的依赖关系与角色分工\n")
 	b.WriteString("graph TD\n")
 	for _, n := range top.Nodes {
 		nodeID := mermaidEscape(n.Name)
-		b.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID, n.Name))
+		label := formatNodeLabel(n.Name, roleMap[n.Name])
+		// Count sub-modules for context
+		subCount := 0
+		for _, gn := range graph.Nodes {
+			if strings.HasPrefix(gn.Name, n.Name+"/") {
+				subCount++
+			}
+		}
+		if subCount > 0 {
+			label = fmt.Sprintf("%s<br/><i>%d 个子模块</i>", label, subCount)
+		}
+		b.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID, label))
 	}
+	writeRoleStyling(&b, top)
+	writeColorLegend(&b, top)
 	for _, e := range top.Edges {
 		fromID := mermaidEscape(e.From)
 		toID := mermaidEscape(e.To)
-		b.WriteString(fmt.Sprintf("    %s --> %s\n", fromID, toID))
+		if e.Type == "call" {
+			b.WriteString(fmt.Sprintf("    %s -.->|调用| %s\n", fromID, toID))
+		} else {
+			b.WriteString(fmt.Sprintf("    %s --> %s\n", fromID, toID))
+		}
 	}
+	return b.String(), nil
+}
+
+// tierOrder defines the left-to-right order of architectural tiers in layered diagrams.
+var tierOrder = []struct {
+	role  string
+	label string
+}{
+	{"入口层", "🔵 入口层"},
+	{"核心领域", "🟠 核心领域"},
+	{"业务模块", "⚫ 业务模块"},
+	{"支撑模块", "🟢 支撑模块"},
+	{"工具库", "🟣 工具库"},
+	{"独立模块", "🟡 独立模块"},
+}
+
+// GenerateLayeredArchitectureDiagram generates a role-based layered architecture
+// diagram. Modules are grouped into architectural tiers (entry, core, business,
+// support, util) and laid out left-to-right to show the system's layered structure.
+// Edges show cross-tier dependencies with arrow styles indicating relationship type.
+func GenerateLayeredArchitectureDiagram(graph *grapher.Graph) (string, error) {
+	roles := graph.InferModuleRoles()
+	roleMap := make(map[string]string, len(roles))
+	for _, r := range roles {
+		roleMap[r.Name] = r.Role
+	}
+
+	// Group nodes by tier
+	tiers := make(map[string][]*grapher.Node)
+	var unassigned []*grapher.Node
+	for _, n := range graph.Nodes {
+		if role, ok := roleMap[n.Name]; ok {
+			tiers[role] = append(tiers[role], n)
+		} else {
+			unassigned = append(unassigned, n)
+		}
+	}
+	if len(tiers) == 0 {
+		return "", nil
+	}
+
+	// Build a set of tiered nodes for edge filtering
+	hasRole := make(map[string]bool, len(roleMap))
+	for name := range roleMap {
+		hasRole[name] = true
+	}
+
+	var b strings.Builder
+	b.WriteString("%% 分层架构图：按职责角色组织模块，展示系统的分层结构与跨层依赖\n")
+	b.WriteString("graph LR\n")
+
+	// Render each tier as a subgraph, in prescribed order
+	for _, t := range tierOrder {
+		nodes, ok := tiers[t.role]
+		if !ok || len(nodes) == 0 {
+			continue
+		}
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
+		b.WriteString(fmt.Sprintf("    subgraph %s[\"%s\"]\n", mermaidEscape(t.role), t.label))
+		for _, n := range nodes {
+			nodeID := mermaidEscape(n.Name)
+			shortName := roleShortName(n.Name)
+			b.WriteString(fmt.Sprintf("        %s[\"%s\"]\n", nodeID, shortName))
+		}
+		b.WriteString("    end\n")
+	}
+
+	// Render unassigned nodes
+	if len(unassigned) > 0 {
+		sort.Slice(unassigned, func(i, j int) bool { return unassigned[i].Name < unassigned[j].Name })
+		b.WriteString("    subgraph unassigned[\"📦 其他\"]\n")
+		for _, n := range unassigned {
+			nodeID := mermaidEscape(n.Name)
+			b.WriteString(fmt.Sprintf("        %s[\"%s\"]\n", nodeID, roleShortName(n.Name)))
+		}
+		b.WriteString("    end\n")
+	}
+
+	// Role-based styling
+	writeRoleStyling(&b, graph)
+
+	// Cross-tier edges — only show edges where at least one end has a role,
+	// and deduplicate by node pair
+	type edgeKey struct{ from, to string }
+	seenEdges := make(map[edgeKey]bool)
+
+	// Count tier-to-tier edge stats for summary
+	tierEdgeCount := make(map[string]int)
+	for _, e := range graph.Edges {
+		fromRole, fromHasRole := roleMap[e.From]
+		toRole, toHasRole := roleMap[e.To]
+		if !fromHasRole || !toHasRole {
+			continue
+		}
+		key := edgeKey{fromRole, toRole}
+		if fromRole != toRole && !seenEdges[key] {
+			seenEdges[key] = true
+			tierEdgeCount[fmt.Sprintf("%s→%s", fromRole, toRole)]++
+		}
+	}
+
+	// Write significant inter-tier edges (max 3 per tier pair)
+	edgeCountByPair := make(map[string]int)
+	for _, e := range graph.Edges {
+		fromRole, fromHasRole := roleMap[e.From]
+		toRole, toHasRole := roleMap[e.To]
+		if !fromHasRole || !toHasRole || fromRole == toRole {
+			continue
+		}
+		pairKey := fmt.Sprintf("%s->%s", fromRole, toRole)
+		if edgeCountByPair[pairKey] >= 3 {
+			continue // don't clutter with too many edges between same tiers
+		}
+		edgeCountByPair[pairKey]++
+		fromID := mermaidEscape(e.From)
+		toID := mermaidEscape(e.To)
+		switch {
+		case e.Type == "call":
+			b.WriteString(fmt.Sprintf("    %s -.->|调用| %s\n", fromID, toID))
+		case e.Type == "inherit":
+			b.WriteString(fmt.Sprintf("    %s ==|继承|> %s\n", fromID, toID))
+		default:
+			b.WriteString(fmt.Sprintf("    %s --> %s\n", fromID, toID))
+		}
+	}
+
 	return b.String(), nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -47,6 +48,8 @@ type Wiki struct {
 	ThemeIntros         map[string]string          // theme name → LLM-generated 2-3 sentence intro
 	ChapterNarratives   map[string]string          // theme name → LLM-generated narrative article
 	ChapterPages        map[string]string          // theme name → standalone chapter HTML
+	Sequences           []sequencer.Sequence       // call sequences for per-chapter sequence diagrams
+	CallEdges           []sequencer.CallEdge       // raw call edges for per-module sequence diagrams
 }
 
 // statusMsg is sent through the status channel for structured concurrent output.
@@ -673,7 +676,8 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName, readme, language str
 	}
 
 	fmt.Fprintf(&b, "项目：%s\n", projectName)
-	fmt.Fprintf(&b, "模块数：%d\n", len(graph.Nodes))
+	cleanNodes := filterNonNoiseModules(graph.Nodes)
+	fmt.Fprintf(&b, "模块数：%d\n", len(cleanNodes))
 	fmt.Fprintf(&b, "依赖数：%d\n", len(graph.Edges))
 	if language != "" {
 		fmt.Fprintf(&b, "编程语言：%s\n", language)
@@ -685,7 +689,7 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName, readme, language str
 	}
 
 	entries := graph.EntryPoints()
-	important := sortNodesByImportance(graph.Nodes, graph, entries)
+	important := sortNodesByImportance(cleanNodes, graph, entries)
 	maxModulesInPrompt := 20
 	fmt.Fprintf(&b, "核心模块列表（按重要性排序，供参考，不要原样复述）：\n")
 	for i, n := range important {
@@ -707,15 +711,23 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName, readme, language str
 
 // isChecklistLike checks if the LLM output is just a repetition of module names
 // rather than a real descriptive overview.
+// reSourceAttr matches source attribution lines like `*来源：path/file.go*`
+// which are required by the prompt and should not count toward checklist detection.
+var reSourceAttr = regexp.MustCompile(`\*来源：.+?\*`)
+
 func isChecklistLike(text string, graph *grapher.Graph) bool {
 	if len(text) < 20 {
 		return true // too short to be a real description
 	}
 
-	// Count how many module names appear in the text
+	// Strip *来源：`...`* attribution lines — these are required by the prompt
+	// and do not indicate checklist-like content.
+	clean := reSourceAttr.ReplaceAllString(text, "")
+
+	// Count how many module names appear in the cleaned text
 	moduleHits := 0
 	for _, n := range graph.Nodes {
-		if strings.Contains(text, n.Name) {
+		if strings.Contains(clean, n.Name) {
 			moduleHits++
 		}
 	}
@@ -1172,6 +1184,31 @@ func buildArchitecturePrompt(graph *grapher.Graph, projectName, readme, language
 	}
 	fmt.Fprintln(&b)
 
+	// --- 架构图结构摘要 ---
+	topGroups := graph.GroupByDirectory()
+	if len(topGroups) > 1 {
+		fmt.Fprintf(&b, "【架构图结构】\n")
+		fmt.Fprintf(&b, "生成的架构图包含 %d 个目录级别的子系统：\n", len(topGroups))
+		var dirs []string
+		for dir := range topGroups {
+			if dir != "." && dir != "" {
+				dirs = append(dirs, dir)
+			}
+		}
+		sort.Strings(dirs)
+		for _, dir := range dirs {
+			if len(dirs) > 10 {
+				// Too many groups, summarize
+				fmt.Fprintf(&b, "- %d 个目录分组（含 %s 等）\n", len(dirs), strings.Join(dirs[:5], ", "))
+				break
+			}
+			fmt.Fprintf(&b, "- `%s`（%d 个模块）\n", dir, len(topGroups[dir]))
+		}
+		fmt.Fprintf(&b, "图中用颜色区分角色：🔵蓝色=入口层、🟠橙色=核心领域、🟣紫色=工具库、🟢绿色=支撑模块\n")
+		fmt.Fprintf(&b, "你可以在文章中引用图表中的颜色标注，例如：\"图中橙色标注的核心领域模块承担了...\"\n")
+		fmt.Fprintln(&b)
+	}
+
 	// --- 写作要求 ---
 	fmt.Fprintf(&b, "## 写作要求\n\n")
 	fmt.Fprintf(&b, "请撰写一篇 800-1500 字的架构说明（Markdown 格式），要求：\n\n")
@@ -1210,9 +1247,10 @@ func buildWhatItDoesPrompt(graph *grapher.Graph, projectName, readme, language s
 	}
 
 	entries := graph.EntryPoints()
-	if len(entries) > 0 {
+	filteredEntries := filterNonNoiseModules(entries)
+	if len(filteredEntries) > 0 {
 		fmt.Fprintf(&b, "【入口模块】\n")
-		for _, e := range entries {
+		for _, e := range filteredEntries {
 			fmt.Fprintf(&b, "- %s\n", e.Name)
 		}
 		fmt.Fprintln(&b)
@@ -1221,7 +1259,7 @@ func buildWhatItDoesPrompt(graph *grapher.Graph, projectName, readme, language s
 	roles := graph.InferModuleRoles()
 	fmt.Fprintf(&b, "【模块角色推断】\n")
 	for _, r := range roles {
-		if r.Role == "核心领域" || r.Role == "入口层" {
+		if (r.Role == "核心领域" || r.Role == "入口层") && !isNoiseModule(r.Name) {
 			fmt.Fprintf(&b, "- %s（%s，得分 %.3f）\n", r.Name, r.Role, r.Score)
 		}
 	}
@@ -1251,12 +1289,13 @@ func buildKeyConceptsPrompt(graph *grapher.Graph, projectName, language string) 
 	fmt.Fprintf(&b, "## Safety Profile 的权限隔离机制\n")
 	fmt.Fprintf(&b, "通过编译期和运行时的双重限制...\n\n")
 
+	cleanNodes := filterNonNoiseModules(graph.Nodes)
 	fmt.Fprintf(&b, "项目：%s\n", projectName)
-	fmt.Fprintf(&b, "模块数：%d\n", len(graph.Nodes))
+	fmt.Fprintf(&b, "模块数：%d\n", len(cleanNodes))
 	fmt.Fprintf(&b, "依赖边数：%d\n\n", len(graph.Edges))
 
 	// Provide architectural signals
-	entries := graph.EntryPoints()
+	entries := filterNonNoiseModules(graph.EntryPoints())
 	if len(entries) > 0 {
 		fmt.Fprintf(&b, "【入口模块】\n")
 		for _, e := range entries {
@@ -1269,7 +1308,17 @@ func buildKeyConceptsPrompt(graph *grapher.Graph, projectName, language string) 
 	if len(cycles) > 0 {
 		fmt.Fprintf(&b, "【循环依赖】\n")
 		for _, c := range cycles {
-			fmt.Fprintf(&b, "- %s\n", strings.Join(c.Nodes, " → "))
+			// Skip cycles involving noise modules
+			allNoise := true
+			for _, n := range c.Nodes {
+				if !isNoiseModule(n) {
+					allNoise = false
+					break
+				}
+			}
+			if !allNoise {
+				fmt.Fprintf(&b, "- %s\n", strings.Join(c.Nodes, " → "))
+			}
 		}
 		fmt.Fprintln(&b)
 	}
@@ -1277,7 +1326,7 @@ func buildKeyConceptsPrompt(graph *grapher.Graph, projectName, language string) 
 	roles := graph.InferModuleRoles()
 	fmt.Fprintf(&b, "【模块角色】\n")
 	for _, r := range roles {
-		if r.Role == "核心领域" || r.Role == "入口层" || r.Role == "工具库" {
+		if (r.Role == "核心领域" || r.Role == "入口层" || r.Role == "工具库") && !isNoiseModule(r.Name) {
 			deps := graph.DependenciesOf(r.Name)
 			dependents := graph.DependentsOf(r.Name)
 			fmt.Fprintf(&b, "- %s（%s，依赖 %d 个模块，被 %d 个模块依赖）\n", r.Name, r.Role, len(deps), len(dependents))
@@ -2823,11 +2872,11 @@ func generateModuleThemes(ctx context.Context, provider llm.Provider, projectNam
 		}
 	}
 
-	// If too many unassigned or too few themes, fall back to static
+	// If too many unassigned or too few themes, use two-phase LLM fallback
 	if len(unassigned) > len(graph.Nodes)/3 || len(result) < 2 {
-		fmt.Printf("警告：LLM 分组覆盖率不足（未分配 %d/%d 模块，%d 个主题），使用静态回退\n",
-			len(unassigned), len(graph.Nodes), len(result))
-		return groupModulesByTheme(graph)
+		fmt.Printf("LLM 一轮覆盖率不足（%d/%d 未分配），启动两阶段回退...\n",
+			len(unassigned), len(graph.Nodes))
+		return generateModuleThemesTwoPhase(ctx, provider, projectName, graph, result, unassigned)
 	}
 
 	// Distribute unassigned modules to the closest theme by naming similarity
@@ -2894,12 +2943,161 @@ func keywordOverlap(source, target string) int {
 	return count
 }
 
+// generateModuleThemesTwoPhase is the fallback when one-shot LLM grouping fails.
+// Phase A: LLM defines 3-8 themes (names + 1-line descriptions only, no module lists).
+// Phase B: LLM classifies unassigned modules into those themes (compact name-only list).
+// Phase C: Residual modules assigned via findClosestTheme.
+func generateModuleThemesTwoPhase(ctx context.Context, provider llm.Provider, projectName string, graph *grapher.Graph, partialResult map[string][]*grapher.Node, unassigned []*grapher.Node) map[string][]*grapher.Node {
+	// Phase A: Get compact theme definitions from LLM
+	themeDefs := requestThemeDefinitions(ctx, provider, projectName)
+	if len(themeDefs) < 2 {
+		fmt.Println("两阶段回退 Phase A 失败，使用静态分组")
+		return groupModulesByTheme(graph)
+	}
+
+	// Merge partial result themes into definitions
+	themeNames := make(map[string]bool)
+	for name := range themeDefs {
+		themeNames[name] = true
+	}
+	for name := range partialResult {
+		if !themeNames[name] {
+			themeDefs[name] = name
+		}
+	}
+
+	// Rebuild result from partial + theme defs
+	result := make(map[string][]*grapher.Node)
+	for name, nodes := range partialResult {
+		result[name] = nodes
+	}
+
+	// Collect all unassigned module names (compact list for classification prompt)
+	unassignedNames := make([]string, len(unassigned))
+	for i, n := range unassigned {
+		unassignedNames[i] = n.Name
+	}
+
+	// Phase B: LLM classifies unassigned modules into defined themes
+	assignments := requestModuleClassification(ctx, provider, projectName, themeDefs, unassignedNames)
+	nodeMap := make(map[string]*grapher.Node)
+	for _, n := range graph.Nodes {
+		nodeMap[n.Name] = n
+	}
+
+	assignedInPhaseB := make(map[string]bool)
+	for themeName, modNames := range assignments {
+		for _, mn := range modNames {
+			if n, ok := nodeMap[mn]; ok {
+				result[themeName] = append(result[themeName], n)
+				assignedInPhaseB[mn] = true
+			}
+		}
+	}
+
+	// Phase C: findClosestTheme for any leftovers
+	for _, n := range unassigned {
+		if !assignedInPhaseB[n.Name] {
+			best := findClosestTheme(n.Name, result)
+			result[best] = append(result[best], n)
+		}
+	}
+
+	fmt.Printf("两阶段回退完成：Phase A %d 主题 + Phase B %d 模块 + Phase C %d 残余\n",
+		len(themeDefs), len(assignedInPhaseB), len(unassigned)-len(assignedInPhaseB))
+	return result
+}
+
+// requestThemeDefinitions asks LLM to define 3-8 themes without assigning specific modules.
+func requestThemeDefinitions(ctx context.Context, provider llm.Provider, projectName string) map[string]string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "项目 %s 是一个代码库。请为该项目设计 3-8 个教学主题章节名称。\n", projectName)
+	fmt.Fprintf(&b, "每个主题一行，格式：主题名|一句话描述\n")
+	fmt.Fprintf(&b, "主题名 3-8 个中文，按从入门到深入的顺序排列。\n")
+	fmt.Fprintf(&b, "例如：\n入口与命令行|程序的启动入口和参数解析\n数据持久化|数据库访问和存储层实现\n")
+	fmt.Fprintf(&b, "\n现在请输出主题（只输出主题定义，不要输出其他内容）：\n")
+
+	streamCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	response, err := streamComplete(streamCtx, provider, b.String())
+	if err != nil || strings.TrimSpace(response) == "" {
+		return nil
+	}
+
+	result := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(response), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 2)
+		name := strings.TrimSpace(parts[0])
+		if name == "" {
+			continue
+		}
+		desc := ""
+		if len(parts) > 1 {
+			desc = strings.TrimSpace(parts[1])
+		}
+		result[name] = desc
+	}
+	return result
+}
+
+// requestModuleClassification asks LLM to classify module names into predefined themes.
+func requestModuleClassification(ctx context.Context, provider llm.Provider, projectName string, themeDefs map[string]string, moduleNames []string) map[string][]string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "项目 %s 有以下主题章节定义：\n\n", projectName)
+	for name, desc := range themeDefs {
+		fmt.Fprintf(&b, "- **%s**：%s\n", name, desc)
+	}
+	fmt.Fprintf(&b, "\n请将以下模块归入最合适的主题。输出严格 JSON：\n")
+	fmt.Fprintf(&b, `[{"theme":"主题名","modules":["module/a","module/b"]}]`+"\n\n")
+	fmt.Fprintf(&b, "## 待分类模块\n\n")
+	for _, mn := range moduleNames {
+		fmt.Fprintf(&b, "- %s\n", mn)
+	}
+	fmt.Fprintf(&b, "\n现在请输出 JSON：")
+
+	streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	response, err := streamComplete(streamCtx, provider, b.String())
+	if err != nil {
+		return nil
+	}
+	response = strings.TrimSpace(response)
+	if strings.HasPrefix(response, "```") {
+		if idx := strings.Index(response, "\n"); idx != -1 {
+			response = response[idx+1:]
+		}
+		if strings.HasSuffix(response, "```") {
+			response = response[:len(response)-3]
+		}
+		response = strings.TrimSpace(response)
+	}
+
+	var entries []struct {
+		Theme   string   `json:"theme"`
+		Modules []string `json:"modules"`
+	}
+	if err := json.Unmarshal([]byte(response), &entries); err != nil {
+		return nil
+	}
+
+	result := make(map[string][]string)
+	for _, e := range entries {
+		result[e.Theme] = append(result[e.Theme], e.Modules...)
+	}
+	return result
+}
+
 // buildModuleThemesPrompt builds the LLM prompt for semantic module grouping.
 func buildModuleThemesPrompt(projectName string, graph *grapher.Graph) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "你是一位资深软件架构师，正在为一本代码库技术书籍设计目录结构。\n\n")
+	cleanNodes := filterNonNoiseModules(graph.Nodes)
 	fmt.Fprintf(&b, "项目：%s\n", projectName)
-	fmt.Fprintf(&b, "模块总数：%d\n\n", len(graph.Nodes))
+	fmt.Fprintf(&b, "模块总数：%d\n\n", len(cleanNodes))
 	fmt.Fprintf(&b, "请分析以下所有模块，将它们按语义归入 3-8 个有意义的主题章节中。\n\n")
 
 	// List all modules with their inferred responsibilities and roles
@@ -2910,7 +3108,7 @@ func buildModuleThemesPrompt(projectName string, graph *grapher.Graph) string {
 	}
 
 	fmt.Fprintf(&b, "## 模块清单\n\n")
-	for _, n := range graph.Nodes {
+	for _, n := range cleanNodes {
 		resp := inferModuleResponsibility(n)
 		role := roleMap[n.Name]
 		if role == "" {
@@ -2945,7 +3143,7 @@ func buildModuleThemesPrompt(projectName string, graph *grapher.Graph) string {
 // groupModulesByTheme groups modules into thematic categories based on filename heuristics.
 func groupModulesByTheme(graph *grapher.Graph) map[string][]*grapher.Node {
 	groups := make(map[string][]*grapher.Node)
-	for _, n := range graph.Nodes {
+	for _, n := range filterNonNoiseModules(graph.Nodes) {
 		name := strings.ToLower(n.Name)
 		theme := "其他"
 		switch {
@@ -3184,9 +3382,10 @@ func GenerateArchitectureMarkdown(graph *grapher.Graph, narrative string) (strin
 		b.WriteString("\n\n")
 	}
 
-	// Top-level architecture diagram (package-level, typically < 10 nodes)
-	if topDSL, err := diagram.GenerateTopLevelDiagram(graph); err == nil && topDSL != "" {
-		b.WriteString("## 顶层架构图\n\n")
+	// Layered architecture diagram (role-based tier layout)
+	if topDSL, err := diagram.GenerateLayeredArchitectureDiagram(graph); err == nil && topDSL != "" {
+		b.WriteString("## 分层架构图\n\n")
+		b.WriteString("模块按架构角色分组，从左到右展示系统的分层结构与跨层依赖：\n\n")
 		b.WriteString("```mermaid\n")
 		b.WriteString(topDSL)
 		b.WriteString("```\n\n")
@@ -3716,8 +3915,7 @@ section { scroll-margin-top:calc(var(--topbar-h) + 16px); }
 @keyframes fadeUp2 { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
 section { animation:fadeUp2 .4s ease-out; }
 </style>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" id="hljs-light">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" id="hljs-dark" disabled>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
 <script type="module">
@@ -3727,7 +3925,6 @@ section { animation:fadeUp2 .4s ease-out; }
     if(typeof svgPanZoom!=='undefined'){
       document.querySelectorAll('.mermaid svg').forEach(function(svg){svg.style.maxWidth='none';svgPanZoom(svg,{zoomEnabled:true,panEnabled:true,controlIconsEnabled:true,fit:true,center:true})});
     }
-    hljs.highlightAll();
   });
 </script>
 `)
@@ -3848,6 +4045,7 @@ function filterStaticSearch(q){
   r.innerHTML=html||'<div class="search-empty">未找到匹配结果</div>';
 }
 </script>
+<script>hljs.highlightAll();</script>
 </body>
 </html>
 `)
@@ -4984,7 +5182,7 @@ func EmbedContextualContent(wiki *Wiki, graph *grapher.Graph, sourceDir string, 
 	}
 
 	// Overview: top-level diagram + entry point snippet
-	if topDSL, err := diagram.GenerateTopLevelDiagram(graph); err == nil && topDSL != "" {
+	if topDSL, err := diagram.GenerateLayeredArchitectureDiagram(graph); err == nil && topDSL != "" {
 		wiki.Overview += "\n## 架构概览\n\n"
 		wiki.Overview += "```mermaid\n" + topDSL + "\n```\n"
 	}

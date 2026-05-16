@@ -52,22 +52,45 @@ func (s *Session) Turns() []Turn {
 
 // Engine performs RAG retrieval and generation.
 type Engine struct {
-	provider       llm.Provider
+	provider       llm.Provider // embedding provider
+	genProvider    llm.Provider // generation provider (falls back to provider if nil)
 	store          *vectorstore.VectorStore
 	topK           int
 	projectName    string
 	projectContext string
+	pinnedContext  string // always injected into prompt, bypasses retrieval
 	minSimilarity  float64
 }
 
-// NewEngine creates a RAG engine.
+// NewEngine creates a RAG engine. provider is used for embedding;
+// if genProvider is nil, provider is also used for generation.
 func NewEngine(provider llm.Provider, store *vectorstore.VectorStore) *Engine {
 	return &Engine{
 		provider:      provider,
 		store:         store,
-		topK:          5,
+		topK:          15,
 		minSimilarity: 0.3,
 	}
+}
+
+// SetPinnedContext sets a context block that is always included in every prompt.
+// Use this for project overview / architecture summary that should always be available.
+func (e *Engine) SetPinnedContext(s string) {
+	e.pinnedContext = s
+}
+
+// SetGenProvider sets a separate generation provider.
+// If not set, the embedding provider is used for generation too.
+func (e *Engine) SetGenProvider(gen llm.Provider) {
+	e.genProvider = gen
+}
+
+// gen returns the provider to use for text generation.
+func (e *Engine) gen() llm.Provider {
+	if e.genProvider != nil {
+		return e.genProvider
+	}
+	return e.provider
 }
 
 // Close releases resources held by the engine (e.g. the vector store).
@@ -121,8 +144,8 @@ func (e *Engine) AskWithSession(ctx context.Context, question string, session *S
 		return nil, fmt.Errorf("empty embedding returned for query")
 	}
 
-	// 2. Retrieve top-K chunks
-	results := e.store.Search(queryVecs[0], e.topK, e.minSimilarity)
+	// 2. Retrieve with document priority
+	results := e.retrieve(queryVecs[0])
 	if len(results) == 0 {
 		return nil, fmt.Errorf("no relevant code found for the question")
 	}
@@ -131,7 +154,7 @@ func (e *Engine) AskWithSession(ctx context.Context, question string, session *S
 	prompt := e.buildRAGPrompt(question, results, session)
 
 	// 4. Generate answer
-	text, err := e.provider.Complete(ctx, prompt)
+	text, err := e.gen().Complete(ctx, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("generate answer: %w", err)
 	}
@@ -170,8 +193,8 @@ func (e *Engine) AskStreamWithSession(ctx context.Context, question string, sess
 		return nil, nil, fmt.Errorf("empty embedding returned for query")
 	}
 
-	// 2. Retrieve top-K chunks
-	results := e.store.Search(queryVecs[0], e.topK, e.minSimilarity)
+	// 2. Retrieve with document priority
+	results := e.retrieve(queryVecs[0])
 	if len(results) == 0 {
 		return nil, nil, fmt.Errorf("no relevant code found for the question")
 	}
@@ -180,7 +203,7 @@ func (e *Engine) AskStreamWithSession(ctx context.Context, question string, sess
 	prompt := e.buildRAGPrompt(question, results, session)
 
 	// 4. Start streaming
-	textCh, err := e.provider.CompleteStream(ctx, prompt)
+	textCh, err := e.gen().CompleteStream(ctx, prompt)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate answer: %w", err)
 	}
@@ -190,6 +213,43 @@ func (e *Engine) AskStreamWithSession(ctx context.Context, question string, sess
 	ans := &Answer{Sources: sources}
 
 	return textCh, ans, nil
+}
+
+// retrieve performs two-pass retrieval: document chunks are prioritized,
+// then remaining slots are filled with code chunks. This ensures wiki-generated
+// documents (overview, architecture, etc.) always appear in the context.
+func (e *Engine) retrieve(queryVec []float32) []vectorstore.SearchResult {
+	// Fetch more candidates than needed to have room for filtering
+	all := e.store.Search(queryVec, e.topK*3, e.minSimilarity)
+
+	// Split into document and code chunks
+	var docs, code []vectorstore.SearchResult
+	for _, r := range all {
+		if r.Record.Chunk != nil && r.Record.Chunk.Type == chunker.TypeDocument {
+			docs = append(docs, r)
+		} else {
+			code = append(code, r)
+		}
+	}
+
+	// Merge: document chunks first (up to 3), then code chunks to fill topK
+	var merged []vectorstore.SearchResult
+	maxDocs := 3
+	if maxDocs > e.topK {
+		maxDocs = e.topK
+	}
+	for i := 0; i < len(docs) && i < maxDocs; i++ {
+		merged = append(merged, docs[i])
+	}
+	for i := 0; i < len(code) && len(merged) < e.topK; i++ {
+		merged = append(merged, code[i])
+	}
+	// If not enough code chunks, fill with remaining docs
+	for i := maxDocs; i < len(docs) && len(merged) < e.topK; i++ {
+		merged = append(merged, docs[i])
+	}
+
+	return merged
 }
 
 func collectSources(results []vectorstore.SearchResult) []Source {
@@ -224,12 +284,17 @@ func (e *Engine) buildRAGPrompt(question string, results []vectorstore.SearchRes
 		b.WriteString("你是项目代码助手。")
 	}
 	b.WriteString("基于下面的代码上下文回答用户的问题。")
-	b.WriteString("如果上下文不足以回答问题，诚实说明缺少哪些信息。")
+	b.WriteString("如果信息不足，基于已有信息给出尽可能完整的分析，")
+	b.WriteString("必要时可简要说明你推断的依据和未获取到的信息类别。")
 	b.WriteString("引用代码时请标注源文件路径。")
 	b.WriteString("用提问者使用的语言回答。\n")
 
 	if e.projectContext != "" {
 		b.WriteString(fmt.Sprintf("\n## 项目背景\n%s\n", e.projectContext))
+	}
+
+	if e.pinnedContext != "" {
+		b.WriteString(fmt.Sprintf("\n## 项目概况（始终可用）\n%s\n", e.pinnedContext))
 	}
 
 	b.WriteString("\n## 代码上下文\n\n")

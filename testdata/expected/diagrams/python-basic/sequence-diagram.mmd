@@ -4,5 +4,5 @@ sequenceDiagram
     participant main as main
     participant services_user_service as services/user_service
     participant models_user as models/user
-    main->>services_user_service: UserService.register
-    services_user_service->>models_user: User.create
+    main->>services_user_service: UserService.register() — UserService.register 操作
+    services_user_service->>models_user: User.create() — User.create 操作

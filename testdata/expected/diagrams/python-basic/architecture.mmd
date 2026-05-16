@@ -1,20 +1,20 @@
 %% 架构图：展示项目模块间的依赖关系与层级结构
 graph TD
     subgraph models
-        models_user[models/user]
-        models_base[models/base]
+        models_user[user<br/>核心领域]
+        models_base[base<br/>支撑模块]
     end
     subgraph repositories
-        repositories_user_repository[repositories/user_repository]
+        repositories_user_repository[user_repository<br/>业务模块]
     end
     subgraph services
-        services_user_service[services/user_service]
+        services_user_service[user_service<br/>业务模块]
     end
     subgraph utils
-        utils_crypto[utils/crypto]
-        utils_logger[utils/logger]
+        utils_crypto[crypto<br/>支撑模块]
+        utils_logger[logger<br/>支撑模块]
     end
-    main[main]
+    main[main<br/>入口层]
     click main "javascript:navigateToModule('main')"
     click models_user "javascript:navigateToModule('models/user')"
     click models_base "javascript:navigateToModule('models/base')"
@@ -35,6 +35,17 @@ graph TD
     class services_user_service business
     class utils_crypto support
     class utils_logger support
+
+    subgraph 图例
+        legend_entry[🔵 入口层]:::legend
+        class legend_entry entry
+        legend_core[🟠 核心领域]:::legend
+        class legend_core core
+        legend_support[🟢 支撑模块]:::legend
+        class legend_support support
+        legend_business[⚫ 业务模块]:::legend
+        class legend_business business
+    end
     main --> services_user_service
     main --> repositories_user_repository
     models_user --> models_base

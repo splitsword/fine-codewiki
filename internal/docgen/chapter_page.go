@@ -7,7 +7,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/splitsword/fine-codewiki/internal/diagram"
 	"github.com/splitsword/fine-codewiki/internal/grapher"
+	"github.com/splitsword/fine-codewiki/internal/sequencer"
 )
 
 type heading struct {
@@ -123,6 +125,49 @@ func GenerateChapterPage(wiki *Wiki, theme string, graph *grapher.Graph) string 
 		body.WriteString(`<div class="chapter-narrative">`)
 		body.WriteString(RenderMarkdownBody([]byte(narrative)))
 		body.WriteString("</div>\n")
+	}
+
+	// ─── Per-chapter architecture diagram ───
+	if graph != nil && len(modNames) > 0 {
+		subGraph := graph.SubGraphForNodes(modNames)
+		if len(subGraph.Nodes) > 0 && len(subGraph.Edges) > 0 {
+			subDSL, _ := diagram.GenerateSubArchDiagram(subGraph, theme)
+			if subDSL != "" {
+				body.WriteString("<h2>模块架构图</h2>\n")
+				body.WriteString("<p>本章涉及的模块及其内部依赖关系：</p>\n")
+				body.WriteString("<pre class=\"mermaid\">\n")
+				body.WriteString(subDSL)
+				body.WriteString("</pre>\n\n")
+			}
+		}
+	}
+
+	// ─── Per-chapter sequence diagram ───
+	if len(wiki.Sequences) > 0 && len(modNames) > 0 {
+		modSet := make(map[string]bool, len(modNames))
+		for _, m := range modNames {
+			modSet[m] = true
+		}
+		var themeSeqs []sequencer.Sequence
+		for _, seq := range wiki.Sequences {
+			for _, p := range seq.Participants {
+				if modSet[p] {
+					themeSeqs = append(themeSeqs, seq)
+					break
+				}
+			}
+		}
+		for i := 0; i < len(themeSeqs) && i < 2; i++ {
+			seqDSL := sequencer.GenerateSequenceDiagram(themeSeqs[i])
+			if seqDSL != "" {
+				if themeSeqs[i].Description != "" {
+					body.WriteString(fmt.Sprintf("<p><strong>调用流程：</strong>%s</p>\n", themeSeqs[i].Description))
+				}
+				body.WriteString("<pre class=\"mermaid\">\n")
+				body.WriteString(seqDSL)
+				body.WriteString("</pre>\n\n")
+			}
+		}
 	}
 
 	// Module docs — shown as collapsible reference when narrative exists,
@@ -457,14 +502,12 @@ section { scroll-margin-top:calc(var(--topbar-h) + 16px); }
 .toc-item.active { color:var(--accent); border-left-color:var(--accent); font-weight:600; }
 .toc-item.toc-h3 { padding-left:30px; font-size:11px; }
 </style>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" id="hljs-light">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" id="hljs-dark" disabled>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
 <script type="module">
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
   mermaid.initialize({ startOnLoad:true, securityLevel:'loose', theme:'neutral' });
-  window.addEventListener('load',function(){ hljs.highlightAll(); });
 </script>
 `)
 	out.WriteString(wikiPageJS)
@@ -646,6 +689,7 @@ var observer = new IntersectionObserver(function(entries) {
 document.querySelectorAll('section[id]').forEach(function(section) { observer.observe(section); });
 document.querySelectorAll('h2[id],h3[id]').forEach(function(h) { observer.observe(h); });
 </script>
+<script>hljs.highlightAll();</script>
 </body>
 </html>
 `)

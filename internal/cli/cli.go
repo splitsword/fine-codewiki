@@ -243,6 +243,8 @@ func RunGenerate(cfg *Config) error {
 		return fmt.Errorf("generate wiki: %w", err)
 	}
 	wiki.SequenceDescription = seqDesc
+	wiki.Sequences = sequences
+	wiki.CallEdges = callEdges
 
 	fmt.Println("正在嵌入上下文图表和源码片段...")
 	docgen.EmbedContextualContent(wiki, graph, cfg.SourceDir, sequences)
@@ -376,8 +378,42 @@ func initRAGEngine(sourceDir, language, configPath string) (*rag.Engine, error) 
 	}
 
 	engine := rag.NewEngine(provider, store)
+	if genProvider, genErr := llm.NewGenerationProvider(appCfg); genErr == nil {
+		engine.SetGenProvider(genProvider)
+	}
 	engine.SetProjectContext(filepath.Base(sourceDir), "")
+	engine.SetPinnedContext(loadWikiOverview(sourceDir))
 	return engine, nil
+}
+
+// loadWikiOverview reads the project overview + key design decisions from the wiki.
+func loadWikiOverview(sourceDir string) string {
+	wikiDir := filepath.Join(sourceDir, ".codewiki", "wiki")
+	var parts []string
+	for _, name := range []string{"00-overview.md", "04-key-concepts.md"} {
+		data, err := os.ReadFile(filepath.Join(wikiDir, name))
+		if err != nil {
+			continue
+		}
+		content := stripFrontmatter(string(data))
+		if content != "" {
+			parts = append(parts, content)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n---\n"))
+}
+
+func stripFrontmatter(s string) string {
+	if idx := strings.Index(s, "---\n"); idx >= 0 {
+		if idx2 := strings.Index(s[idx+4:], "---\n"); idx2 >= 0 {
+			s = s[idx+4+idx2+4:]
+		}
+	}
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) > 2500 {
+		return string(runes[:2500]) + "\n..."
+	}
+	return string(runes)
 }
 
 // loadAndChunkWikiDocs reads wiki markdown files from a directory and converts
@@ -1123,7 +1159,11 @@ func RunAsk(cfg *Config) error {
 	}
 
 	engine := rag.NewEngine(provider, store)
+	if genProvider, genErr := llm.NewGenerationProvider(appCfg); genErr == nil {
+		engine.SetGenProvider(genProvider)
+	}
 	engine.SetProjectContext(filepath.Base(cfg.SourceDir), "")
+	engine.SetPinnedContext(loadWikiOverview(cfg.SourceDir))
 
 	if cfg.Interactive {
 		return runInteractiveAsk(engine)

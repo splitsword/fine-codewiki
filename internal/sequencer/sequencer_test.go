@@ -93,8 +93,8 @@ func TestFindSequencesFindsLongChains(t *testing.T) {
 	require.Len(t, seqs, 1)
 	assert.Equal(t, "a.f1 -> c.f3", seqs[0].Title)
 	require.Len(t, seqs[0].Messages, 2)
-	assert.Equal(t, "f2", seqs[0].Messages[0].Label)
-	assert.Equal(t, "f3", seqs[0].Messages[1].Label)
+	assert.Equal(t, "f2() — f2 操作", seqs[0].Messages[0].Label)
+	assert.Equal(t, "f3() — f3 操作", seqs[0].Messages[1].Label)
 }
 
 func TestFindSequencesCrossModuleRequirement(t *testing.T) {
@@ -293,8 +293,8 @@ func TestPathToSequence(t *testing.T) {
 	assert.Equal(t, "a.f1 -> c.f3", seq.Title)
 	assert.Equal(t, []string{"a", "b", "c"}, seq.Participants)
 	require.Len(t, seq.Messages, 2)
-	assert.Equal(t, Message{From: "a", To: "b", Label: "f2"}, seq.Messages[0])
-	assert.Equal(t, Message{From: "b", To: "c", Label: "f3"}, seq.Messages[1])
+	assert.Equal(t, Message{From: "a", To: "b", Label: "f2() — f2 操作"}, seq.Messages[0])
+	assert.Equal(t, Message{From: "b", To: "c", Label: "f3() — f3 操作"}, seq.Messages[1])
 }
 
 func TestBuildCallGraphGo(t *testing.T) {
