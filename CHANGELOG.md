@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-17 — @ docs(prd): v0.10 架构说明多图叙事化 + KeyConcepts 并入设计 (5967fea)
+
 - 2026-05-17 — @ fix(docgen): 修复项目结构标题缺失 + WhatItDoes 标题重复 (17aa08e)
 
 - 2026-05-17 — @ chore(docgen): 移除 Wiki.ProjectStructureNarrative 死字段 (dc95b4e)

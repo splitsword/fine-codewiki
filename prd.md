@@ -711,7 +711,8 @@ W2-W5 ─ LLM 适配层测试
 | **静态骨架减负** | LLM 成功时完全取代静态清单（Overview/WhatItDoes 不再拼接模块列表） | W2 | ✅ 已完成 |
 | **Architecture LLM 增强** | 架构文章添加叙事说明，不只是表格+图 | W2 | ✅ 已完成 |
 | **架构说明叙事化重构** | **对标 Zread 重构架构说明：①LLM Prompt 增强（传入 README/入口点/角色推断/架构模式）②移除全量依赖图和模块概览表③新增顶层包级架构图+子系统详图④引导 LLM 写因果链叙事而非模块罗列** | **W5** | **✅ 已完成** |
-| **项目结构页 LLM 叙事化重构** | **废弃静态职责表（角色→固定描述），改为 LLM 驱动的叙事+多图穿插结构：①LLM 基于模块类名/函数签名/依赖关系理解代码逻辑②生成带多张聚焦 mermaid 图的叙事文章③每张图只画 5-8 个相关模块④图在叙事段落中穿插而非末尾堆砌⑤Phase 1 新增 Task 7 并发调用** | **W6** | **🔵 进行中** |
+| **项目结构页 LLM 叙事化重构** | **废弃静态职责表（角色→固定描述），改为 LLM 驱动的叙事+多图穿插结构：①LLM 基于模块类名/函数签名/依赖关系理解代码逻辑②生成带多张聚焦 mermaid 图的叙事文章③每张图只画 5-8 个相关模块④图在叙事段落中穿插而非末尾堆砌⑤Phase 1 新增 Task 7 并发调用** | **W6** | **✅ 已完成** |
+| **架构说明多图叙事化 + KeyConcepts 并入** | **①架构 Prompt 4 数据源融合（代码图/目录树/README/静态推断）②LLM 生成功能架构图+技术架构图双图穿插叙事③README 架构信息提取④去掉独立 Task 3（KeyConcepts），设计决策并入架构叙事⑤Phase 1 从 7 任务减为 6⑥GenerateArchitectureMarkdown 去掉大图追加** | **W6** | **🔵 进行中** |
 | **KeyConcepts 静态降级** | LLM 失败时基于图谱推断生成伪设计决策，不让页面空白 | W2 | ✅ 已完成 |
 | **LearningPath LLM 增强** | 按用户目标（快速上手/部署/深入理解）分支引导 | W2 | ✅ 已完成 |
 | 函数级逻辑分析 | 30%+ 函数覆盖率，职责+执行逻辑+调用关联三层面描述 | W1-W3 | ✅ 已完成 |
@@ -1000,6 +1001,105 @@ W5-W6 ─ 发布前质量门
 ├── 文档完整性：CLI --help 每个命令/参数有说明
 ├── 安装验证：Homebrew/npm/winget 三种方式安装成功
 └── 性能基准：10 万行仓库生成耗时 < 3 分钟
+```
+
+### M3.3 架构说明多图叙事化 + KeyConcepts 并入
+
+> 核心理念：**废弃单张全量架构图，改为功能/技术双图穿插叙事；将关键设计决策从独立任务并入架构叙事，利用更丰富的代码上下文提升生成质量。**
+
+#### 旧版问题
+
+| 问题 | 表现 | 根因 |
+|------|------|------|
+| 架构图不可读 | 单张 `GenerateLayeredArchitectureDiagram` 包含全量模块，节点多时文字重叠看不清 | 全量图策略无分组，LLM 叙事与代码生成的图分离 |
+| 设计决策总失败 | `buildKeyConceptsPrompt` 给 LLM 的数据太少（只有模块名+角色+循环依赖），无函数/类等代码细节 | 数据不足导致 LLM 输出泛泛而谈，被 `isChecklistLike` 拦截或直接失败回退 static fallback |
+
+#### 新版设计
+
+**架构 Prompt 4 数据源融合**：
+
+| 数据源 | 提取方式 | 作用 |
+|--------|----------|------|
+| 代码图 | 模块名、类、函数签名、依赖边、PageRank 角色 | LLM 理解实际代码结构 |
+| 目录树 | `buildProjectTree(graph)` | 理解文件组织方式 |
+| README 架构段落 | `extractArchitectureHints(readme)` — 关键词匹配：架构/设计/分层/组件/模块/技术栈/architecture/layer/component/stack | 补充人类写的设计意图 |
+| 静态推断 | 入口点、循环依赖、`inferArchitecturePattern` | 提供客观结构信号 |
+
+**LLM 输出结构**：
+
+```
+# 架构说明
+
+## 功能架构
+[文字：系统按功能域如何划分，各域解决什么问题]
+[mermaid 图：功能域视图，5-10 模块按功能聚合]
+
+## 技术架构
+[文字：技术分层、数据流、基础设施组件的关系]
+[mermaid 图：技术分层视图，5-10 模块按层次排列]
+
+## 关键设计决策
+[2-3 个决策点，每个含：是什么/为什么这样设计/权衡代价]
+```
+
+- **功能架构图**：按"系统能做什么"组织 — 认证、数据处理、API 网关、存储等功能域
+- **技术架构图**：按"系统怎么构建"组织 — 入口层→业务层→数据层，或框架/插件/中间件
+
+**KeyConcepts 合并方案**：
+
+```
+Phase 1 任务数: 7 → 6（去掉独立 Task 3 buildKeyConceptsPrompt）
+
+keyConcepts 来源:
+  1. LLM 架构叙事中的 ## 关键设计决策 小节 → 提取作为独立页面
+  2. LLM 失败 → GenerateKeyConceptsFallback 静态分析
+
+04-key-concepts.md 页面不变，内容从架构叙事提取或 fallback
+```
+
+#### 生成流程变更
+
+```
+Phase 1（6 个并行任务，原 7 个）
+    │
+    ├── Task 1: Overview
+    ├── Task 2: WhatItDoes
+    ├── Task 3: Architecture Narrative（替代原 KeyConcepts 位置）
+    │   └── buildArchitecturePrompt（4 数据源融合）
+    │       → LLM 生成含功能图+技术图+设计决策的完整叙事
+    ├── Task 4: Module Themes
+    ├── Task 5: Function Descriptions
+    ├── Task 6: Project Structure（不变）
+    │
+    ▼
+Phase 2: GenerateArchitectureMarkdown(graph, archNarrative)
+    - 去掉末尾的 GenerateLayeredArchitectureDiagram 追加（LLM 叙事已有双图）
+    - 去掉末尾的 buildDesignDecisions 追加（LLM 叙事已含设计决策）
+    - 保留子系统详图（按目录分组的子架构图，这是代码生成的结构数据）
+    
+    keyConcepts = 提取架构叙事中 ## 关键设计决策 小节
+              或 GenerateKeyConceptsFallback(graph)
+```
+
+#### 不影响
+
+- Phase 2/3/4 其他任务
+- Overview、WhatItDoes、ProjectStructure、LearningPath 页面
+- `GenerateKeyConceptsFallback` 保留
+- 子系统详图（目录级子架构图）保留 — 这是从代码结构自动生成的，LLM 无法替代
+
+#### README 架构信息提取
+
+```go
+func extractArchitectureHints(readme string) string {
+    keywords := []string{
+        "架构", "设计", "分层", "组件", "模块", "技术栈", "依赖",
+        "architecture", "layer", "component", "module", "stack",
+        "design", "pattern", "framework", "infrastructure",
+    }
+    // 扫描 README 段落，含 >1 个关键词的段落提取
+    // 返回拼接摘要，最多 800 字
+}
 ```
 
 ### M4 — 生态扩展 (8 周)
@@ -1418,9 +1518,13 @@ generate:
 
 ---
 
-> 文档版本：v0.9
+> 文档版本：v0.10
 > 最后更新：2026-05-17
 > 仓库地址：https://github.com/splitsword/fine-codewiki
+>
+> **v0.10 变更摘要**：
+> - **架构说明多图叙事化重构**：废弃单张全量分层架构图（模块多时不可读），改为 LLM 驱动的"叙事+双图穿插"模式。LLM 基于 4 个数据源（代码图/目录树/README/静态推断）生成功能架构图（按功能域聚合）和技术架构图（按技术层排列），图在叙事中穿插而非末尾堆砌。新增 README 架构信息提取（关键词匹配架构/设计/分层/组件/模块/技术栈等段落补充设计意图）。
+> - **KeyConcepts 并入架构说明**：去掉独立 Task 3 LLM 调用（总因数据不足生成失败），关键设计决策改为架构叙事的一部分由 LLM 在充分代码上下文中提取。Phase 1 任务数从 7 减为 6。静态 fallback 保留。
 >
 > **v0.9 变更摘要**：
 > - **项目结构页 LLM 叙事化重构**：废弃静态职责表（角色→固定描述映射），改为 LLM 驱动的"叙事+多图穿插"结构。LLM 基于每个模块的类名/函数签名/依赖关系理解代码逻辑，生成带多张聚焦 mermaid 图的叙事文章。每张图只画 5-8 个相关模块，图在叙事段落中穿插而非末尾堆砌。Phase 1 新增 Task 7（ModuleResponsibilities）与其他 6 个任务并发执行。`inferModuleResponsibility` 保留为 LLM 失败时的 fallback。
