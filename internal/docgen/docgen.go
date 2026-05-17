@@ -562,6 +562,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	}
 
 	// ─── Phase 4: Final assembly (sequential, fast) ───
+	projectStructure += buildCoreModuleSourceSection(graph, sourceDir)
 	projectStructure += buildSourcesFooter(graph, 10)
 	if keyConcepts != "" && classDSL != "" {
 		keyConcepts += "\n## 类型关系图\n\n下图展示了项目中核心类与接口的继承和组合关系：\n\n```mermaid\n" + classDSL + "\n```\n"
@@ -3341,7 +3342,7 @@ func isNoiseModule(name string) bool {
 	if strings.HasSuffix(lower, "_test") || strings.HasSuffix(lower, "_test.go") {
 		return true
 	}
-	if strings.Contains(lower, "testdata/") || strings.Contains(lower, "/testdata") {
+	if (strings.Contains(lower, "testdata/") || strings.Contains(lower, "/testdata")) && !strings.Contains(lower, "testdata/repos/") {
 		return true
 	}
 	if strings.Contains(lower, "scripts/debug/") || strings.Contains(lower, "/scripts/debug") {
@@ -5148,10 +5149,17 @@ func FormatSnippetMarkdown(s CodeSnippet) string {
 // readFileLines reads a range of lines from a source file.
 func readFileLines(sourceDir, filename string, startLine, endLine int) string {
 	ext := filepath.Ext(filename)
-	// Try exact path first, then common variations
-	paths := []string{
-		filepath.Join(sourceDir, filename),
+	// Try exact path first, then common variations.
+	// When filename is already absolute (e.g. from grapher.Node.Filename),
+	// use it directly; filepath.Join may not handle cross-platform absolute
+	// paths correctly (e.g. Windows drive-letter paths under WSL).
+	var paths []string
+	if filepath.IsAbs(filename) {
+		paths = append(paths, filename)
+	} else {
+		paths = append(paths, filename) // filename may already include sourceDir prefix
 	}
+	paths = append(paths, filepath.Join(sourceDir, filename))
 	if ext == "" {
 		paths = append(paths, filepath.Join(sourceDir, filename+".py"),
 			filepath.Join(sourceDir, filename+".go"),
@@ -5203,24 +5211,98 @@ func inferLanguageFromFilename(filename string) string {
 	}
 }
 
-// selectCoreNodes returns the top N nodes by PageRank score.
-func selectCoreNodes(graph *grapher.Graph, n int) []*grapher.Node {
-	pr := graph.PageRank()
-	type scored struct {
-		node  *grapher.Node
-		score float64
+// coreModule represents a module selected for its architectural significance.
+type coreModule struct {
+	Node   *grapher.Node
+	Reason string
+}
+
+// selectCoreModules picks up to 3 architecturally significant modules using
+// distinct criteria: entry point, most depended-on, and most class-rich.
+func selectCoreModules(graph *grapher.Graph) []coreModule {
+	cleanNodes := filterNonNoiseModules(graph.Nodes)
+	if len(cleanNodes) == 0 {
+		return nil
 	}
-	var all []scored
-	for _, node := range graph.Nodes {
-		all = append(all, scored{node: node, score: pr[node.Name]})
+
+	seen := make(map[string]bool)
+	var result []coreModule
+
+	// Criterion 1: first non-noise entry point
+	entries := filterNonNoiseModules(graph.EntryPoints())
+	if len(entries) > 0 {
+		e := entries[0]
+		result = append(result, coreModule{Node: e, Reason: "项目入口，负责启动和初始化"})
+		seen[e.Name] = true
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
-	var result []*grapher.Node
-	for i := 0; i < n && i < len(all); i++ {
-		result = append(result, all[i].node)
+
+	// Criterion 2: most depended-on module
+	var hub *grapher.Node
+	maxDep := 0
+	for _, n := range cleanNodes {
+		if seen[n.Name] {
+			continue
+		}
+		d := len(graph.DependentsOf(n.Name))
+		if d > maxDep {
+			maxDep = d
+			hub = n
+		}
 	}
+	if hub != nil && maxDep > 0 {
+		result = append(result, coreModule{Node: hub, Reason: fmt.Sprintf("被 %d 个模块依赖，是依赖图的中心节点", maxDep)})
+		seen[hub.Name] = true
+	}
+
+	// Criterion 3: most classes
+	var rich *grapher.Node
+	maxClass := 0
+	for _, n := range cleanNodes {
+		if seen[n.Name] {
+			continue
+		}
+		if len(n.Classes) > maxClass {
+			maxClass = len(n.Classes)
+			rich = n
+		}
+	}
+	if rich != nil && maxClass > 0 {
+		result = append(result, coreModule{Node: rich, Reason: fmt.Sprintf("定义了 %d 个核心类，承载领域模型", maxClass)})
+	} else if rich != nil {
+		result = append(result, coreModule{Node: rich, Reason: "模块结构清晰，是重要的业务组件"})
+	}
+
 	return result
 }
+
+// buildCoreModuleSourceSection generates a markdown section showcasing
+// architecturally significant modules with code snippets and rationale.
+func buildCoreModuleSourceSection(graph *grapher.Graph, sourceDir string) string {
+	modules := selectCoreModules(graph)
+	if len(modules) == 0 || sourceDir == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\n## 核心模块源码\n\n")
+	b.WriteString("> 以下模块从入口、依赖中心、领域模型三个维度代表系统的架构核心。\n\n")
+
+	for _, cm := range modules {
+		n := cm.Node
+		fmt.Fprintf(&b, "### `%s` — %s\n\n", n.Filename, cm.Reason)
+
+		snippets := ExtractSnippetsForNode(sourceDir, n, 2)
+		if len(snippets) == 0 {
+			continue
+		}
+		for _, s := range snippets {
+			b.WriteString(FormatSnippetMarkdown(s) + "\n")
+		}
+	}
+
+	return b.String()
+}
+
 
 // collectCoreClasses returns the most important classes across the graph.
 func collectCoreClasses(graph *grapher.Graph, maxClasses int) []analyzer.ClassInfo {
@@ -5266,18 +5348,6 @@ func EmbedContextualContent(wiki *Wiki, graph *grapher.Graph, sourceDir string, 
 			wiki.Overview += "\n## 入口代码\n\n"
 			for _, s := range snippets {
 				wiki.Overview += FormatSnippetMarkdown(s) + "\n"
-			}
-		}
-	}
-
-	// Architecture: core module source code
-	coreNodes := selectCoreNodes(graph, 5)
-	if len(coreNodes) > 0 && sourceDir != "" {
-		wiki.Architecture += "\n## 核心模块源码\n\n"
-		for _, node := range coreNodes {
-			snippets := ExtractSnippetsForNode(sourceDir, node, 1)
-			for _, s := range snippets {
-				wiki.Architecture += FormatSnippetMarkdown(s) + "\n"
 			}
 		}
 	}

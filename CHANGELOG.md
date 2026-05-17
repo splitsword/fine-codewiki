@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-17 — @ fix(docgen): 核心模块源码缺失修复 — 两处路径 Bug + 格式化 (41117f9)
+
 - 2026-05-17 — @ feat(docgen): 架构说明多图叙事化 + KeyConcepts 合并入架构叙事 (9c3074a)
 
 - 2026-05-17 — @ docs(prd): v0.10 架构说明多图叙事化 + KeyConcepts 并入设计 (5967fea)
