@@ -222,7 +222,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 				if err != nil {
 					report("核心能力", fmt.Sprintf("LLM 失败 (%v)，回退静态", err))
 				} else if enhanced != "" && !isChecklistLike(enhanced, graph) {
-					whatItDoes = fmt.Sprintf("# %s 能做什么\n\n%s", projectName, enhanced)
+					whatItDoes = enhanced
 					report("核心能力", "生成完成")
 				} else {
 					report("核心能力", "内容无效，回退静态")
@@ -402,7 +402,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 		// Replace static project structure with LLM-generated narrative
 		if projectStructureNarrative != "" {
-			projectStructure = projectStructureNarrative
+			projectStructure = fmt.Sprintf("# %s 项目结构\n\n%s", projectName, projectStructureNarrative)
 		}
 
 		// Populate moduleThemes from LLM result or checkpoint
@@ -1261,7 +1261,8 @@ func buildArchitecturePrompt(graph *grapher.Graph, projectName, readme, language
 func buildWhatItDoesPrompt(graph *grapher.Graph, projectName, readme, language string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "你是一位资深技术作家，正在为一位新加入的开发者撰写项目介绍。\n\n")
-	fmt.Fprintf(&b, "请基于以下代码库信息，撰写一篇\"%s 能做什么\"的介绍文章。\n\n", projectName)
+	fmt.Fprintf(&b, "请基于以下代码库信息，撰写一篇\"%s 能做什么\"的介绍文章。\n", projectName)
+	fmt.Fprintf(&b, "用 `# %s 能做什么` 作为文章标题。\n\n", projectName)
 	fmt.Fprintf(&b, "要求：\n")
 	fmt.Fprintf(&b, "1. 用第一人称\"本项目\"或\"该系统\"的口吻\n")
 	fmt.Fprintf(&b, "2. 描述项目解决的核心问题、目标用户、主要使用场景\n")

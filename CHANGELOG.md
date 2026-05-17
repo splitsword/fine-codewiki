@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-17 — @ fix(docgen): 修复项目结构标题缺失 + WhatItDoes 标题重复 (17aa08e)
+
 - 2026-05-17 — @ chore(docgen): 移除 Wiki.ProjectStructureNarrative 死字段 (dc95b4e)
 
 - 2026-05-17 — @ feat(docgen, cli): 项目结构页 LLM 叙事化重构 + 来源弹窗 (93a5501)
