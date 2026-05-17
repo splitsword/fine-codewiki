@@ -250,6 +250,8 @@ func RunGenerate(cfg *Config) error {
 	docgen.EmbedContextualContent(wiki, graph, cfg.SourceDir, sequences)
 
 	fmt.Printf("正在将 Wiki 写入 %s...\n", cfg.OutputDir)
+	// Write serve metadata (source dir + language) for source-reference popup
+	writeServeMeta(cfg.OutputDir, cfg.SourceDir, cfg.Language)
 	if err := docgen.WriteWikiFiles(cfg.OutputDir, wiki, graph); err != nil {
 		return fmt.Errorf("write wiki files: %w", err)
 	}
@@ -306,6 +308,18 @@ func RunServe(cfg *Config) error {
 	fmt.Println("按 Ctrl+C 停止")
 
 	handler := newServerHandler(cfg.OutputDir, engine)
+	if v, ok := handler.(*serverHandler); ok {
+		v.sourceDir = cfg.SourceDir
+		v.language = cfg.Language
+		if v.sourceDir == "" {
+			if meta := readServeMeta(cfg.OutputDir); meta != nil {
+				v.sourceDir = meta.SourceDir
+				if v.language == "" {
+					v.language = meta.Language
+				}
+			}
+		}
+	}
 	if engine != nil {
 		defer engine.Close()
 	}
@@ -453,8 +467,10 @@ func loadAndChunkWikiDocs(wikiDir string) []*chunker.Chunk {
 
 // serverHandler serves wiki files and optionally the /ask RAG Q&A endpoint.
 type serverHandler struct {
-	root   string
-	engine *rag.Engine
+	root      string
+	engine    *rag.Engine
+	sourceDir string
+	language  string
 }
 
 func newServerHandler(root string, engine *rag.Engine) http.Handler {
@@ -472,6 +488,11 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if rawPath == "/api/ask" && r.Method == http.MethodPost {
 		h.handleAskAPI(w, r)
+		return
+	}
+
+	if rawPath == "/api/source" && h.sourceDir != "" {
+		h.handleSourceAPI(w, r)
 		return
 	}
 
@@ -602,6 +623,121 @@ func (h *serverHandler) handleAskAPI(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// serveMeta stores metadata needed by the serve command for source-reference lookups.
+type serveMeta struct {
+	SourceDir string `json:"source_dir"`
+	Language  string `json:"language"`
+}
+
+func serveMetaPath(outputDir string) string {
+	return filepath.Join(outputDir, ".serve_meta.json")
+}
+
+func writeServeMeta(outputDir, sourceDir, language string) {
+	meta := serveMeta{SourceDir: sourceDir, Language: language}
+	data, _ := json.Marshal(meta)
+	os.WriteFile(serveMetaPath(outputDir), data, 0644)
+}
+
+func readServeMeta(outputDir string) *serveMeta {
+	data, err := os.ReadFile(serveMetaPath(outputDir))
+	if err != nil {
+		return nil
+	}
+	var meta serveMeta
+	if json.Unmarshal(data, &meta) != nil {
+		return nil
+	}
+	return &meta
+}
+
+// langToExts maps a language name to its primary source file extensions.
+var langToExts = map[string][]string{
+	"python":     {".py"},
+	"go":         {".go"},
+	"javascript": {".js", ".jsx", ".mjs", ".cjs"},
+	"typescript": {".ts", ".tsx"},
+	"rust":       {".rs"},
+	"java":       {".java"},
+	"cpp":        {".cpp", ".cxx", ".cc", ".c"},
+	"c":          {".c", ".h"},
+	"ruby":       {".rb"},
+	"php":        {".php"},
+	"swift":      {".swift"},
+	"kotlin":     {".kt", ".kts"},
+}
+
+func extsForLang(lang string) []string {
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	if exts, ok := langToExts[lang]; ok {
+		return append(exts, ".md")
+	}
+	return []string{".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".cpp", ".c", ".rb", ".php", ".swift", ".kt", ".md"}
+}
+
+// handleSourceAPI serves source file content for the source-reference popup.
+func (h *serverHandler) handleSourceAPI(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	if file == "" {
+		http.Error(w, "缺少 file 参数", http.StatusBadRequest)
+		return
+	}
+
+	// Security: prevent directory traversal
+	cleanFile := filepath.Clean(file)
+	if strings.Contains(cleanFile, "..") {
+		http.Error(w, "禁止访问", http.StatusForbidden)
+		return
+	}
+
+	// Try progressively: exact path, then with extensions, then strip prefix + extensions
+	exts := extsForLang(h.language)
+	found := false
+	basePath := filepath.Join(h.sourceDir, cleanFile)
+	rest := ""
+	for {
+		// Try current base with each extension
+		for _, ext := range exts {
+			if _, err := os.Stat(basePath + ext); err == nil {
+				basePath = basePath + ext
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+		// Also try exact (no extension)
+		if _, err := os.Stat(basePath); err == nil {
+			found = true
+			break
+		}
+		// Strip one more prefix segment
+		if rest == "" {
+			rest = basePath[len(h.sourceDir)+1:]
+		}
+		sepIdx := strings.Index(rest, string(filepath.Separator))
+		if sepIdx < 0 {
+			break
+		}
+		rest = rest[sepIdx+1:]
+		basePath = filepath.Join(h.sourceDir, rest)
+	}
+	if !found {
+		http.Error(w, "源文件不存在: "+cleanFile, http.StatusNotFound)
+		return
+	}
+	fullPath := basePath
+
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		http.Error(w, "源文件不存在: "+cleanFile, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
 }
 
 // askPageHTML is the interactive Q&A web UI.

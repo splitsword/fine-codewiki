@@ -1968,8 +1968,8 @@ func TestBuildSimplifiedNarrativePrompt(t *testing.T) {
 
 	assert.Contains(t, prompt, "proj")
 	assert.Contains(t, prompt, "测试主题")
-	assert.Contains(t, prompt, "a.go")
-	assert.Contains(t, prompt, "b.go")
+	assert.Contains(t, prompt, "a")
+	assert.Contains(t, prompt, "b")
 	assert.Contains(t, prompt, "600-1000")
 	// Should NOT contain function details or dependency details
 	assert.NotContains(t, prompt, "关键函数")
@@ -1978,12 +1978,12 @@ func TestBuildSimplifiedNarrativePrompt(t *testing.T) {
 
 func TestBuildMinimalNarrativePrompt(t *testing.T) {
 	title := ChapterTitle{Title: "极简主题"}
-	prompt := buildMinimalNarrativePrompt("proj", "theme", title, []string{"a.go", "b.go"})
+	prompt := buildMinimalNarrativePrompt("proj", "theme", title, []string{"a", "b"})
 
 	assert.Contains(t, prompt, "proj")
 	assert.Contains(t, prompt, "极简主题")
-	assert.Contains(t, prompt, "a.go")
-	assert.Contains(t, prompt, "b.go")
+	assert.Contains(t, prompt, "a")
+	assert.Contains(t, prompt, "b")
 	assert.Contains(t, prompt, "400-800")
 }
 

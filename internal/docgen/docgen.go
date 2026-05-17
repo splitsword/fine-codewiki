@@ -47,7 +47,8 @@ type Wiki struct {
 	ChapterTitles       map[string]ChapterTitle    // theme name → LLM-generated title
 	ThemeIntros         map[string]string          // theme name → LLM-generated 2-3 sentence intro
 	ChapterNarratives   map[string]string          // theme name → LLM-generated narrative article
-	ChapterPages        map[string]string          // theme name → standalone chapter HTML
+	ProjectStructureNarrative string                     // LLM 生成的项目结构叙事（含多图）
+	ChapterPages              map[string]string          // theme name → standalone chapter HTML
 	Sequences           []sequencer.Sequence       // call sequences for per-chapter sequence diagrams
 	CallEdges           []sequencer.CallEdge       // raw call edges for per-module sequence diagrams
 }
@@ -71,6 +72,7 @@ type wikiCheckpoint struct {
 	ModuleThemes  map[string][]string       `json:"module_themes,omitempty"`
 	ThemeIntros        map[string]string         `json:"theme_intros,omitempty"`
 	ChapterNarratives  map[string]string         `json:"chapter_narratives,omitempty"`
+	ProjectStructure   string                   `json:"project_structure,omitempty"`
 }
 
 func loadWikiCheckpoint(path string) *wikiCheckpoint {
@@ -173,8 +175,10 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	var chapterNarratives map[string]string
 
 	if provider != nil {
+	var projectStructureNarrative string
+
 		// ─── Phase 1: All independent LLM tasks run concurrently ───
-		report("Phase 1", fmt.Sprintf("启动 %d 个并行 LLM 任务", 6))
+		report("Phase 1", fmt.Sprintf("启动 %d 个并行 LLM 任务", 7))
 		phase1Start := time.Now()
 
 		var wg sync.WaitGroup
@@ -361,6 +365,28 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			}()
 		}
 
+		// Task 7: Project Structure Narrative (LLM-based, replaces static table)
+		if cp.ProjectStructure != "" {
+			projectStructureNarrative = cp.ProjectStructure
+			report("项目结构", "从 checkpoint 恢复")
+		} else {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				report("项目结构", "开始生成叙事...")
+				prompt := buildProjectStructurePrompt(graph, projectName)
+				enhanced, err := streamComplete(ctx, provider, prompt)
+				if err != nil {
+					report("项目结构", fmt.Sprintf("LLM 失败 (%v)，回退静态生成", err))
+				} else if enhanced != "" {
+					projectStructureNarrative = enhanced
+					report("项目结构", "叙事生成完成")
+				} else {
+					report("项目结构", "LLM 返回空，回退静态生成")
+				}
+			}()
+		}
+
 		wg.Wait()
 		close(fatalCh)
 
@@ -374,6 +400,11 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		}
 
 		report("Phase 1", fmt.Sprintf("全部完成（耗时 %v）", time.Since(phase1Start).Round(time.Second)))
+
+		// Replace static project structure with LLM-generated narrative
+		if projectStructureNarrative != "" {
+			projectStructure = projectStructureNarrative
+		}
 
 		// Populate moduleThemes from LLM result or checkpoint
 		if cp.ModuleThemes != nil && len(cp.ModuleThemes) > 0 {
@@ -399,6 +430,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			cp.KeyConcepts = keyConcepts
 			cp.ArchNarrative = archNarrative
 			cp.FuncDescMap = funcDescMap
+			cp.ProjectStructure = projectStructureNarrative
 			_ = saveWikiCheckpoint(cpPath, cp)
 		}
 	} else {
@@ -5365,4 +5397,111 @@ func renderFileTreeNode(b *strings.Builder, node *FileTreeNode, depth int) {
 		b.WriteString(fmt.Sprintf("<a href=\"#%s\" class=\"file-tree-link\" data-target=\"%s\">%s</a>\n",
 			node.Path, node.Path, node.Name))
 	}
+}
+
+
+// buildProjectStructurePrompt creates an LLM prompt to generate a narrative
+// project structure with multiple focused mermaid diagrams (5-8 nodes each),
+// replacing the old static role→description lookup table.
+func buildProjectStructurePrompt(graph *grapher.Graph, projectName string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "你是一位资深软件架构师。请为 %s 项目撰写一篇\"项目结构详解\"叙事文章。\n\n", projectName)
+
+	// Filter and prepare module data
+	cleanNodes := filterNonNoiseModules(graph.Nodes)
+	roles := graph.InferModuleRoles()
+	roleMap := make(map[string]string, len(roles))
+	for _, r := range roles {
+		roleMap[r.Name] = r.Role
+	}
+
+	// Directory tree for context
+	fmt.Fprintf(&b, "## 目录结构\n\n")
+	fmt.Fprintf(&b, "```\n")
+	fmt.Fprint(&b, buildProjectTree(graph))
+	fmt.Fprintf(&b, "```\n\n")
+
+	// Module details (up to 40 to keep prompt manageable)
+	const maxModules = 40
+	fmt.Fprintf(&b, "## 模块详情\n\n")
+	for i, n := range cleanNodes {
+		if i >= maxModules {
+			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(cleanNodes)-maxModules)
+			break
+		}
+		fmt.Fprintf(&b, "### %s\n\n", n.Filename)
+
+		if len(n.Classes) > 0 {
+			fmt.Fprintf(&b, "- 类：")
+			for j, c := range n.Classes {
+				if j > 0 {
+					fmt.Fprintf(&b, "、")
+				}
+				fmt.Fprintf(&b, "%s", c.Name)
+				if len(c.Methods) > 0 {
+					methodNames := make([]string, len(c.Methods))
+					for k, m := range c.Methods {
+						methodNames[k] = m.Name
+					}
+					fmt.Fprintf(&b, "（方法：%s）", strings.Join(methodNames, ", "))
+				}
+			}
+			fmt.Fprintf(&b, "\n")
+		}
+
+		if len(n.Functions) > 0 {
+			fmt.Fprintf(&b, "- 函数：")
+			for j, f := range n.Functions {
+				if j > 0 {
+					fmt.Fprintf(&b, "、")
+				}
+				sig := f.Name + "("
+				if len(f.Params) > 0 {
+					sig += strings.Join(f.Params, ", ")
+				}
+				sig += ")"
+				if f.ReturnType != "" {
+					sig += " -> " + f.ReturnType
+				}
+				fmt.Fprintf(&b, "%s", sig)
+			}
+			fmt.Fprintf(&b, "\n")
+		}
+
+		deps := graph.DependenciesOf(n.Name)
+		if len(deps) > 0 {
+			fmt.Fprintf(&b, "- 依赖：%s\n", strings.Join(deps, ", "))
+		}
+
+		dependents := graph.DependentsOf(n.Name)
+		if len(dependents) > 0 {
+			fmt.Fprintf(&b, "- 被依赖：%s\n", strings.Join(dependents, ", "))
+		}
+
+		if role := roleMap[n.Name]; role != "" {
+			fmt.Fprintf(&b, "- 架构角色：%s\n", role)
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+
+	// Full dependency edges for LLM to decide diagram grouping
+	fmt.Fprintf(&b, "## 全部依赖边\n\n")
+	for _, e := range graph.Edges {
+		fmt.Fprintf(&b, "- %s → %s\n", e.From, e.To)
+	}
+	fmt.Fprintf(&b, "\n")
+
+	// Writing instructions
+	fmt.Fprintf(&b, "## 写作要求\n\n")
+	fmt.Fprintf(&b, "请撰写一篇 Markdown 格式的项目结构说明，要求：\n\n")
+	fmt.Fprintf(&b, "1. **组织逻辑**：首先用一段话讲清楚项目按什么逻辑组织（分层架构？功能模块？插件式？），让读者立刻理解代码库的整体布局思路。\n")
+	fmt.Fprintf(&b, "2. **逐层展开**：将模块分成 2-4 个子系统/层，每层用一段文字讲清该层的职责和设计意图。\n")
+	fmt.Fprintf(&b, "3. **多图穿插**：每个子系统/层画一张 ```mermaid``` 依赖图。每张图只包含该层 5-8 个核心模块。图紧跟在对应段落后。\n")
+	fmt.Fprintf(&b, "4. **图要简洁**：不要把全部模块塞进一张图——那会导致混乱不可读。每张图只画当前讨论的子系统。\n")
+	fmt.Fprintf(&b, "5. **基于代码而非猜测**：根据上面提供的类名、函数签名、依赖关系来推断模块职责，不要仅凭文件名猜测。\n")
+	fmt.Fprintf(&b, "6. **来源标注**：每段末尾用 `*来源：[显示名](文件路径)*` 标注涉及的源文件。\n")
+	fmt.Fprintf(&b, "7. **格式**：使用 ### 级别标题组织各层，每个图前有一段文字说明。全文总字数 600-1200 字。\n\n")
+	fmt.Fprintf(&b, "直接输出 Markdown 正文，不要加任何 JSON 包装或代码围栏。")
+
+	return b.String()
 }

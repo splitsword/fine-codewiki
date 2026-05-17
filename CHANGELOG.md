@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-17 — @ feat(docgen, cli): 项目结构页 LLM 叙事化重构 + 来源弹窗 (93a5501)
+
 - 2026-05-17 — @ feat(prd): 项目结构页 LLM 叙事化重构设计文档 (e41c115)
 
 - 2026-05-16 — feat(diagram, rag): 图表质量全面升级 + RAG 检索增强 (88eb127)

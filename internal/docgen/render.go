@@ -9,6 +9,10 @@ import (
 
 var nonAlnumRe = regexp.MustCompile(`[^\p{L}\p{N}]+`)
 
+// reSourceRef matches rendered source attribution:
+// <em>来源：<code>path/file.go</code></em> or <em>来源：path/file.go</em>
+var reSourceRef = regexp.MustCompile(`<em>来源：(?:<code>)?([^<]+)(?:</code>)?</em>`)
+
 func headingSlug(text string) string {
 	plain := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(text, "")
 	slug := strings.TrimSpace(plain)
@@ -296,6 +300,83 @@ func RenderMarkdownBody(src []byte) string {
 	return body.String()
 }
 
+// makeSourceRefsClickable transforms rendered source attribution HTML into
+// clickable spans. Handles single/multiple code-wrapped paths, bracket-wrapped
+// paths, and plain-text paths.
+func makeSourceRefsClickable(html string) string {
+	// Match the entire source attribution block: <em>来源：...content...</em>
+	reSrcBlock := regexp.MustCompile(`<em>来源：(.+?)</em>`)
+
+	return reSrcBlock.ReplaceAllStringFunc(html, func(block string) string {
+		m := reSrcBlock.FindStringSubmatch(block)
+		if len(m) < 2 {
+			return block
+		}
+		inner := m[1]
+
+		// Extract individual file paths from <code> tags or plain text
+		reCode := regexp.MustCompile(`<code>([^<]+)</code>`)
+		codes := reCode.FindAllStringSubmatch(inner, -1)
+		if len(codes) > 0 {
+			var refs []string
+			for _, c := range codes {
+				path := cleanSourcePath(c[1])
+				if path != "" {
+					refs = append(refs, fmt.Sprintf("<span class=\"source-ref\" data-file=\"%s\">%s</span>", path, path))
+				}
+			}
+			if len(refs) > 0 {
+				return "来源：" + strings.Join(refs, "、")
+			}
+		}
+
+		// Fallback: split plain text on delimiters
+		plain := reCode.ReplaceAllString(inner, "")
+		plain = strings.TrimSpace(plain)
+		if plain == "" {
+			return block
+		}
+		parts := splitPathList(plain)
+		var refs []string
+		for _, p := range parts {
+			path := cleanSourcePath(p)
+			if path != "" {
+				refs = append(refs, fmt.Sprintf("<span class=\"source-ref\" data-file=\"%s\">%s</span>", path, path))
+			}
+		}
+		if len(refs) > 0 {
+			return "来源：" + strings.Join(refs, "、")
+		}
+		return block
+	})
+}
+
+// cleanSourcePath strips brackets and whitespace from a file path.
+func cleanSourcePath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimPrefix(p, "[")
+	p = strings.TrimSuffix(p, "]")
+	p = strings.TrimSuffix(p, "/") // remove trailing slash
+	return strings.TrimSpace(p)
+}
+
+// splitPathList splits a string on common path delimiters.
+func splitPathList(s string) []string {
+	s = strings.ReplaceAll(s, "、", "\x00")
+	s = strings.ReplaceAll(s, "，", "\x00")
+	s = strings.ReplaceAll(s, ", ", "\x00")
+	s = strings.ReplaceAll(s, ",", "\x00")
+	parts := strings.Split(s, "\x00")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
 // wikiPageCSS is the shared CSS for all wiki pages (serve mode).
 const wikiPageCSS = `
 :root {
@@ -449,6 +530,20 @@ hr { height:1px; padding:0; margin:36px 0; background:var(--border); border:0; }
 .search-modal .search-hit strong { display:block; font-size:14px; }
 .search-modal .search-hit small { color:var(--text3); font-size:12px; }
 .search-empty { padding:20px; text-align:center; color:var(--text3); }
+
+/* ---- Source reference ---- */
+em code { cursor:pointer; transition:background .15s; }
+em code:hover { background:var(--accent-glow); }
+em a[href] { color:var(--accent); text-decoration:underline dotted; text-underline-offset:3px; }
+em a[href]:hover { color:var(--accent2); }
+.s-popup-ov { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:9999; justify-content:center; align-items:center; }
+.s-popup-ov.on { display:flex; }
+.s-popup { background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-lg); max-width:800px; width:90vw; max-height:80vh; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3); display:flex; flex-direction:column; }
+.s-popup-hd { display:flex; align-items:center; justify-content:space-between; padding:12px 18px; background:var(--bg2); border-bottom:1px solid var(--border); font-size:13px; font-weight:600; color:var(--accent); }
+.s-popup-cl { background:none; border:none; font-size:20px; cursor:pointer; color:var(--text3); padding:4px 8px; line-height:1; }
+.s-popup-cl:hover { color:var(--text); }
+.s-popup-bd { flex:1; overflow:auto; }
+.s-popup-bd pre { margin:0; border-radius:0; box-shadow:none; border:none; padding:16px 20px; background:var(--pre-bg); color:var(--pre-text); font-size:13px; line-height:1.6; white-space:pre-wrap; }
 
 /* ---- Animations ---- */
 @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
@@ -731,6 +826,43 @@ function filterSearch(q){
 	out.WriteString(body)
 	out.WriteString(`</div>
 <script>hljs.highlightAll();</script>
+<script>
+(function(){
+var popup=null;
+function getPopup(){
+if(popup)return popup;
+popup=document.createElement('div');popup.id='s-popup';popup.className='s-popup-ov';
+popup.innerHTML='<div class="s-popup"><div class="s-popup-hd"><span></span><button class="s-popup-cl">&times;</button></div><div class="s-popup-bd"><pre></pre></div></div>';
+document.body.appendChild(popup);
+popup.querySelector('.s-popup-cl').onclick=function(){popup.classList.remove('on');};
+popup.addEventListener('click',function(e){if(e.target===popup)popup.classList.remove('on');});
+return popup;}
+function openSource(file){
+var p=getPopup();p.classList.add('on');
+p.querySelector('.s-popup-hd span').textContent=file;
+var bd=p.querySelector('.s-popup-bd');
+bd.innerHTML='<pre><code class="language-'+l(file)+'">加载中...</code></pre>';
+fetch('/api/source?file='+encodeURIComponent(file))
+.then(function(r){if(!r.ok)throw Error(r.status);return r.text();})
+.then(function(t){var c=bd.querySelector('code');c.textContent=t;hljs.highlightElement(c);})
+.catch(function(e){bd.querySelector('code').textContent='无法加载: '+e.message;});}
+function l(p){var m=p.match(/\.(\w+)$/);if(!m)return'plaintext';
+var x=m[1].toLowerCase();var m2={py:'python',go:'go',js:'javascript',ts:'typescript',
+rs:'rust',java:'java',cpp:'cpp',c:'c',rb:'ruby',md:'markdown',json:'json',yaml:'yaml',
+css:'css',html:'html',xml:'xml',sql:'sql',sh:'bash'};return m2[x]||x;}
+document.addEventListener('click',function(e){
+var a=e.target.closest('em a[href]');
+if(a&&a.closest('em')&&a.closest('em').textContent.indexOf('来源')===0){
+e.preventDefault();openSource(a.getAttribute('href'));return;}
+var c=e.target.closest('em code');
+if(c&&c.closest('em')&&c.closest('em').textContent.indexOf('来源')===0){
+e.preventDefault();openSource(c.textContent.replace(/^\[|\]$/g,'').replace(/\/$/,''));return;}
+var em=e.target.closest('em');
+if(em&&em.textContent.indexOf('来源')===0){
+var t=em.textContent.replace(/^来源：?/,'');
+if(t){e.preventDefault();openSource(t.replace(/^\[|\]$/g,'').replace(/\/$/,''));}}
+});})();
+</script>
 </body>
 </html>
 `)
