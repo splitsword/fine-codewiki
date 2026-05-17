@@ -47,7 +47,6 @@ type Wiki struct {
 	ChapterTitles       map[string]ChapterTitle    // theme name → LLM-generated title
 	ThemeIntros         map[string]string          // theme name → LLM-generated 2-3 sentence intro
 	ChapterNarratives   map[string]string          // theme name → LLM-generated narrative article
-	ProjectStructureNarrative string                     // LLM 生成的项目结构叙事（含多图）
 	ChapterPages              map[string]string          // theme name → standalone chapter HTML
 	Sequences           []sequencer.Sequence       // call sequences for per-chapter sequence diagrams
 	CallEdges           []sequencer.CallEdge       // raw call edges for per-module sequence diagrams

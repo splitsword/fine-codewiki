@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-17 — @ chore(docgen): 移除 Wiki.ProjectStructureNarrative 死字段 (dc95b4e)
+
 - 2026-05-17 — @ feat(docgen, cli): 项目结构页 LLM 叙事化重构 + 来源弹窗 (93a5501)
 
 - 2026-05-17 — @ feat(prd): 项目结构页 LLM 叙事化重构设计文档 (e41c115)
