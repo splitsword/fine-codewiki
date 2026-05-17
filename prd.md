@@ -371,13 +371,18 @@ LLM 策略分层：
 5. **生成管线异步并行调度**
    - LLM 调用是生成流程的主要耗时瓶颈（单个调用 30-120 秒），串行执行 8-12 个调用总耗时 5-15 分钟
    - 经过依赖分析，将生成流程分为 4 个阶段，阶段内所有独立任务通过 goroutine 并发执行
-   - **Phase 1（全并行）**：Overview、WhatItDoes、KeyConcepts、Architecture、ModuleThemes、FuncDescriptions 共 6 个 LLM 任务同时发起，耗时 = max(最慢任务) ≈ 2 分钟
+   - **Phase 1（全并行）**：Overview、WhatItDoes、KeyConcepts、Architecture、ModuleThemes、FuncDescriptions、ModuleResponsibilities 共 7 个 LLM 任务同时发起，耗时 = max(最慢任务) ≈ 2 分钟
    - **Phase 2（依赖型并行）**：LearningPath、ChapterTitles 等待 Phase 1 结果后并发执行
    - **Phase 3（主题级并行）**：ThemeIntros + ChapterNarratives，其中章节叙事内部每章独立 goroutine（含 3 级渐进降级 retry）
    - **Phase 4（快速收尾）**：交叉链接、图表内嵌、checkpoint 清理，纯本地计算毫秒级
    - 状态通道 (`chan statusMsg`) 解耦 goroutine 输出，避免并发 fmt.Printf 交错
    - Checkpoint 从"每步骤保存"改为"每阶段统一保存"，减少 IO 竞争
    - 预计总耗时从串行 5-15 分钟降至 2-5 分钟
+
+6. **函数语义覆盖率自适应策略**
+   - LLM 函数描述的成本和耗时与项目规模正相关，不宜采用固定比例
+   - 采用项目规模自适应策略：≤100 个函数 → 全覆盖（100%）；100-300 → 80%；300-800 → 50%；800+ → 固定 400 个上限
+   - 用户可通过 `--max-functions N` 手动覆盖：`0`=跳过，`>0`=指定上限
 
 ---
 
@@ -705,7 +710,8 @@ W2-W5 ─ LLM 适配层测试
 | **导航与 Serve 体验重构** | 分层导航（学习指南/API参考/图表）、引导式首页、Sources 溯源 | W2 | ✅ 已完成 |
 | **静态骨架减负** | LLM 成功时完全取代静态清单（Overview/WhatItDoes 不再拼接模块列表） | W2 | ✅ 已完成 |
 | **Architecture LLM 增强** | 架构文章添加叙事说明，不只是表格+图 | W2 | ✅ 已完成 |
-| **架构说明叙事化重构** | **对标 Zread 重构架构说明：①LLM Prompt 增强（传入 README/入口点/角色推断/架构模式）②移除全量依赖图和模块概览表③新增顶层包级架构图+子系统详图④引导 LLM 写因果链叙事而非模块罗列** | **W5** | **🔵 进行中** |
+| **架构说明叙事化重构** | **对标 Zread 重构架构说明：①LLM Prompt 增强（传入 README/入口点/角色推断/架构模式）②移除全量依赖图和模块概览表③新增顶层包级架构图+子系统详图④引导 LLM 写因果链叙事而非模块罗列** | **W5** | **✅ 已完成** |
+| **项目结构页 LLM 叙事化重构** | **废弃静态职责表（角色→固定描述），改为 LLM 驱动的叙事+多图穿插结构：①LLM 基于模块类名/函数签名/依赖关系理解代码逻辑②生成带多张聚焦 mermaid 图的叙事文章③每张图只画 5-8 个相关模块④图在叙事段落中穿插而非末尾堆砌⑤Phase 1 新增 Task 7 并发调用** | **W6** | **🔵 进行中** |
 | **KeyConcepts 静态降级** | LLM 失败时基于图谱推断生成伪设计决策，不让页面空白 | W2 | ✅ 已完成 |
 | **LearningPath LLM 增强** | 按用户目标（快速上手/部署/深入理解）分支引导 | W2 | ✅ 已完成 |
 | 函数级逻辑分析 | 30%+ 函数覆盖率，职责+执行逻辑+调用关联三层面描述 | W1-W3 | ✅ 已完成 |
@@ -826,6 +832,91 @@ Serve 模式:  cli.go → BuildWikiPage() → wikiPageCSS + wikiPageJS
 | 图表交互 | 全屏展开 + 点击跳转源码 | ✅ (超越) |
 | 搜索功能 | Ctrl+K 全局搜索覆盖层 | ✅ (超越) |
 | 现代 UI 质感 | 磨砂玻璃态 + 渐变品牌色 + 圆角阴影 | ✅ (超越) |
+
+### M3.2 项目结构页 LLM 叙事化重构
+
+> 本节的核心理念：**不再用静态表格罗列模块，而是让 LLM 基于代码理解生成一篇带多张聚焦图的技术叙事。**
+
+#### 旧版问题
+
+旧版"项目结构"页三个部分均为静态数据罗列，缺乏对代码逻辑的理解：
+
+| 部分 | 旧实现 | 问题 |
+|------|--------|------|
+| 目录概览 | `buildProjectTree()` 输出目录树 | 纯文件名列表，无说明 |
+| 模块职责 | switch-case 把架构角色映射到固定描述 | "核心领域"→"承载核心业务逻辑"，千篇一律 |
+| 关键依赖关系 | 单张 mermaid 图，所有模块塞入 | 模块多时杂乱不可读 |
+
+核心问题：`inferModuleResponsibility()` 仅通过文件名/目录名关键词猜测（如 `api` → "负责对外提供接口"），从未分析代码内容。
+
+#### 新版设计
+
+废弃旧的三段式静态罗列，改为 LLM 驱动的**叙事 + 多图穿插**结构：
+
+```
+# {项目名} 项目结构
+
+## 目录概览
+{保留目录树 — 真实数据，仍是新开发者了解文件组织的入口}
+
+## 结构详解
+{LLM 生成的完整叙事，内含多张聚焦 mermaid 图}
+
+一段文字讲清某个子系统 → 一张聚焦的依赖图（5-8 节点）
+↓
+一段文字讲清另一个子系统 → 另一张聚焦的图
+↓
+...
+```
+
+**多图穿插原则**：
+- 不让 LLM 生成一张"全量依赖图"——节点过多必然杂乱
+- LLM 在叙事中按逻辑分组（子系统/分层/功能域），每组画一张聚焦图
+- 每张图 5-8 个节点，只画该组相关的模块和依赖
+- 图在对应段落之后，读者看完文字立刻看到可视化
+
+#### Prompt 设计
+
+给 LLM 喂每个模块的实际代码信息（而非仅文件名）：
+- 类名 + 方法签名
+- 函数签名 + 返回值
+- 依赖模块 / 被依赖模块
+- 架构角色（PageRank 推断）
+- 目录树结构
+
+要求 LLM：
+1. 理解项目按什么逻辑组织（分层？功能模块？插件式？）
+2. 分成几个子系统/层，每层一段叙事
+3. 每层画一张 mermaid 图，只包含该层核心模块
+4. 图要简洁——5-8 个节点即可
+5. 段落末尾标注 `*来源：[显示名](文件路径)*`
+
+#### 生成流程
+
+```
+Phase 1 新增 Task 7（与其他 6 个任务并发）
+    │
+    ├── buildProjectStructurePrompt(graph, projectName)
+    │   → LLM streamComplete()
+    │   → 得到叙事 HTML（含多张 mermaid 图）
+    │
+    ▼
+Phase 1 wg.Wait() 后
+    │
+    ├── 如果 LLM 成功 → projectStructure = LLM 叙事结果
+    ├── 如果 LLM 失败 → fallback 到旧静态逻辑
+    │
+    ▼
+保存 checkpoint（支持中断恢复）
+```
+
+#### 不影响
+
+- Phase 1 其他 6 个任务
+- Phase 2/3/4 全部逻辑
+- Architecture、WhatItDoes、KeyConcepts 等其他页面
+- `buildProjectTree` 目录树保留
+- `inferModuleResponsibility` 保留作为 fallback
 
 #### M3 测试计划
 
@@ -981,13 +1072,13 @@ Source Code → tree-sitter Parser → CST → AST
         │
         ▼
 ┌──────────────────────────────────────────────────────┐
-│ Phase 1 — 全并行（6 个独立 LLM 任务）                  │
+│ Phase 1 — 全并行（7 个独立 LLM 任务）                  │
 │ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │
 │ │ Overview │ │WhatItDoes│ │KeyConcepts│ │ArchNarr  │ │
 │ └──────────┘ └──────────┘ └──────────┘ └──────────┘ │
-│ ┌──────────┐ ┌──────────┐                            │
-│ │ModuleThemes│ │FuncDescs │  ← 批间也并行             │
-│ └──────────┘ └──────────┘                            │
+│ ┌──────────┐ ┌──────────┐ ┌──────────────────────┐   │
+│ │ModuleThemes│ │FuncDescs │ │ModuleResponsibilities│  │
+│ └──────────┘ └──────────┘ └──────────────────────┘   │
 │ 所有 goroutine 同时发起，WaitGroup 等待完成             │
 └──────────────────────┬───────────────────────────────┘
                        │
@@ -1327,9 +1418,12 @@ generate:
 
 ---
 
-> 文档版本：v0.8
-> 最后更新：2026-05-15
+> 文档版本：v0.9
+> 最后更新：2026-05-17
 > 仓库地址：https://github.com/splitsword/fine-codewiki
+>
+> **v0.9 变更摘要**：
+> - **项目结构页 LLM 叙事化重构**：废弃静态职责表（角色→固定描述映射），改为 LLM 驱动的"叙事+多图穿插"结构。LLM 基于每个模块的类名/函数签名/依赖关系理解代码逻辑，生成带多张聚焦 mermaid 图的叙事文章。每张图只画 5-8 个相关模块，图在叙事段落中穿插而非末尾堆砌。Phase 1 新增 Task 7（ModuleResponsibilities）与其他 6 个任务并发执行。`inferModuleResponsibility` 保留为 LLM 失败时的 fallback。
 >
 > **v0.8 变更摘要**：
 > - **LLM 生成可靠性工程 (P0)**：流式优先架构（所有 LLM 调用改为 `streamComplete()` 流式优先+非流式降级）；HTTP 超时机制重构（移除 `http.Client.Timeout`，新增 `StreamClient` 仅由 context 控制超时）；章节叙事 3 级渐进降级（完整流式→精简流式→极简非流式）；Thinking/Reasoning 模式默认启用（DeepSeek `thinking` + OpenAI `reasoning_effort` 双注入，`CODEWIKI_THINKING` 环境变量）；Prompt 规模控制（模块/函数数量截断）；流式活性检测（3 分钟无新 token 自动降级）；所有 context 超时适配 thinking 模式（8-15 分钟）

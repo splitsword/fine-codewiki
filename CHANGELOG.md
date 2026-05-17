@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-17 — @ feat(prd): 项目结构页 LLM 叙事化重构设计文档 (e41c115)
+
 - 2026-05-16 — feat(diagram, rag): 图表质量全面升级 + RAG 检索增强 (88eb127)
 
 - 2026-05-15 — feat(docgen, rag, chunker): RAG 问答系统改造 + 生成管线异步并行化 (57b9d5e)
