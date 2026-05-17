@@ -117,7 +117,7 @@ func TestGenerateCommand(t *testing.T) {
 
 	arch, err := os.ReadFile(filepath.Join(outDir, "02-architecture.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(arch), "graph LR")
+	assert.Contains(t, string(arch), "# 架构")
 }
 
 func TestGenerateCommandEmptyDir(t *testing.T) {

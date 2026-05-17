@@ -135,7 +135,7 @@ func TestGenerateArchitectureMarkdown(t *testing.T) {
 	require.NotEmpty(t, md)
 
 	assert.Contains(t, md, "# 架构")
-	assert.Contains(t, md, "## 关键设计决策")
+	assert.NotContains(t, md, "## 关键设计决策") // LLM 叙事生成，非静态追加
 	assert.NotContains(t, md, "## 模块概览")
 	assert.NotContains(t, md, "## 依赖图")
 }
@@ -240,7 +240,7 @@ func TestGenerateWikiFromGraph(t *testing.T) {
 
 	// Verify architecture doc contains top-level diagram and sub-system diagrams
 	assert.Contains(t, wiki.Architecture, "```mermaid")
-	assert.Contains(t, wiki.Architecture, "## 关键设计决策")
+	assert.NotContains(t, wiki.Architecture, "## 关键设计决策") // LLM 叙事生成，非静态追加
 	assert.NotContains(t, wiki.Architecture, "## 模块概览")
 	assert.NotContains(t, wiki.Architecture, "## 依赖图")
 }
@@ -443,7 +443,7 @@ func TestGenerateWikiEmptyRepo(t *testing.T) {
 	assert.Contains(t, wiki.Overview, "empty")
 	assert.Contains(t, wiki.Overview, "未在项目中找到模块")
 	assert.Contains(t, wiki.APIReference, "未找到 API 符号")
-	assert.Contains(t, wiki.Architecture, "关键设计决策")
+	assert.Contains(t, wiki.Architecture, "# 架构")
 }
 
 func TestDescribeFunction(t *testing.T) {

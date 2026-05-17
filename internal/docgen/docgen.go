@@ -177,7 +177,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	var projectStructureNarrative string
 
 		// ─── Phase 1: All independent LLM tasks run concurrently ───
-		report("Phase 1", fmt.Sprintf("启动 %d 个并行 LLM 任务", 7))
+		report("Phase 1", fmt.Sprintf("启动 %d 个并行 LLM 任务", 6))
 		phase1Start := time.Now()
 
 		var wg sync.WaitGroup
@@ -230,33 +230,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			}()
 		}
 
-		// Task 3: Key Concepts
-		if cp.KeyConcepts != "" {
-			keyConcepts = cp.KeyConcepts
-			report("设计决策", "从 checkpoint 恢复")
-		} else {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				report("设计决策", "开始生成...")
-				prompt := buildKeyConceptsPrompt(graph, projectName, language)
-				batchCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
-				defer cancel()
-				enhanced, err := streamComplete(batchCtx, provider, prompt)
-				if err != nil {
-					report("设计决策", fmt.Sprintf("LLM 失败 (%v)，静态回退", err))
-					keyConcepts = GenerateKeyConceptsFallback(graph, projectName)
-				} else if enhanced == "" || isChecklistLike(enhanced, graph) {
-					report("设计决策", "内容无效，静态回退")
-					keyConcepts = GenerateKeyConceptsFallback(graph, projectName)
-				} else {
-					keyConcepts = enhanced
-					report("设计决策", "生成完成")
-				}
-			}()
-		}
-
-		// Task 4: Architecture Narrative
+		// Task 3: Architecture Narrative
 		if cp.ArchNarrative != "" {
 			archNarrative = cp.ArchNarrative
 			report("架构描述", "从 checkpoint 恢复")
@@ -280,7 +254,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			}()
 		}
 
-		// Task 5: Module Themes
+		// Task 4: Module Themes
 		if cp.ModuleThemes != nil && len(cp.ModuleThemes) > 0 {
 			report("模块主题", "从 checkpoint 恢复")
 		} else if graph != nil {
@@ -293,7 +267,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			}()
 		}
 
-		// Task 6: Function Descriptions (parallel batching)
+		// Task 5: Function Descriptions (parallel batching)
 		if maxLLMFunctions != 0 && len(cp.FuncDescMap) > 0 {
 			funcDescMap = cp.FuncDescMap
 			report("函数描述", fmt.Sprintf("从 checkpoint 恢复 %d 个函数", len(funcDescMap)))
@@ -364,7 +338,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			}()
 		}
 
-		// Task 7: Project Structure Narrative (LLM-based, replaces static table)
+		// Task 6: Project Structure Narrative (LLM-based, replaces static table)
 		if cp.ProjectStructure != "" {
 			projectStructureNarrative = cp.ProjectStructure
 			report("项目结构", "从 checkpoint 恢复")
@@ -399,6 +373,21 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		}
 
 		report("Phase 1", fmt.Sprintf("全部完成（耗时 %v）", time.Since(phase1Start).Round(time.Second)))
+
+		// Key Concepts: recover from checkpoint or extract from architecture narrative
+		if cp.KeyConcepts != "" {
+			keyConcepts = cp.KeyConcepts
+			report("设计决策", "从 checkpoint 恢复")
+		} else if archNarrative != "" {
+			keyConcepts = extractKeyDesignDecisions(archNarrative)
+			if keyConcepts != "" {
+				report("设计决策", "从架构叙事提取完成")
+			}
+		}
+		if keyConcepts == "" {
+			keyConcepts = GenerateKeyConceptsFallback(graph, projectName)
+			report("设计决策", "静态回退")
+		}
 
 		// Replace static project structure with LLM-generated narrative
 		if projectStructureNarrative != "" {
@@ -687,6 +676,53 @@ func sortNodesByImportance(nodes []*grapher.Node, graph *grapher.Graph, entries 
 		result = append(result, s.node)
 	}
 	return result
+}
+
+// extractArchitectureHints scans the README for paragraphs containing architecture-related
+// keywords (架构/设计/分层/组件/模块/技术栈/architecture/layer/component/stack etc.)
+// and returns a concatenated summary (max 800 chars) to give the LLM human-written design context.
+func extractArchitectureHints(readme string) string {
+	if readme == "" {
+		return ""
+	}
+	keywords := []string{
+		"架构", "设计", "分层", "组件", "模块", "技术栈", "依赖",
+		"architecture", "layer", "component", "module", "stack",
+		"design", "pattern", "framework", "infrastructure", "middleware",
+		"plugin", "microservice", "monolith", "frontend", "backend",
+	}
+	paragraphs := strings.Split(readme, "\n\n")
+	var hints []string
+	totalChars := 0
+	for _, p := range paragraphs {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		hits := 0
+		lower := strings.ToLower(p)
+		for _, kw := range keywords {
+			if strings.Contains(lower, strings.ToLower(kw)) {
+				hits++
+			}
+		}
+		if hits >= 2 {
+			if totalChars+len(p) > 800 {
+				// Truncate last paragraph if it would exceed 800
+				remaining := 800 - totalChars
+				if remaining > 50 {
+					hints = append(hints, p[:remaining]+"...")
+				}
+				break
+			}
+			hints = append(hints, p)
+			totalChars += len(p)
+		}
+	}
+	if len(hints) == 0 {
+		return ""
+	}
+	return "以下是从项目 README 中提取的架构相关信息，可作为设计意图的参考：\n\n" + strings.Join(hints, "\n\n")
 }
 
 func buildOverviewPrompt(graph *grapher.Graph, projectName, readme, language string) string {
@@ -1085,17 +1121,15 @@ func buildAutoDescription(graph *grapher.Graph, projectName string, classCount, 
 func buildArchitecturePrompt(graph *grapher.Graph, projectName, readme, language string) string {
 	var b strings.Builder
 
-	// --- 角色设定 ---
 	fmt.Fprintf(&b, "你是一位资深软件架构师，正在为 %s 项目的代码 Wiki 撰写架构说明。\n", projectName)
 	fmt.Fprintf(&b, "目标读者是刚加入团队的开发者，他们需要在 5 分钟内理解系统的整体结构和设计逻辑。\n\n")
 
-	// --- README 摘要 ---
+	// --- README 架构信息提取 ---
 	if readme != "" {
-		trimmed := readme
-		if len(trimmed) > 1500 {
-			trimmed = trimmed[:1500] + "..."
+		hints := extractArchitectureHints(readme)
+		if hints != "" {
+			fmt.Fprintf(&b, "%s\n\n", hints)
 		}
-		fmt.Fprintf(&b, "【项目 README 摘要】\n%s\n\n", trimmed)
 	}
 
 	// --- 项目基本信息 ---
@@ -1111,149 +1145,140 @@ func buildArchitecturePrompt(graph *grapher.Graph, projectName, readme, language
 	}
 	fmt.Fprintln(&b)
 
-	// --- 架构模式推断 ---
-	pattern, rationale := inferArchitecturePattern(graph)
-	fmt.Fprintf(&b, "【静态分析推断的架构模式】\n")
-	fmt.Fprintf(&b, "模式：%s\n", pattern)
-	fmt.Fprintf(&b, "判据：%s\n\n", rationale)
+	// --- 目录树 ---
+	fmt.Fprintf(&b, "## 目录结构\n\n")
+	fmt.Fprintf(&b, "```\n")
+	fmt.Fprint(&b, buildProjectTree(graph))
+	fmt.Fprintf(&b, "```\n\n")
 
-	// --- 入口点 ---
+	// --- 架构模式 + 入口点 + 循环依赖 ---
+	pattern, rationale := inferArchitecturePattern(graph)
+	fmt.Fprintf(&b, "【静态分析推断】\n")
+	fmt.Fprintf(&b, "架构模式：%s — %s\n", pattern, rationale)
+
 	entries := graph.EntryPoints()
 	if len(entries) > 0 {
-		fmt.Fprintf(&b, "【入口模块】\n")
-		for _, e := range entries {
-			resp := inferModuleResponsibility(e)
-			fmt.Fprintf(&b, "- %s — %s\n", e.Name, resp)
+		fmt.Fprintf(&b, "入口模块：")
+		for i, e := range entries {
+			if i > 0 {
+				fmt.Fprintf(&b, "、")
+			}
+			fmt.Fprintf(&b, "%s", e.Name)
 		}
-		fmt.Fprintln(&b)
+		fmt.Fprintf(&b, "\n")
 	}
 
-	// --- 模块角色（PageRank 推断） ---
+	cycles := graph.DetectCycles()
+	if len(cycles) > 0 {
+		fmt.Fprintf(&b, "循环依赖：")
+		for i, c := range cycles {
+			if i > 0 {
+				fmt.Fprintf(&b, "；")
+			}
+			fmt.Fprintf(&b, "%s", strings.Join(c.Nodes, " → "))
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+	fmt.Fprintln(&b)
+
+	// --- 模块详情（类、函数签名、依赖关系） ---
 	roles := graph.InferModuleRoles()
 	roleMap := make(map[string]string, len(roles))
 	for _, r := range roles {
 		roleMap[r.Name] = r.Role
 	}
-	fmt.Fprintf(&b, "【模块角色分布（PageRank 推断）】\n")
-	for _, r := range roles {
-		if isNoiseModule(r.Name) {
-			continue
-		}
-		if r.Role == "核心领域" || r.Role == "入口层" || r.Role == "工具库" {
-			deps := graph.DependenciesOf(r.Name)
-			dependents := graph.DependentsOf(r.Name)
-			fmt.Fprintf(&b, "- %s（%s，依赖 %d，被依赖 %d）\n", r.Name, r.Role, len(deps), len(dependents))
-		}
-	}
-	fmt.Fprintln(&b)
 
-	// --- 循环依赖 ---
-	cycles := graph.DetectCycles()
-	if len(cycles) > 0 {
-		fmt.Fprintf(&b, "【循环依赖】\n")
-		for _, c := range cycles {
-			fmt.Fprintf(&b, "- %s\n", strings.Join(c.Nodes, " → "))
+	const maxModules = 35
+	fmt.Fprintf(&b, "## 模块详情\n\n")
+	shown := 0
+	for _, n := range cleanNodes {
+		if shown >= maxModules {
+			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(cleanNodes)-maxModules)
+			break
 		}
-		fmt.Fprintln(&b)
-	}
+		shown++
 
-	// --- 核心模块详情（关键函数签名） ---
-	coreNodes := selectCoreNodes(graph, 8)
-	fmt.Fprintf(&b, "【核心模块详情】\n")
-	for _, node := range coreNodes {
-		if isNoiseModule(node.Name) {
-			continue
-		}
-		resp := inferModuleResponsibility(node)
-		role := roleMap[node.Name]
+		role := roleMap[n.Name]
 		if role == "" {
 			role = "通用"
 		}
-		fmt.Fprintf(&b, "- **%s**（%s）\n  职责：%s\n", node.Name, role, resp)
-		funcs := node.Functions
-		if len(funcs) > 5 {
-			funcs = funcs[:5]
+		fmt.Fprintf(&b, "### %s（%s）\n\n", n.Filename, role)
+
+		if len(n.Classes) > 0 {
+			fmt.Fprintf(&b, "- 类：")
+			for j, c := range n.Classes {
+				if j > 0 {
+					fmt.Fprintf(&b, "、")
+				}
+				methods := make([]string, len(c.Methods))
+				for k, m := range c.Methods {
+					methods[k] = m.Name
+				}
+				fmt.Fprintf(&b, "%s（方法：%s）", c.Name, strings.Join(methods, ", "))
+			}
+			fmt.Fprintf(&b, "\n")
 		}
-		if len(funcs) > 0 {
-			names := make([]string, len(funcs))
-			for i, f := range funcs {
+
+		if len(n.Functions) > 0 {
+			fmt.Fprintf(&b, "- 函数：")
+			funcs := n.Functions
+			if len(funcs) > 5 {
+				funcs = funcs[:5]
+			}
+			for j, f := range funcs {
+				if j > 0 {
+					fmt.Fprintf(&b, "、")
+				}
 				sig := f.Name + "("
 				if len(f.Params) > 0 {
 					sig += strings.Join(f.Params, ", ")
 				}
 				sig += ")"
 				if f.ReturnType != "" {
-					sig += " " + f.ReturnType
+					sig += " -> " + f.ReturnType
 				}
-				names[i] = sig
+				fmt.Fprintf(&b, "%s", sig)
 			}
-			fmt.Fprintf(&b, "  关键函数：%s\n", strings.Join(names, ", "))
+			fmt.Fprintf(&b, "\n")
 		}
-		deps := graph.DependenciesOf(node.Name)
-		if len(deps) > 0 {
-			fmt.Fprintf(&b, "  依赖：%s\n", strings.Join(deps, ", "))
-		}
-		fmt.Fprintln(&b)
-	}
 
-	// --- 模块依赖列表（非噪音模块） ---
-	fmt.Fprintf(&b, "【全部有效模块及依赖】\n")
-	maxModules := 40
-	count := 0
-	for _, n := range cleanNodes {
-		if count >= maxModules {
-			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(cleanNodes)-maxModules)
-			break
-		}
 		deps := graph.DependenciesOf(n.Name)
 		if len(deps) > 0 {
-			fmt.Fprintf(&b, "- %s → %s\n", n.Name, strings.Join(deps, ", "))
-		} else {
-			fmt.Fprintf(&b, "- %s（无内部依赖）\n", n.Name)
+			fmt.Fprintf(&b, "- 依赖：%s\n", strings.Join(deps, ", "))
 		}
-		count++
-	}
-	fmt.Fprintln(&b)
-
-	// --- 架构图结构摘要 ---
-	topGroups := graph.GroupByDirectory()
-	if len(topGroups) > 1 {
-		fmt.Fprintf(&b, "【架构图结构】\n")
-		fmt.Fprintf(&b, "生成的架构图包含 %d 个目录级别的子系统：\n", len(topGroups))
-		var dirs []string
-		for dir := range topGroups {
-			if dir != "." && dir != "" {
-				dirs = append(dirs, dir)
-			}
+		dependents := graph.DependentsOf(n.Name)
+		if len(dependents) > 0 {
+			fmt.Fprintf(&b, "- 被依赖：%s\n", strings.Join(dependents, ", "))
 		}
-		sort.Strings(dirs)
-		for _, dir := range dirs {
-			if len(dirs) > 10 {
-				// Too many groups, summarize
-				fmt.Fprintf(&b, "- %d 个目录分组（含 %s 等）\n", len(dirs), strings.Join(dirs[:5], ", "))
-				break
-			}
-			fmt.Fprintf(&b, "- `%s`（%d 个模块）\n", dir, len(topGroups[dir]))
-		}
-		fmt.Fprintf(&b, "图中用颜色区分角色：🔵蓝色=入口层、🟠橙色=核心领域、🟣紫色=工具库、🟢绿色=支撑模块\n")
-		fmt.Fprintf(&b, "你可以在文章中引用图表中的颜色标注，例如：\"图中橙色标注的核心领域模块承担了...\"\n")
-		fmt.Fprintln(&b)
+		fmt.Fprintf(&b, "\n")
 	}
 
 	// --- 写作要求 ---
 	fmt.Fprintf(&b, "## 写作要求\n\n")
-	fmt.Fprintf(&b, "请撰写一篇 800-1500 字的架构说明（Markdown 格式），要求：\n\n")
-	fmt.Fprintf(&b, "1. **开篇定义**：用一句话说清系统是什么，由哪几个核心子系统组成。\n")
-	fmt.Fprintf(&b, "2. **系统拓扑**：用一个完整段落讲清数据/控制流如何在子系统间流动，\n")
-	fmt.Fprintf(&b, "   读完这段，读者能画出系统的「因果链」。\n")
-	fmt.Fprintf(&b, "3. **结构模式解剖**：如果发现多个模块共享相似的目录结构或接口模式，\n")
-	fmt.Fprintf(&b, "   专门用一段讲清这种重复结构（如插件模式、中间件链、适配器层）。\n")
-	fmt.Fprintf(&b, "4. **关键设计权衡**：挑出 1-2 个值得注意的架构决策，用引用块（> 开头）说明权衡。\n")
-	fmt.Fprintf(&b, "5. **来源标注**：每段末尾用 `*来源：\\`文件路径\\`*` 标注涉及的核心文件。\n")
-	fmt.Fprintf(&b, "6. **格式**：使用 ## 和 ### 级别标题组织段落，不要包含一级标题（# ）。\n")
-	fmt.Fprintf(&b, "7. **风格**：叙事式，像高质量技术博客一样。不要逐模块罗列，不要生成表格或清单。\n")
-	fmt.Fprintf(&b, "   如果你的输出中出现了超过 5 行的列表，请停下来改写成连贯段落。\n\n")
-	fmt.Fprintf(&b, "直接输出 Markdown 文章正文，不要加任何 JSON 包装或代码围栏。")
+	fmt.Fprintf(&b, "请撰写一篇 800-1500 字的架构说明（Markdown 格式），包含以下三个小节。\n\n")
+	fmt.Fprintf(&b, "### 小节 1：## 功能架构\n")
+	fmt.Fprintf(&b, "- 按\"系统能做什么\"的视角，将模块按功能域分组（如：认证、数据处理、API 网关、存储等）\n")
+	fmt.Fprintf(&b, "- 1-2 段文字讲清每个功能域的职责和协作方式\n")
+	fmt.Fprintf(&b, "- **画一张功能域依赖图**：```mermaid``` 格式，5-10 个节点，按功能域聚合模块\n")
+	fmt.Fprintf(&b, "- 图中节点标注模块名而非功能域名，按功能域分组排列\n\n")
+	fmt.Fprintf(&b, "### 小节 2：## 技术架构\n")
+	fmt.Fprintf(&b, "- 按\"系统怎么构建\"的视角，分析技术分层和数据流（如：入口层→业务层→数据层）\n")
+	fmt.Fprintf(&b, "- 1-2 段文字讲清技术分层逻辑和基础设施组件\n")
+	fmt.Fprintf(&b, "- **画一张技术分层图**：```mermaid``` 格式，5-10 个节点，按层次排列\n")
+	fmt.Fprintf(&b, "- 技术图侧重展示层次关系和基础设施依赖，与功能图不要重复\n\n")
+	fmt.Fprintf(&b, "### 小节 3：## 关键设计决策\n")
+	fmt.Fprintf(&b, "- 识别 2-3 个真正有深度的设计决策（不是模块清单，是设计思想）\n")
+	fmt.Fprintf(&b, "- 每个决策说明：是什么、为什么这样设计、带来了什么好处/代价\n")
+	fmt.Fprintf(&b, "- 用 Markdown 引用块（> 开头）标注关键的权衡理由\n\n")
+	fmt.Fprintf(&b, "### 通用要求\n")
+	fmt.Fprintf(&b, "- 每张 mermaid 图紧跟在其文字说明段落之后，形成\"文字→图→文字→图\"的穿插节奏\n")
+	fmt.Fprintf(&b, "- 每张图只画 5-10 个核心模块 — 不要把所有模块塞进一张图\n")
+	fmt.Fprintf(&b, "- 两张大图的模块可以有少量重叠，但视角不同（功能 vs 技术）\n")
+	fmt.Fprintf(&b, "- 段落末尾用 `*来源：` 标注涉及的源文件路径\n")
+	fmt.Fprintf(&b, "- 使用简体中文，叙事式风格，不要逐模块罗列\n")
+	fmt.Fprintf(&b, "- 不要包含一级标题（# ），因为页面已有 # 架构说明 标题\n")
+	fmt.Fprintf(&b, "- 如果 README 中有架构信息，优先参考其中的人类设计意图\n\n")
+	fmt.Fprintf(&b, "直接输出 Markdown 正文，不要加 JSON 包装或代码围栏。")
 
 	return b.String()
 }
@@ -2061,6 +2086,45 @@ func inferArchitecturePattern(graph *grapher.Graph) (pattern, rationale string) 
 	}
 
 	return "简洁模块化", "项目由少量模块组成，依赖关系简单直接。这种设计在小型项目中非常高效，但随着规模增长，建议关注职责分离，避免模块膨胀。"
+}
+
+// extractKeyDesignDecisions extracts the "## 关键设计决策" section from
+// the LLM-generated architecture narrative.  Returns the section content
+// (including the heading) or "" if extraction fails.
+func extractKeyDesignDecisions(narrative string) string {
+	// Try the standard heading
+	idx := strings.Index(narrative, "## 关键设计决策")
+	if idx < 0 {
+		// Fallback: look for "### 小节 3" style pattern
+		idx = strings.Index(narrative, "关键设计决策")
+		if idx < 0 {
+			return ""
+		}
+		// Walk back to find the heading start
+		start := strings.LastIndex(narrative[:idx], "\n## ")
+		if start < 0 {
+			start = strings.LastIndex(narrative[:idx], "\n### ")
+		}
+		if start >= 0 {
+			idx = start + 1
+		} else {
+			// Just use the line start
+			lineStart := strings.LastIndex(narrative[:idx], "\n")
+			if lineStart >= 0 {
+				idx = lineStart + 1
+			} else {
+				idx = 0
+			}
+		}
+	}
+
+	// Find the end: next "## " heading or end of text
+	rest := narrative[idx+1:]
+	nextH2 := strings.Index(rest, "\n## ")
+	if nextH2 >= 0 {
+		return narrative[idx : idx+1+nextH2]
+	}
+	return narrative[idx:]
 }
 
 // GenerateKeyConceptsFallback creates a statically-analysed "design decisions"
@@ -3413,25 +3477,6 @@ func GenerateArchitectureMarkdown(graph *grapher.Graph, narrative string) (strin
 		b.WriteString(narrative)
 		b.WriteString("\n\n")
 	}
-
-	// Layered architecture diagram (role-based tier layout)
-	if topDSL, err := diagram.GenerateLayeredArchitectureDiagram(graph); err == nil && topDSL != "" {
-		b.WriteString("## 分层架构图\n\n")
-		b.WriteString("模块按架构角色分组，从左到右展示系统的分层结构与跨层依赖：\n\n")
-		b.WriteString("```mermaid\n")
-		b.WriteString(topDSL)
-		b.WriteString("```\n\n")
-	}
-
-	// Design decisions inferred from graph analysis
-	roles := graph.InferModuleRoles()
-	roleMap := make(map[string]string)
-	for _, r := range roles {
-		roleMap[r.Name] = r.Role
-	}
-	b.WriteString("## 关键设计决策\n\n")
-	b.WriteString(buildDesignDecisions(graph, roles, roleMap))
-	b.WriteString("\n")
 
 	// Sub-system diagrams: one per directory group that has internal edges
 	groups := graph.GroupByDirectory()
@@ -5213,11 +5258,7 @@ func EmbedContextualContent(wiki *Wiki, graph *grapher.Graph, sourceDir string, 
 		return
 	}
 
-	// Overview: top-level diagram + entry point snippet
-	if topDSL, err := diagram.GenerateLayeredArchitectureDiagram(graph); err == nil && topDSL != "" {
-		wiki.Overview += "\n## 架构概览\n\n"
-		wiki.Overview += "```mermaid\n" + topDSL + "\n```\n"
-	}
+	// Overview: entry point snippet
 	entries := graph.EntryPoints()
 	if len(entries) > 0 && sourceDir != "" {
 		snippets := ExtractSnippetsForNode(sourceDir, entries[0], 2)
