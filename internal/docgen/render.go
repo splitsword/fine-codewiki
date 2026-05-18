@@ -2,6 +2,7 @@ package docgen
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode"
@@ -300,11 +301,19 @@ func RenderMarkdownBody(src []byte) string {
 	return body.String()
 }
 
+// RenderMarkdownWithSources renders markdown to HTML and post-processes source
+// attribution tags into clickable .source-ref spans with the correct file
+// extension for the target project language (e.g. ".go" for Go projects).
+func RenderMarkdownWithSources(src []byte, lang string) string {
+	return makeSourceRefsClickable(RenderMarkdownBody(src), primaryExtForLang(lang))
+}
+
 // makeSourceRefsClickable transforms rendered source attribution HTML into
 // clickable spans. Handles single/multiple code-wrapped paths, bracket-wrapped
 // paths, and plain-text paths.
-func makeSourceRefsClickable(html string) string {
-	// Match the entire source attribution block: <em>来源：...content...</em>
+// primaryExt is the primary file extension for the target project language (e.g. ".go", ".py").
+// Pass "" to leave paths without extension unchanged.
+func makeSourceRefsClickable(html string, primaryExt string) string {
 	reSrcBlock := regexp.MustCompile(`<em>来源：(.+?)</em>`)
 
 	return reSrcBlock.ReplaceAllStringFunc(html, func(block string) string {
@@ -314,7 +323,7 @@ func makeSourceRefsClickable(html string) string {
 		}
 		inner := m[1]
 
-		// Extract individual file paths from <code> tags or plain text
+		// Extract individual file paths from <code> tags
 		reCode := regexp.MustCompile(`<code>([^<]+)</code>`)
 		codes := reCode.FindAllStringSubmatch(inner, -1)
 		if len(codes) > 0 {
@@ -322,7 +331,7 @@ func makeSourceRefsClickable(html string) string {
 			for _, c := range codes {
 				path := cleanSourcePath(c[1])
 				if path != "" {
-					refs = append(refs, fmt.Sprintf("<span class=\"source-ref\" data-file=\"%s\">%s</span>", path, path))
+					refs = append(refs, buildSourceSpan(path, primaryExt))
 				}
 			}
 			if len(refs) > 0 {
@@ -330,7 +339,7 @@ func makeSourceRefsClickable(html string) string {
 			}
 		}
 
-		// Fallback: split plain text on delimiters
+		// Fallback: split plain text on delimiters (handles comma-separated multi-path)
 		plain := reCode.ReplaceAllString(inner, "")
 		plain = strings.TrimSpace(plain)
 		if plain == "" {
@@ -341,7 +350,7 @@ func makeSourceRefsClickable(html string) string {
 		for _, p := range parts {
 			path := cleanSourcePath(p)
 			if path != "" {
-				refs = append(refs, fmt.Sprintf("<span class=\"source-ref\" data-file=\"%s\">%s</span>", path, path))
+				refs = append(refs, buildSourceSpan(path, primaryExt))
 			}
 		}
 		if len(refs) > 0 {
@@ -349,6 +358,32 @@ func makeSourceRefsClickable(html string) string {
 		}
 		return block
 	})
+}
+
+// buildSourceSpan creates a clickable source-ref span for a single file path.
+// If the path has no extension and primaryExt is provided, the extension is appended
+// to both data-file and the display name, so the popup title shows the correct filename.
+func buildSourceSpan(rawPath, primaryExt string) string {
+	fileAttr := rawPath
+	if filepath.Ext(rawPath) == "" && primaryExt != "" {
+		fileAttr = rawPath + primaryExt
+	}
+	displayName := filepath.Base(fileAttr)
+	return fmt.Sprintf(`<span class="source-ref" data-file="%s"><strong>%s</strong></span>`, fileAttr, displayName)
+}
+
+// primaryExtForLang returns the primary file extension for the given language name.
+// Returns "" for unknown languages so callers know not to add any extension.
+func primaryExtForLang(lang string) string {
+	m := map[string]string{
+		"python": ".py", "go": ".go",
+		"javascript": ".js", "typescript": ".ts",
+		"rust": ".rs", "java": ".java",
+		"cpp": ".cpp", "c": ".c",
+		"ruby": ".rb", "php": ".php",
+		"swift": ".swift", "kotlin": ".kt",
+	}
+	return m[strings.ToLower(strings.TrimSpace(lang))]
 }
 
 // cleanSourcePath strips brackets and whitespace from a file path.
@@ -532,10 +567,16 @@ hr { height:1px; padding:0; margin:36px 0; background:var(--border); border:0; }
 .search-empty { padding:20px; text-align:center; color:var(--text3); }
 
 /* ---- Source reference ---- */
+.source-ref { display:inline-block; font-weight:700; color:var(--accent); cursor:pointer; background:var(--inline-code-bg); padding:0 5px; border-radius:4px; font-family:"Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace; font-size:85%; transition:all .15s; }
+.source-ref:hover { background:var(--accent-glow); box-shadow:0 0 0 2px var(--accent-glow); }
+/* Fallback styles for un-processed em tags */
 em code { cursor:pointer; transition:background .15s; }
 em code:hover { background:var(--accent-glow); }
 em a[href] { color:var(--accent); text-decoration:underline dotted; text-underline-offset:3px; }
 em a[href]:hover { color:var(--accent2); }
+	/* 纯 <em> 来源回退的可点击样式 */
+	em.source-em { cursor:pointer; color:var(--accent); font-weight:600; transition:all .15s; }
+	em.source-em:hover { background:var(--accent-glow); border-radius:3px; padding:1px 4px; margin:-1px -4px; }
 .s-popup-ov { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:9999; justify-content:center; align-items:center; }
 .s-popup-ov.on { display:flex; }
 .s-popup { background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-lg); max-width:800px; width:90vw; max-height:80vh; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3); display:flex; flex-direction:column; }
@@ -543,7 +584,18 @@ em a[href]:hover { color:var(--accent2); }
 .s-popup-cl { background:none; border:none; font-size:20px; cursor:pointer; color:var(--text3); padding:4px 8px; line-height:1; }
 .s-popup-cl:hover { color:var(--text); }
 .s-popup-bd { flex:1; overflow:auto; }
-.s-popup-bd pre { margin:0; border-radius:0; box-shadow:none; border:none; padding:16px 20px; background:var(--pre-bg); color:var(--pre-text); font-size:13px; line-height:1.6; white-space:pre-wrap; }
+	.s-popup-bd pre { margin:0; border-radius:0; box-shadow:none; border:none; padding:16px 20px; background:var(--pre-bg); color:var(--pre-text); font-size:13px; line-height:1.6; white-space:pre-wrap; }
+	/* 语法高亮回退（CDN 不可用时） */
+	.s-popup-bd .hljs-keyword,.s-popup-bd .hljs-selector-tag { color:#ff7b72; }
+	.s-popup-bd .hljs-string,.s-popup-bd .hljs-addition { color:#a5d6ff; }
+	.s-popup-bd .hljs-number { color:#79c0ff; }
+	.s-popup-bd .hljs-comment { color:#8b949e; font-style:italic; }
+	.s-popup-bd .hljs-function,.s-popup-bd .hljs-title,.s-popup-bd .hljs-section { color:#d2a8ff; }
+	.s-popup-bd .hljs-type,.s-popup-bd .hljs-built_in { color:#ffa657; }
+	.s-popup-bd .hljs-attr { color:#79c0ff; }
+	.s-popup-bd .hljs-params { color:#e6edf3; }
+	.s-popup-bd .hljs-meta { color:#8b949e; }
+	.s-popup-bd .hljs-literal { color:#79c0ff; }
 
 /* ---- Animations ---- */
 @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
@@ -686,6 +738,73 @@ window.navigateToModule=function(mod){
 </script>
 `
 
+// SourcePopupJS is the source-reference popup script shared by all page types.
+// It provides openSource(), the popup DOM, and the click handler for .source-ref
+// spans and legacy em-tag fallback.
+const SourcePopupJS = `<style>
+/* 纯 <em> 来源回退的可点击样式（注入旧页面时生效） */
+em.source-em { cursor:pointer; color:var(--accent); font-weight:600; transition:all .15s; }
+em.source-em:hover { background:var(--accent-glow); border-radius:3px; padding:1px 4px; margin:-1px -4px; }
+/* 语法高亮回退（CDN 不可用时弹窗内生效） */
+.s-popup-bd .hljs-keyword,.s-popup-bd .hljs-selector-tag { color:#ff7b72; }
+.s-popup-bd .hljs-string,.s-popup-bd .hljs-addition { color:#a5d6ff; }
+.s-popup-bd .hljs-number { color:#79c0ff; }
+.s-popup-bd .hljs-comment { color:#8b949e; font-style:italic; }
+.s-popup-bd .hljs-function,.s-popup-bd .hljs-title,.s-popup-bd .hljs-section { color:#d2a8ff; }
+.s-popup-bd .hljs-type,.s-popup-bd .hljs-built_in { color:#ffa657; }
+.s-popup-bd .hljs-attr { color:#79c0ff; }
+.s-popup-bd .hljs-params { color:#e6edf3; }
+.s-popup-bd .hljs-meta { color:#8b949e; }
+.s-popup-bd .hljs-literal { color:#79c0ff; }
+</style>
+<script>
+(function(){
+var popup=null;
+function getPopup(){
+if(popup)return popup;
+popup=document.createElement('div');popup.id='s-popup';popup.className='s-popup-ov';
+popup.innerHTML='<div class="s-popup"><div class="s-popup-hd"><span></span><button class="s-popup-cl">&times;</button></div><div class="s-popup-bd"><pre></pre></div></div>';
+document.body.appendChild(popup);
+popup.querySelector('.s-popup-cl').onclick=function(){popup.classList.remove('on');};
+popup.addEventListener('click',function(e){if(e.target===popup)popup.classList.remove('on');});
+return popup;}
+function openSource(file){
+var p=getPopup();p.classList.add('on');
+p.querySelector('.s-popup-hd span').textContent=file;
+var bd=p.querySelector('.s-popup-bd');
+bd.innerHTML='<pre><code class="language-'+l(file)+'">加载中...</code></pre>';
+fetch('/api/source?file='+encodeURIComponent(file))
+.then(function(r){if(!r.ok)throw Error(r.status);return r.text();})
+.then(function(t){var c=bd.querySelector('code');c.textContent=t;if(typeof hljs!=='undefined'){try{hljs.highlightElement(c);}catch(e){}}})
+.catch(function(e){bd.querySelector('code').textContent='无法加载: '+e.message;});}
+function l(p){var m=p.match(/\.(\w+)$/);if(!m)return'plaintext';
+var x=m[1].toLowerCase();var m2={py:'python',go:'go',js:'javascript',ts:'typescript',
+rs:'rust',java:'java',cpp:'cpp',c:'c',rb:'ruby',md:'markdown',json:'json',yaml:'yaml',
+css:'css',html:'html',xml:'xml',sql:'sql',sh:'bash'};return m2[x]||x;}
+// 标记纯 <em> 来源为可点击样式
+document.addEventListener('DOMContentLoaded',function(){
+document.querySelectorAll('em').forEach(function(em){
+if(em.textContent.indexOf('来源')===0)em.classList.add('source-em');
+});
+});
+// 如果 DOM 已加载完则立即执行
+if(document.readyState!=='loading'){document.querySelectorAll('em').forEach(function(em){if(em.textContent.indexOf('来源')===0)em.classList.add('source-em');});}
+document.addEventListener('click',function(e){
+var s=e.target.closest('.source-ref');
+if(s&&s.dataset.file){e.preventDefault();openSource(s.dataset.file);return;}
+var a=e.target.closest('em a[href]');
+if(a&&a.closest('em')&&a.closest('em').textContent.indexOf('来源')===0){
+e.preventDefault();openSource(a.getAttribute('href'));return;}
+var c=e.target.closest('em code');
+if(c&&c.closest('em')&&c.closest('em').textContent.indexOf('来源')===0){
+e.preventDefault();openSource(c.textContent.replace(/^\[|\]$/g,'').replace(/\/$/,''));return;}
+var em=e.target.closest('em');
+if(em&&em.textContent.indexOf('来源')===0){
+var t=em.textContent.replace(/^来源：?/,'');
+if(t){e.preventDefault();openSource(t.replace(/^\[|\]$/g,'').replace(/\/$/,'').split(/[,、，]/)[0].trim());}}
+});})();
+</script>`
+
 // BuildWikiPage assembles a full HTML page with sidebar navigation from structured sections.
 func BuildWikiPage(title, body, currentURL string, sections []NavSection, totalArticles, totalMinutes int) []byte {
 	var out strings.Builder
@@ -825,44 +944,9 @@ function filterSearch(q){
 `, contentStyle))
 	out.WriteString(body)
 	out.WriteString(`</div>
-<script>hljs.highlightAll();</script>
-<script>
-(function(){
-var popup=null;
-function getPopup(){
-if(popup)return popup;
-popup=document.createElement('div');popup.id='s-popup';popup.className='s-popup-ov';
-popup.innerHTML='<div class="s-popup"><div class="s-popup-hd"><span></span><button class="s-popup-cl">&times;</button></div><div class="s-popup-bd"><pre></pre></div></div>';
-document.body.appendChild(popup);
-popup.querySelector('.s-popup-cl').onclick=function(){popup.classList.remove('on');};
-popup.addEventListener('click',function(e){if(e.target===popup)popup.classList.remove('on');});
-return popup;}
-function openSource(file){
-var p=getPopup();p.classList.add('on');
-p.querySelector('.s-popup-hd span').textContent=file;
-var bd=p.querySelector('.s-popup-bd');
-bd.innerHTML='<pre><code class="language-'+l(file)+'">加载中...</code></pre>';
-fetch('/api/source?file='+encodeURIComponent(file))
-.then(function(r){if(!r.ok)throw Error(r.status);return r.text();})
-.then(function(t){var c=bd.querySelector('code');c.textContent=t;hljs.highlightElement(c);})
-.catch(function(e){bd.querySelector('code').textContent='无法加载: '+e.message;});}
-function l(p){var m=p.match(/\.(\w+)$/);if(!m)return'plaintext';
-var x=m[1].toLowerCase();var m2={py:'python',go:'go',js:'javascript',ts:'typescript',
-rs:'rust',java:'java',cpp:'cpp',c:'c',rb:'ruby',md:'markdown',json:'json',yaml:'yaml',
-css:'css',html:'html',xml:'xml',sql:'sql',sh:'bash'};return m2[x]||x;}
-document.addEventListener('click',function(e){
-var a=e.target.closest('em a[href]');
-if(a&&a.closest('em')&&a.closest('em').textContent.indexOf('来源')===0){
-e.preventDefault();openSource(a.getAttribute('href'));return;}
-var c=e.target.closest('em code');
-if(c&&c.closest('em')&&c.closest('em').textContent.indexOf('来源')===0){
-e.preventDefault();openSource(c.textContent.replace(/^\[|\]$/g,'').replace(/\/$/,''));return;}
-var em=e.target.closest('em');
-if(em&&em.textContent.indexOf('来源')===0){
-var t=em.textContent.replace(/^来源：?/,'');
-if(t){e.preventDefault();openSource(t.replace(/^\[|\]$/g,'').replace(/\/$/,''));}}
-});})();
-</script>
+`)
+	out.WriteString(SourcePopupJS)
+	out.WriteString(`
 </body>
 </html>
 `)

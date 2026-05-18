@@ -121,9 +121,10 @@ func GenerateChapterPage(wiki *Wiki, theme string, graph *grapher.Graph) string 
 	if wiki.ChapterNarratives != nil {
 		narrative = wiki.ChapterNarratives[theme]
 	}
+	primaryExt := primaryExtForLang(wiki.Language)
 	if narrative != "" {
 		body.WriteString(`<div class="chapter-narrative">`)
-		body.WriteString(RenderMarkdownBody([]byte(narrative)))
+		body.WriteString(makeSourceRefsClickable(RenderMarkdownBody([]byte(narrative)), primaryExt))
 		body.WriteString("</div>\n")
 	}
 
@@ -194,11 +195,11 @@ func GenerateChapterPage(wiki *Wiki, theme string, graph *grapher.Graph) string 
 				body.WriteString(fmt.Sprintf(`<details class="module-detail" id="%s">`, secID))
 				body.WriteString(fmt.Sprintf(`<summary>%s</summary>`, filepath.Base(modName)))
 				body.WriteString(`<div class="module-body">`)
-				body.WriteString(RenderMarkdownBody([]byte(doc)))
+				body.WriteString(makeSourceRefsClickable(RenderMarkdownBody([]byte(doc)), primaryExt))
 				body.WriteString("</div></details>\n")
 			} else {
 				body.WriteString(fmt.Sprintf(`<section id="%s">`, secID))
-				body.WriteString(RenderMarkdownBody([]byte(doc)))
+				body.WriteString(makeSourceRefsClickable(RenderMarkdownBody([]byte(doc)), primaryExt))
 				body.WriteString("</section>\n")
 			}
 		}
@@ -689,44 +690,9 @@ var observer = new IntersectionObserver(function(entries) {
 document.querySelectorAll('section[id]').forEach(function(section) { observer.observe(section); });
 document.querySelectorAll('h2[id],h3[id]').forEach(function(h) { observer.observe(h); });
 </script>
-<script>hljs.highlightAll();</script>
-<script>
-(function(){
-var popup=null;
-function getPopup(){
-if(popup)return popup;
-popup=document.createElement('div');popup.id='s-popup';popup.className='s-popup-ov';
-popup.innerHTML='<div class="s-popup"><div class="s-popup-hd"><span></span><button class="s-popup-cl">&times;</button></div><div class="s-popup-bd"><pre></pre></div></div>';
-document.body.appendChild(popup);
-popup.querySelector('.s-popup-cl').onclick=function(){popup.classList.remove('on');};
-popup.addEventListener('click',function(e){if(e.target===popup)popup.classList.remove('on');});
-return popup;}
-function openSource(file){
-var p=getPopup();p.classList.add('on');
-p.querySelector('.s-popup-hd span').textContent=file;
-var bd=p.querySelector('.s-popup-bd');
-bd.innerHTML='<pre><code class="language-'+l(file)+'">加载中...</code></pre>';
-fetch('/api/source?file='+encodeURIComponent(file))
-.then(function(r){if(!r.ok)throw Error(r.status);return r.text();})
-.then(function(t){var c=bd.querySelector('code');c.textContent=t;hljs.highlightElement(c);})
-.catch(function(e){bd.querySelector('code').textContent='无法加载: '+e.message;});}
-function l(p){var m=p.match(/\.(\w+)$/);if(!m)return'plaintext';
-var x=m[1].toLowerCase();var m2={py:'python',go:'go',js:'javascript',ts:'typescript',
-rs:'rust',java:'java',cpp:'cpp',c:'c',rb:'ruby',md:'markdown',json:'json',yaml:'yaml',
-css:'css',html:'html',xml:'xml',sql:'sql',sh:'bash'};return m2[x]||x;}
-document.addEventListener('click',function(e){
-var a=e.target.closest('em a[href]');
-if(a&&a.closest('em')&&a.closest('em').textContent.indexOf('来源')===0){
-e.preventDefault();openSource(a.getAttribute('href'));return;}
-var c=e.target.closest('em code');
-if(c&&c.closest('em')&&c.closest('em').textContent.indexOf('来源')===0){
-e.preventDefault();openSource(c.textContent.replace(/^\[|\]$/g,'').replace(/\/$/,''));return;}
-var em=e.target.closest('em');
-if(em&&em.textContent.indexOf('来源')===0){
-var t=em.textContent.replace(/^来源：?/,'');
-if(t){e.preventDefault();openSource(t.replace(/^\[|\]$/g,'').replace(/\/$/,''));}}
-});})();
-</script>
+`)
+	out.WriteString(SourcePopupJS)
+	out.WriteString(`
 </body>
 </html>
 `)

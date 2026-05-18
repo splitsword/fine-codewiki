@@ -31,6 +31,7 @@ type ChapterTitle struct {
 
 type Wiki struct {
 	ProjectName         string
+	Language            string // 目标项目的编程语言，用于来源文件名扩展名显示
 	Overview            string
 	WhatItDoes          string
 	ProjectStructure    string
@@ -591,6 +592,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 	return &Wiki{
 		ProjectName:         projectName,
+		Language:            language,
 		Overview:            overview,
 		WhatItDoes:          whatItDoes,
 		ProjectStructure:    projectStructure,
@@ -3814,9 +3816,10 @@ func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
 			content string
 	}{"api-reference", "API 参考", wiki.APIReference})
 
+	primaryExt := primaryExtForLang(wiki.Language)
 	for _, sec := range sections {
 		body.WriteString(fmt.Sprintf("<section id=\"%s\">\n", sec.id))
-		body.WriteString(RenderMarkdownBody([]byte(sec.content)))
+		body.WriteString(makeSourceRefsClickable(RenderMarkdownBody([]byte(sec.content)), primaryExt))
 		body.WriteString("</section>\n")
 	}
 
@@ -4123,7 +4126,9 @@ function filterStaticSearch(q){
   r.innerHTML=html||'<div class="search-empty">未找到匹配结果</div>';
 }
 </script>
-<script>hljs.highlightAll();</script>
+`)
+	out.WriteString(SourcePopupJS)
+	out.WriteString(`
 </body>
 </html>
 `)

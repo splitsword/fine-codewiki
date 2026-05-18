@@ -65,6 +65,9 @@ func RunGenerate(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("walk source files: %w", err)
 	}
+	if cfg.Language == "" {
+		cfg.Language = detectLanguageFromPaths(paths)
+	}
 
 	// Determine which files need parsing vs cache hit
 	type parseJob struct {
@@ -319,6 +322,12 @@ func RunServe(cfg *Config) error {
 				}
 			}
 		}
+		// Auto-detect language from source files when still unknown
+		if v.language == "" && v.sourceDir != "" {
+			if srcPaths, err := analyzer.WalkSourceFiles(v.sourceDir, ""); err == nil {
+				v.language = detectLanguageFromPaths(srcPaths)
+			}
+		}
 	}
 	if engine != nil {
 		defer engine.Close()
@@ -537,7 +546,7 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if ext == ".md" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		body := docgen.RenderMarkdownBody(data)
+		body := docgen.RenderMarkdownWithSources(data, h.language)
 		title := strings.TrimSuffix(filepath.Base(path), ext)
 		readMin := docgen.EstimateReadingTime(string(data))
 		difficulty := articleDifficulty(path)
@@ -552,6 +561,14 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		filename := strings.TrimSuffix(filepath.Base(path), ext)
 		body := fmt.Sprintf("<h2>%s</h2>\n<div class=\"mermaid\">\n%s\n</div>\n", docgen.HTMLEscape(filename), string(data))
 		w.Write(docgen.BuildWikiPage(filename, body, path, sections, totalArts, totalMins))
+		return
+	}
+
+	// For pre-built .html files without openSource(), inject the popup script
+	if ext == ".html" && !strings.Contains(string(data), "openSource") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		injected := strings.Replace(string(data), "</body>", docgen.SourcePopupJS+"\n</body>", 1)
+		w.Write([]byte(injected))
 		return
 	}
 
@@ -636,7 +653,8 @@ func serveMetaPath(outputDir string) string {
 }
 
 func writeServeMeta(outputDir, sourceDir, language string) {
-	meta := serveMeta{SourceDir: sourceDir, Language: language}
+	absSource, _ := filepath.Abs(sourceDir)
+	meta := serveMeta{SourceDir: absSource, Language: language}
 	data, _ := json.Marshal(meta)
 	os.WriteFile(serveMetaPath(outputDir), data, 0644)
 }
@@ -675,6 +693,33 @@ func extsForLang(lang string) []string {
 		return append(exts, ".md")
 	}
 	return []string{".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".cpp", ".c", ".rb", ".php", ".swift", ".kt", ".md"}
+}
+
+// detectLanguageFromPaths infers the project language from the most common source file extension.
+func detectLanguageFromPaths(paths []string) string {
+	extToLang := map[string]string{
+		".py": "python", ".go": "go",
+		".ts": "typescript", ".tsx": "typescript",
+		".js": "javascript", ".jsx": "javascript",
+		".rs": "rust", ".java": "java",
+		".cpp": "cpp", ".c": "c",
+		".rb": "ruby", ".php": "php",
+		".swift": "swift", ".kt": "kotlin",
+	}
+	counts := map[string]int{}
+	for _, p := range paths {
+		ext := strings.ToLower(filepath.Ext(p))
+		if _, ok := extToLang[ext]; ok {
+			counts[ext]++
+		}
+	}
+	bestExt, bestCount := "", 0
+	for ext, count := range counts {
+		if count > bestCount {
+			bestExt, bestCount = ext, count
+		}
+	}
+	return extToLang[bestExt]
 }
 
 // handleSourceAPI serves source file content for the source-reference popup.
@@ -724,6 +769,23 @@ func (h *serverHandler) handleSourceAPI(w http.ResponseWriter, r *http.Request) 
 		}
 		rest = rest[sepIdx+1:]
 		basePath = filepath.Join(h.sourceDir, rest)
+	}
+	// Last resort: try just the base filename
+	if !found {
+		baseName := filepath.Base(cleanFile)
+		basePath = filepath.Join(h.sourceDir, baseName)
+		for _, ext := range exts {
+			if _, err := os.Stat(basePath + ext); err == nil {
+				basePath = basePath + ext
+				found = true
+				break
+			}
+		}
+		if !found {
+			if _, err := os.Stat(basePath); err == nil {
+				found = true
+			}
+		}
 	}
 	if !found {
 		http.Error(w, "源文件不存在: "+cleanFile, http.StatusNotFound)
