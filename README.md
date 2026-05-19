@@ -12,11 +12,16 @@
 
 - **完全本地运行**：代码分析、文档生成、问答全在本地完成，源码永不离开本机
 - **双模 LLM**：支持远程 API（OpenAI / Claude / Gemini / 智谱等）或本地部署（Ollama / LocalAI）
-- **自动图表生成**：基于 AST 静态分析自动生成架构图、类图、时序图、依赖图（Mermaid DSL）
+- **学习体验优先**：主题导向叙事文档（项目概述 / 能做什么 / 架构说明 / 核心概念 / 学习路径），设计决策显性化，按"概念→架构→实现"组织，而非模块清单罗列
+- **自动图表生成**：基于 AST 静态分析自动生成架构图、类图、时序图、依赖图（Mermaid DSL），图表在叙事段落中穿插，支持全屏查看
 - **自然语言问答**：RAG 检索增强生成，答案附带源码文件路径与行号，支持多轮对话
-- **多语言支持**：Python、JavaScript / TypeScript、Go、Java（持续扩展中）
+- **来源溯源弹窗**：每个段落标注来源文件，点击弹出暗色代码窗口，语法高亮显示源码内容
+- **静态 HTML 导出**：一键导出带三栏布局（导航+内容+文件树）的完整离线 Wiki，支持暗色主题、Ctrl+K 搜索、滚动导航高亮
+- **多语言支持**：Python、JavaScript / TypeScript、Go、Java（持续扩展中），自动检测项目语言
 - **单二进制零依赖**：Go 编译为单一可执行文件，跨平台（macOS / Linux / Windows）
 - **增量索引**：基于文件修改时间和大小的增量向量索引，避免重复计算
+- **异步并行生成**：4 阶段并发管线，LLM 调用全并行 + 依赖型并行 + 主题级并行，总耗时 2-5 分钟
+- **流式优先 LLM**：流式 + 非流式双路径降级，3 级渐进 retry，Thinking/Reasoning 模式自动适配
 
 ---
 
@@ -166,19 +171,23 @@ CLI 入口 (Go)
 fine-codewiki/
 ├── cmd/codewiki/          # CLI 入口
 ├── internal/
-│   ├── analyzer/          # AST 解析引擎（多语言）
+│   ├── analyzer/          # AST 解析引擎（多语言，基于 gotreesitter 纯 Go 绑定）
 │   ├── benchmark/         # 问答评测集与评估逻辑
+│   ├── cache/             # 分析结果缓存（避免重复解析）
 │   ├── chunker/           # 代码语义分块
-│   ├── cli/               # CLI 命令实现
+│   ├── cli/               # CLI 命令实现（generate / serve / ask / config）
 │   ├── config/            # 配置管理
 │   ├── diagram/           # Mermaid DSL 生成与校验
-│   ├── docgen/            # 文档生成引擎
+│   ├── docgen/            # 文档生成引擎（LLM 叙事化文档 + 静态 HTML）
 │   ├── embedder/          # Embedding 接口
+│   ├── exporter/          # 静态 HTML 导出（三栏布局 + 文件树）
 │   ├── grapher/           # 依赖图构建与社区检测
-│   ├── llm/               # LLM 适配层
+│   ├── llm/               # LLM 适配层（流式优先 + 3 级降级）
+│   ├── qa/                # 问答评测框架
 │   ├── rag/               # RAG 检索与问答
 │   ├── sequencer/         # 时序图生成
-│   ├── server/            # 本地 Web 服务
+│   ├── server/            # 本地 Web 服务（serve 模式）
+│   ├── testutil/          # 测试工具函数
 │   └── vectorstore/       # 向量存储（SQLite 后端）
 ├── benchmark/             # 评测数据集
 ├── testdata/              # 测试固件
@@ -217,8 +226,20 @@ go tool cover -func=coverage.out
 
 - **M1**（已完成）：核心可行原型 —— AST 解析、文档生成、架构图/类图、本地 Web 预览
 - **M2**（已完成）：问答与图表增强 —— RAG 问答、时序图、本地 LLM 适配、增量索引、多轮对话
-- **M3**（进行中）：产品化打磨 —— 导出 HTML/PDF、性能优化、按语言定制 prompt、函数级 LLM 语义描述
-- **M4**（规划中）：生态扩展 —— Rust / C++ 支持、插件系统、VS Code 扩展、安装分发（Homebrew / npm / winget）
+- **M3**（基本完成）：
+  - ✅ 主题导向文档（What it Does / Architecture / Project Structure / Key Concepts / Learning Path）
+  - ✅ LLM 叙事化改造 + 设计决策显性化 + 学习路径引导
+  - ✅ 架构说明多图叙事化（功能架构图 + 技术架构图双图穿插）
+  - ✅ 静态 HTML 导出（三栏布局、文件树、离线可浏览）
+  - ✅ Web UI 全面升级（暗色主题、阅读进度、Ctrl+K 搜索、代码复制、图表全屏）
+  - ✅ 来源溯源弹窗（点击查看源码，语法高亮）
+  - ✅ 流式优先 LLM + 3 级渐进降级 + Thinking 模式适配
+  - ✅ 4 阶段异步并行生成管线
+  - ✅ 图表质量升级（节点角色标注、颜色图例、边类型区分）
+  - 🟡 性能优化（部分完成）
+  - ❌ 安装分发（Homebrew / npm / winget）
+  - ❌ PDF 导出
+- **M4**（规划中）：生态扩展 —— Rust / C++ 支持、插件系统、VS Code 扩展、安装分发、Beta 公开发布
 
 详见 [prd.md](prd.md)。
 
