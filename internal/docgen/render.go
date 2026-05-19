@@ -984,6 +984,9 @@ func MarkdownToHTML(src []byte) []byte {
 // RenderInline renders inline Markdown formatting (bold, italic, links, code).
 func RenderInline(s string) string {
 	s = HTMLEscape(s)
+	// 还原 <br> 标签（LLM 常用于表格单元格内换行）
+	s = strings.ReplaceAll(s, "&lt;br&gt;", "<br>")
+	s = strings.ReplaceAll(s, "&lt;br/&gt;", "<br>")
 	// Links: [text](url)
 	for {
 		start := strings.Index(s, "[")
