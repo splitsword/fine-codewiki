@@ -802,7 +802,7 @@ css:'css',html:'html',xml:'xml',sql:'sql',sh:'bash'};return m2[x]||x;}
 	// 构建独立 .source-ref span
 	var html='来源：';
 	files.forEach(function(f,i){
-	var disp=f.replace(/\/g,'/').split('/').pop();
+	var disp=f.replace(/\\/g,'/').split('/').pop();
 	html+='<span class="source-ref" data-file="'+f+'"><strong>'+disp+'</strong></span>';
 	if(i<files.length-1)html+='、';
 	});
