@@ -735,6 +735,9 @@ window.navigateToModule=function(mod){
   var a=document.querySelector('a[href*="'+mod+'"]');
   if(a)a.click();
 };
+
+/* ---- Code highlighting ---- */
+document.addEventListener('DOMContentLoaded',function(){if(typeof hljs!=='undefined')hljs.highlightAll();});
 </script>
 `
 
@@ -807,7 +810,7 @@ css:'css',html:'html',xml:'xml',sql:'sql',sh:'bash'};return m2[x]||x;}
 	});
 	}
 	if(document.readyState!=='loading'){upgradeSourceEms();}
-	else{document.addEventListener('DOMContentLoaded',upgradeSourceEms);}}
+	else{document.addEventListener('DOMContentLoaded',upgradeSourceEms);}
 document.addEventListener('click',function(e){
 var s=e.target.closest('.source-ref');
 if(s&&s.dataset.file){e.preventDefault();openSource(s.dataset.file);return;}
