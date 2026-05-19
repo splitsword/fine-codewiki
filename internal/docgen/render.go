@@ -567,8 +567,8 @@ hr { height:1px; padding:0; margin:36px 0; background:var(--border); border:0; }
 .search-empty { padding:20px; text-align:center; color:var(--text3); }
 
 /* ---- Source reference ---- */
-.source-ref { display:inline-block; font-weight:700; color:var(--accent); cursor:pointer; background:var(--inline-code-bg); padding:0 5px; border-radius:4px; font-family:"Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace; font-size:85%; transition:all .15s; }
-.source-ref:hover { background:var(--accent-glow); box-shadow:0 0 0 2px var(--accent-glow); }
+.source-ref { display:inline-block; font-weight:700; color:var(--accent); cursor:pointer; background:var(--inline-code-bg); padding:0 5px; border-radius:4px; margin:0 2px; font-family:"Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace; font-size:85%; transition:background .15s; }
+.source-ref:hover { background:var(--accent-glow); outline:2px solid var(--accent-glow); outline-offset:0; }
 /* Fallback styles for un-processed em tags */
 em code { cursor:pointer; transition:background .15s; }
 em code:hover { background:var(--accent-glow); }
@@ -781,14 +781,33 @@ function l(p){var m=p.match(/\.(\w+)$/);if(!m)return'plaintext';
 var x=m[1].toLowerCase();var m2={py:'python',go:'go',js:'javascript',ts:'typescript',
 rs:'rust',java:'java',cpp:'cpp',c:'c',rb:'ruby',md:'markdown',json:'json',yaml:'yaml',
 css:'css',html:'html',xml:'xml',sql:'sql',sh:'bash'};return m2[x]||x;}
-// 标记纯 <em> 来源为可点击样式
-document.addEventListener('DOMContentLoaded',function(){
-document.querySelectorAll('em').forEach(function(em){
-if(em.textContent.indexOf('来源')===0)em.classList.add('source-em');
-});
-});
-// 如果 DOM 已加载完则立即执行
-if(document.readyState!=='loading'){document.querySelectorAll('em').forEach(function(em){if(em.textContent.indexOf('来源')===0)em.classList.add('source-em');});}
+// 	// 将旧 <em>来源：file1, file2, ...</em> 拆为独立 .source-ref span
+	function upgradeSourceEms(){
+	document.querySelectorAll('em').forEach(function(em){
+	var txt=em.textContent;
+	if(txt.indexOf('来源')!==0)return;
+	var content=txt.replace(/^来源：?/,'').trim();
+	if(!content)return;
+	// 拆分多路径（逗号、顿号分隔）
+	var parts=content.split(/[,、，]/);
+	var files=[];
+	parts.forEach(function(p){
+	p=p.trim().replace(/^\[|\]$/g,'').replace(/\/$/,'');
+	if(p)files.push(p);
+	});
+	if(files.length===0)return;
+	// 构建独立 .source-ref span
+	var html='来源：';
+	files.forEach(function(f,i){
+	var disp=f.replace(/\/g,'/').split('/').pop();
+	html+='<span class="source-ref" data-file="'+f+'"><strong>'+disp+'</strong></span>';
+	if(i<files.length-1)html+='、';
+	});
+	em.innerHTML=html;
+	});
+	}
+	if(document.readyState!=='loading'){upgradeSourceEms();}
+	else{document.addEventListener('DOMContentLoaded',upgradeSourceEms);}}
 document.addEventListener('click',function(e){
 var s=e.target.closest('.source-ref');
 if(s&&s.dataset.file){e.preventDefault();openSource(s.dataset.file);return;}
