@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-29 — @ style(homepage): 截图增加浮出阴影效果 (d81c110)
+
 - 2026-05-29 — @ feat(homepage): 新增产品官网主页 (631af43)
 
 - 2026-05-28 — @ fix(analyzer): 修复 Go 分组 import 解析失败导致依赖图 0 条边 (0294fcb)

@@ -133,8 +133,12 @@
   }
   .hero-visual img {
     width: 100%; max-width: 900px; border-radius: var(--radius-lg);
-    box-shadow: 0 24px 80px rgba(99,102,241,0.14);
-    border: 1px solid rgba(99,102,241,0.06);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.04);
+    transition: transform 0.35s ease, box-shadow 0.35s ease;
+  }
+  .hero-visual img:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 16px 56px rgba(0,0,0,0.12), 0 4px 16px rgba(0,0,0,0.06), 0 0 0 1px rgba(99,102,241,0.10);
   }
 
   @keyframes fadeInUp {
@@ -195,7 +199,12 @@
   }
   .showcase-visual img {
     width: 100%; border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-lg); border: 1px solid var(--card-border);
+    box-shadow: 0 6px 32px rgba(0,0,0,0.07), 0 2px 6px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.03);
+    transition: transform 0.35s ease, box-shadow 0.35s ease;
+  }
+  .showcase-visual img:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 14px 48px rgba(0,0,0,0.11), 0 4px 12px rgba(0,0,0,0.05), 0 0 0 1px rgba(99,102,241,0.10);
   }
 
   /* ===== STATS ROW ===== */
