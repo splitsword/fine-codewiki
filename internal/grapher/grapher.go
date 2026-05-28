@@ -66,21 +66,48 @@ func BuildGraph(files []*analyzer.FileResult) *Graph {
 			}
 			// Only create edges to internal modules
 			if !internalModules[targetModule] {
-				// Fallback: absolute import may be relative to the importing file's directory
-				// e.g. src/central.py imports "orchestrator" -> src/orchestrator
-				if !imp.IsRelative {
-					dir := filepath.Dir(f.Filename)
-					dir = strings.ReplaceAll(dir, "\\", "/")
-					candidate := dir + "/" + targetModule
-					candidate = strings.TrimPrefix(candidate, "./")
-					if internalModules[candidate] {
-						targetModule = candidate
+				matched := false
+				// Go (and similar): import path may be fully qualified
+				// (e.g. "github.com/user/proj/internal/foo"). Match by
+				// checking if any internal module is a suffix of the import.
+				normalTarget := strings.ReplaceAll(targetModule, "\\", "/")
+				for mod := range internalModules {
+					// mod is like "internal/analyzer/analyzer"; we want to
+					// match import "github.com/.../internal/analyzer" against
+					// the directory part "internal/analyzer".
+					modDir := strings.ReplaceAll(filepath.Dir(mod), "\\", "/")
+					if modDir != "." && strings.HasSuffix(normalTarget, modDir) {
+						targetModule = mod
+						matched = true
+						break
+					}
+					if strings.HasSuffix(normalTarget, mod) {
+						targetModule = mod
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					// Fallback: absolute import may be relative to the importing file's directory
+					// e.g. src/central.py imports "orchestrator" -> src/orchestrator
+					if !imp.IsRelative {
+						dir := filepath.Dir(f.Filename)
+						dir = strings.ReplaceAll(dir, "\\", "/")
+						candidate := dir + "/" + targetModule
+						candidate = strings.TrimPrefix(candidate, "./")
+						if internalModules[candidate] {
+							targetModule = candidate
+						} else {
+							continue
+						}
 					} else {
 						continue
 					}
-				} else {
-					continue
 				}
+			}
+			// Avoid self-edges
+			if targetModule == fromModule {
+				continue
 			}
 			// Avoid duplicate edges
 			if !hasEdge(graph.Edges, fromModule, targetModule) {
@@ -309,6 +336,11 @@ func moduleNameFromFilename(filename string) string {
 func resolveImport(fromFile string, imp analyzer.ImportInfo) string {
 	if imp.IsRelative {
 		return resolveRelativeImport(fromFile, imp.Module)
+	}
+	// If the import already contains "/" it is a path-style import (Go, etc.).
+	// Only do dot → slash for pure dot-notation imports (Python-style "a.b.c").
+	if strings.Contains(imp.Module, "/") || strings.Contains(imp.Module, "\\") {
+		return imp.Module
 	}
 	// Absolute import within project: module.path.file -> module/path/file
 	return strings.ReplaceAll(imp.Module, ".", "/")

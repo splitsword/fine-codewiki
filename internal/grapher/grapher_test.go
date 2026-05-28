@@ -116,6 +116,45 @@ func TestBuildGraphWithAbsoluteImports(t *testing.T) {
 	assert.Len(t, graph.Edges, 0)
 }
 
+func TestBuildGraphWithGoStyleAbsoluteImports(t *testing.T) {
+	// Go imports are fully-qualified paths with "/" (e.g. "github.com/user/proj/internal/foo").
+	// They must not be corrupted by dot→slash replacement, and the suffix-matching
+	// logic must resolve them to internal module names.
+	files := []*analyzer.FileResult{
+		{
+			Filename: "internal/cli/cli.go",
+			Imports: []analyzer.ImportInfo{
+				{Module: "github.com/splitsword/fine-codewiki/internal/analyzer"},
+				{Module: "github.com/splitsword/fine-codewiki/internal/grapher"},
+				{Module: "fmt"}, // stdlib, should be ignored (not an internal module)
+			},
+		},
+		{
+			Filename: "internal/analyzer/analyzer.go",
+			Imports: []analyzer.ImportInfo{
+				{Module: "github.com/splitsword/fine-codewiki/internal/grapher"},
+			},
+		},
+		{
+			Filename: "internal/grapher/grapher.go",
+			Imports: []analyzer.ImportInfo{
+				{Module: "github.com/splitsword/fine-codewiki/internal/analyzer"},
+			},
+		},
+	}
+
+	graph := BuildGraph(files)
+	require.NotNil(t, graph)
+	assert.Len(t, graph.Nodes, 3)
+
+	// cli → analyzer, cli → grapher, analyzer ↔ grapher → 4 edges
+	assert.Len(t, graph.Edges, 4)
+	assert.True(t, hasEdge(graph.Edges, "internal/cli/cli", "internal/analyzer/analyzer"))
+	assert.True(t, hasEdge(graph.Edges, "internal/cli/cli", "internal/grapher/grapher"))
+	assert.True(t, hasEdge(graph.Edges, "internal/analyzer/analyzer", "internal/grapher/grapher"))
+	assert.True(t, hasEdge(graph.Edges, "internal/grapher/grapher", "internal/analyzer/analyzer"))
+}
+
 func TestBuildGraphWithNoImports(t *testing.T) {
 	files := []*analyzer.FileResult{
 		{
