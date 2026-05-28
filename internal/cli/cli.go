@@ -510,10 +510,16 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "读取文件出错", http.StatusInternalServerError)
 				return
 			}
-			// Inject source popup + right panel into pre-generated index.html
+			// Inject right panel into pre-generated index.html.
+			// Ensure window.openSource exists (old static exports have openSource
+			// inside an IIFE but not exposed globally).
 			html := string(data)
-			if !strings.Contains(html, "openSource") {
-				html = strings.Replace(html, "</body>", docgen.SourcePopupJS+"\n</body>", 1)
+			if !strings.Contains(html, "window.openSource") {
+				if strings.Contains(html, "function openSource") {
+					html = strings.Replace(html, "})();", "window.openSource=openSource;})();", 1)
+				} else {
+					html = strings.Replace(html, "</body>", docgen.SourcePopupJS+"\n</body>", 1)
+				}
 			}
 			w.Write(injectRightPanel([]byte(html)))
 		} else {

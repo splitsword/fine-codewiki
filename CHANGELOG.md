@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-28 — fix(serve): 修复预生成 index.html 中来源链接无法弹出源码窗口 (07f4ee1)
+
 - 2026-05-28 — fix(serve): 修复来源链接点击无反应——openSource 未暴露到全局作用域 (14cd0cd)
 
 - 2026-05-28 — fix(serve): AI 回答来源链接点击弹出源码窗口 (ecde3d8)
