@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-28 — fix(serve): 修复 AI 问答来源链接点击无效——openSource 作用域与注入目标双重错误 (81abed7)
+
 - 2026-05-28 — fix(serve): onclick 中显式使用 window.openSource 避免作用域问题 (2526180)
 
 - 2026-05-28 — fix(serve): 修复预生成 index.html 中来源链接无法弹出源码窗口 (07f4ee1)

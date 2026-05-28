@@ -1035,6 +1035,7 @@ var em=e.target.closest('em');
 if(em&&em.textContent.indexOf('来源')===0){
 var t=em.textContent.replace(/^来源：?/,'');
 if(t){e.preventDefault();openSource(t.replace(/^\[|\]$/g,'').replace(/\/$/,'').split(/[,、，]/)[0].trim());}}
+});
 window.openSource=openSource;})();
 </script>`
 
