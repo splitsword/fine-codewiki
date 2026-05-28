@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fine codewiki — 代码活体百科全书</title>
+<style>
+  :root {
+    --accent: #6366f1;
+    --accent2: #8b5cf6;
+    --accent3: #a78bfa;
+    --gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%);
+    --bg: #fafbff;
+    --bg2: #f3f4ff;
+    --card-bg: rgba(255,255,255,0.72);
+    --card-border: rgba(99,102,241,0.08);
+    --text: #1e1b4b;
+    --text2: #4c4a6e;
+    --text3: #7876a0;
+    --shadow-sm: 0 1px 2px rgba(99,102,241,0.06);
+    --shadow: 0 4px 24px rgba(99,102,241,0.08);
+    --shadow-lg: 0 12px 48px rgba(99,102,241,0.10);
+    --radius: 12px;
+    --radius-lg: 20px;
+    --radius-xl: 28px;
+    --max-w: 1200px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    overflow-x: hidden;
+    background-image:
+      radial-gradient(circle at 20% 10%, rgba(139,92,246,0.04) 0%, transparent 50%),
+      radial-gradient(circle at 80% 30%, rgba(99,102,241,0.05) 0%, transparent 50%),
+      radial-gradient(circle at 50% 70%, rgba(167,139,250,0.04) 0%, transparent 50%);
+  }
+
+  /* ===== NAV ===== */
+  .nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: rgba(250,251,255,0.72);
+    border-bottom: 1px solid var(--card-border);
+    height: 64px; display: flex; align-items: center;
+  }
+  .nav-inner {
+    max-width: var(--max-w); width: 100%; margin: 0 auto;
+    padding: 0 32px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .nav-logo {
+    font-size: 1.35rem; font-weight: 700; color: var(--text);
+    display: flex; align-items: center; gap: 10px; text-decoration: none;
+  }
+  .nav-logo svg { width: 32px; height: 32px; }
+  .nav-links { display: flex; gap: 28px; list-style: none; }
+  .nav-links a { color: var(--text2); text-decoration: none; font-size: 0.92rem; font-weight: 500; transition: color 0.2s; }
+  .nav-links a:hover { color: var(--accent); }
+
+  /* ===== HERO ===== */
+  .hero {
+    padding: 160px 32px 100px; text-align: center; position: relative;
+    max-width: 900px; margin: 0 auto;
+  }
+  .hero::before {
+    content: ''; position: absolute; top: -200px; left: 50%; transform: translateX(-50%);
+    width: 700px; height: 700px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(139,92,246,0.06) 0%, transparent 70%);
+    pointer-events: none; z-index: -1;
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(99,102,241,0.07); color: var(--accent);
+    font-size: 0.82rem; font-weight: 600; padding: 6px 18px;
+    border-radius: 100px; margin-bottom: 28px;
+    border: 1px solid rgba(99,102,241,0.12);
+    animation: fadeInUp 0.6s ease-out;
+  }
+  .hero-badge .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .hero h1 {
+    font-size: 3.6rem; font-weight: 800; line-height: 1.25;
+    letter-spacing: -0.02em; margin-bottom: 24px;
+    background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 60%, #7c3aed 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: fadeInUp 0.6s ease-out 0.1s both;
+  }
+  .hero p.subtitle {
+    font-size: 1.18rem; color: var(--text2); max-width: 640px; margin: 0 auto 36px;
+    line-height: 1.8;
+    animation: fadeInUp 0.6s ease-out 0.2s both;
+  }
+  .hero-actions {
+    display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
+    animation: fadeInUp 0.6s ease-out 0.3s both;
+  }
+  .btn-primary {
+    background: var(--gradient); color: #fff; border: none;
+    padding: 14px 32px; border-radius: 100px; font-size: 1rem;
+    font-weight: 600; cursor: pointer; text-decoration: none;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 36px rgba(99,102,241,0.36); }
+  .btn-secondary {
+    background: var(--card-bg); color: var(--text);
+    border: 1px solid var(--card-border); padding: 14px 28px;
+    border-radius: 100px; font-size: 1rem; font-weight: 600;
+    cursor: pointer; text-decoration: none;
+    backdrop-filter: blur(12px);
+    transition: all 0.2s;
+  }
+  .btn-secondary:hover { border-color: var(--accent2); color: var(--accent); }
+
+  .hero-visual {
+    margin-top: 64px; position: relative;
+    animation: fadeInUp 0.6s ease-out 0.4s both;
+  }
+  .hero-visual img {
+    width: 100%; max-width: 900px; border-radius: var(--radius-lg);
+    box-shadow: 0 24px 80px rgba(99,102,241,0.14);
+    border: 1px solid rgba(99,102,241,0.06);
+  }
+
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ===== SECTION COMMON ===== */
+  .section { padding: 80px 32px; }
+  .section-inner { max-width: var(--max-w); margin: 0 auto; }
+  .section-label {
+    font-size: 0.8rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px;
+  }
+  .section-title {
+    font-size: 2.4rem; font-weight: 800; letter-spacing: -0.02em;
+    margin-bottom: 16px; color: var(--text);
+  }
+  .section-desc { color: var(--text2); font-size: 1.08rem; max-width: 600px; margin-bottom: 48px; }
+
+  /* ===== VALUE PROPS GRID ===== */
+  .props-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+  }
+  .prop-card {
+    background: var(--card-bg); backdrop-filter: blur(12px);
+    border: 1px solid var(--card-border); border-radius: var(--radius-lg);
+    padding: 36px 28px; transition: transform 0.25s, box-shadow 0.25s;
+    position: relative; overflow: hidden;
+  }
+  .prop-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
+  .prop-card .icon {
+    width: 48px; height: 48px; border-radius: var(--radius);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem; margin-bottom: 20px;
+  }
+  .prop-card .icon.purple { background: rgba(139,92,246,0.1); color: #7c3aed; }
+  .prop-card .icon.indigo { background: rgba(99,102,241,0.1); color: #4f46e5; }
+  .prop-card .icon.blue   { background: rgba(59,130,246,0.1);  color: #2563eb; }
+  .prop-card .icon.green  { background: rgba(16,185,129,0.1);  color: #059669; }
+  .prop-card .icon.amber  { background: rgba(245,158,11,0.1);  color: #d97706; }
+  .prop-card .icon.rose   { background: rgba(244,63,94,0.1);   color: #e11d48; }
+  .prop-card h3 { font-size: 1.12rem; font-weight: 700; margin-bottom: 8px; }
+  .prop-card p { color: var(--text3); font-size: 0.94rem; line-height: 1.65; }
+
+  /* ===== SHOWCASE ===== */
+  .showcase { display: flex; align-items: center; gap: 72px; padding: 60px 0; }
+  .showcase.reverse { flex-direction: row-reverse; }
+  .showcase-text { flex: 1; }
+  .showcase-text .num {
+    font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em;
+    color: var(--accent); margin-bottom: 8px;
+  }
+  .showcase-text h3 { font-size: 1.8rem; font-weight: 800; margin-bottom: 14px; letter-spacing: -0.02em; }
+  .showcase-text p { color: var(--text2); font-size: 1.02rem; line-height: 1.75; }
+  .showcase-visual {
+    flex: 1.1; position: relative;
+  }
+  .showcase-visual img {
+    width: 100%; border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg); border: 1px solid var(--card-border);
+  }
+
+  /* ===== STATS ROW ===== */
+  .stats-row {
+    display: flex; justify-content: center; gap: 60px; padding: 40px 0;
+    border-top: 1px solid var(--card-border);
+    border-bottom: 1px solid var(--card-border);
+  }
+  .stat { text-align: center; }
+  .stat .num { font-size: 2.6rem; font-weight: 800; background: var(--gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .stat .label { color: var(--text3); font-size: 0.9rem; margin-top: 4px; }
+
+  /* ===== COMPARISON TABLE ===== */
+  .compare-wrap { overflow-x: auto; }
+  .compare-table {
+    width: 100%; border-collapse: separate; border-spacing: 0;
+    border-radius: var(--radius-lg); overflow: hidden;
+    box-shadow: var(--shadow); border: 1px solid var(--card-border);
+  }
+  .compare-table thead th {
+    background: rgba(99,102,241,0.04); padding: 16px 20px; text-align: left;
+    font-weight: 700; font-size: 0.92rem; color: var(--text);
+    border-bottom: 1px solid var(--card-border);
+  }
+  .compare-table thead th:last-child {
+    background: rgba(99,102,241,0.08); color: var(--accent);
+  }
+  .compare-table tbody td {
+    padding: 14px 20px; font-size: 0.92rem; color: var(--text2);
+    border-bottom: 1px solid rgba(99,102,241,0.04);
+  }
+  .compare-table tbody td:last-child { font-weight: 600; color: var(--accent); }
+  .check { color: #10b981; font-weight: 700; }
+  .cross { color: #ef4444; }
+
+  /* ===== TECH STACK ===== */
+  .tech-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+  }
+  .tech-item {
+    background: var(--card-bg); backdrop-filter: blur(12px);
+    border: 1px solid var(--card-border); border-radius: var(--radius);
+    padding: 24px 20px; text-align: center; transition: transform 0.2s;
+  }
+  .tech-item:hover { transform: translateY(-2px); }
+  .tech-item .name { font-weight: 700; font-size: 0.95rem; margin-bottom: 4px; }
+  .tech-item .role { color: var(--text3); font-size: 0.82rem; }
+
+  /* ===== CTA BANNER ===== */
+  .cta-banner {
+    background: var(--gradient); border-radius: var(--radius-xl);
+    padding: 64px 48px; text-align: center; color: #fff;
+    position: relative; overflow: hidden;
+  }
+  .cta-banner::before {
+    content: ''; position: absolute; inset: 0;
+    background: radial-gradient(circle at 30% 50%, rgba(255,255,255,0.08) 0%, transparent 60%);
+  }
+  .cta-banner h3 { font-size: 2rem; font-weight: 800; margin-bottom: 12px; position: relative; }
+  .cta-banner p { font-size: 1.05rem; opacity: 0.88; max-width: 500px; margin: 0 auto 24px; position: relative; }
+  .cta-banner .btn-white {
+    background: #fff; color: var(--accent); border: none;
+    padding: 14px 36px; border-radius: 100px; font-size: 1rem;
+    font-weight: 700; cursor: pointer; text-decoration: none;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: inline-flex; align-items: center; gap: 8px; position: relative;
+  }
+  .cta-banner .btn-white:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(0,0,0,0.16); }
+
+  /* ===== FOOTER ===== */
+  .footer {
+    padding: 40px 32px; text-align: center; color: var(--text3); font-size: 0.86rem;
+  }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 900px) {
+    .nav-links { display: none; }
+    .hero h1 { font-size: 2.2rem; }
+    .props-grid { grid-template-columns: 1fr; }
+    .showcase, .showcase.reverse { flex-direction: column; gap: 32px; }
+    .tech-grid { grid-template-columns: repeat(2, 1fr); }
+    .stats-row { gap: 28px; flex-wrap: wrap; }
+    .compare-table { font-size: 0.82rem; }
+    .compare-table thead th, .compare-table tbody td { padding: 10px 12px; }
+    .section-title { font-size: 1.8rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== NAVIGATION ===== -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#" class="nav-logo">
+      <svg viewBox="0 0 32 32" fill="none">
+        <rect width="32" height="32" rx="8" fill="url(#lg)"/>
+        <path d="M8 10h6l4 12-4-12h6l4 12" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
+      </svg>
+      fine codewiki
+    </a>
+    <ul class="nav-links">
+      <li><a href="#features">核心能力</a></li>
+      <li><a href="#showcase">产品亮点</a></li>
+      <li><a href="#compare">对比</a></li>
+      <li><a href="#tech">技术栈</a></li>
+    </ul>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <a href="https://smartcode.jointforce.com/" style="background:#dc2626;color:#fff;padding:8px 20px;font-size:0.85rem;font-weight:600;border-radius:100px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:transform 0.2s,box-shadow 0.2s;" target="_blank" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 8px 24px rgba(220,38,38,0.32)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        SmartCode
+      </a>
+      <a href="https://github.com/splitsword/fine-codewiki" class="btn-primary" style="padding:8px 20px;font-size:0.85rem;" target="_blank">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<!-- ===== HERO ===== -->
+<section class="hero">
+  <div class="hero-badge"><span class="dot"></span> v0.10 现已发布 · 纯本地 · 代码零泄露</div>
+  <h1>代码动态百科全书</h1>
+  <p class="subtitle" style="margin-bottom:8px;font-size:1.04rem;color:var(--accent);font-weight:500;">—— 打开陌生代码世界的认知之窗</p>
+  <p class="subtitle">
+    fine codewiki 是一个纯本地 CLI 工具，将任意代码仓库自动转化为交互式 Wiki —— 架构图、类图、时序图一键生成，自然语言问答即问即答。
+    不是单纯的文档生成器，而是帮你<strong>读懂</strong>代码库的导师。代码永不出本机。
+  </p>
+  <div class="hero-actions">
+    <a href="#features" class="btn-primary">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+      了解核心能力
+    </a>
+    <a href="#showcase" class="btn-secondary">
+      查看产品亮点
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+    </a>
+  </div>
+  <div class="hero-visual">
+    <img src="p1.png" alt="fine codewiki 产品截图 — 项目架构文档与交互式图表">
+  </div>
+</section>
+
+<!-- ===== CORE VALUE PROPS ===== -->
+<section class="section" id="features">
+  <div class="section-inner">
+    <div class="section-label">为什么选择 fine codewiki</div>
+    <h2 class="section-title">六大核心优势</h2>
+    <p class="section-desc">在 Google Code Wiki 和 Zread 之间，fine codewiki 开辟了第三条路 —— 可视化 + 纯本地 + 学习体验，一个都不少。</p>
+
+    <div class="props-grid">
+      <div class="prop-card">
+        <div class="icon purple"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 3v18"/></svg></div>
+        <h3>完全本地运行</h3>
+        <p>代码分析、文档生成、向量索引、RAG 问答，全链路在本地完成。源代码永不离开本机，安全敏感场景也可放心使用。</p>
+      </div>
+      <div class="prop-card">
+        <div class="icon indigo"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+        <h3>LLM 双模驱动</h3>
+        <p>支持远程 API（OpenAI / Claude / Gemini / 智谱）和本地部署（Ollama / LocalAI）。轻量/中等/重型任务分层调度，流式优先，3 级渐进降级。</p>
+      </div>
+      <div class="prop-card">
+        <div class="icon blue"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg></div>
+        <h3>学习体验优先</h3>
+        <p>主题导向的叙事文档 —— 项目概述 / 能做什么 / 架构说明 / 核心概念 / 学习路径，而非冷冰冰的模块清单。关键设计决策显性化，按"概念→架构→实现"组织。</p>
+      </div>
+      <div class="prop-card">
+        <div class="icon green"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="1"/><path d="M8 21h8M12 17v4"/></svg></div>
+        <h3>自动图表生成</h3>
+        <p>基于 AST 静态分析自动生成架构图、类图、时序图、依赖图。Mermaid DSL 纯文本格式，Git 友好。图表在叙事段落中自然穿插，支持全屏交互查看。</p>
+      </div>
+      <div class="prop-card">
+        <div class="icon amber"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
+        <h3>自然语言问答</h3>
+        <p>RAG 检索增强生成，用自然语言探索代码库。每个回答附带源文件路径与行号，支持多轮对话。双路检索策略，确保回答精准有据。</p>
+      </div>
+      <div class="prop-card">
+        <div class="icon rose"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
+        <h3>单二进制零依赖</h3>
+        <p>Go 语言编译为单一可执行文件，跨平台（macOS / Linux / Windows）。无需安装运行时、Docker、数据库，下载即用。</p>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:18px; margin-top: 56px;">
+      <!-- 编程语言 -->
+      <div style="background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:30px 22px 24px;">
+        <div style="font-size:2.4rem;font-weight:800;background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1;">7</div>
+        <div style="font-weight:700;font-size:1rem;margin:4px 0 14px;">编程语言</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          <span style="font-size:0.8rem;color:var(--text2);background:rgba(99,102,241,0.05);padding:3px 8px;border-radius:5px;">Python</span>
+          <span style="font-size:0.8rem;color:var(--text2);background:rgba(99,102,241,0.05);padding:3px 8px;border-radius:5px;">JavaScript</span>
+          <span style="font-size:0.8rem;color:var(--text2);background:rgba(99,102,241,0.05);padding:3px 8px;border-radius:5px;">TypeScript</span>
+          <span style="font-size:0.8rem;color:var(--text2);background:rgba(99,102,241,0.05);padding:3px 8px;border-radius:5px;">Go</span>
+          <span style="font-size:0.8rem;color:var(--text2);background:rgba(99,102,241,0.05);padding:3px 8px;border-radius:5px;">Java</span>
+          <span style="font-size:0.8rem;color:var(--text2);background:rgba(99,102,241,0.05);padding:3px 8px;border-radius:5px;">Rust</span>
+          <span style="font-size:0.8rem;color:var(--text2);background:rgba(99,102,241,0.05);padding:3px 8px;border-radius:5px;">C</span>
+          <span style="font-size:0.8rem;color:var(--text2);background:rgba(99,102,241,0.05);padding:3px 8px;border-radius:5px;">C++</span>
+        </div>
+        <div style="color:var(--text3);font-size:0.76rem;margin-top:10px;">tree-sitter AST 解析 · 持续扩展</div>
+      </div>
+      <!-- 图表类型 -->
+      <div style="background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:30px 22px 24px;">
+        <div style="font-size:2.4rem;font-weight:800;background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1;">4</div>
+        <div style="font-weight:700;font-size:1rem;margin:4px 0 14px;">图表类型</div>
+        <div style="display:flex;flex-direction:column;gap:7px;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            架构图 <span style="color:var(--text3);font-size:0.78rem;">系统拓扑 · 模块分层</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="1"/><rect x="4" y="14" width="16" height="8" rx="1"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="10" x2="16" y2="14"/></svg>
+            类图 <span style="color:var(--text3);font-size:0.78rem;">UML 风格 · 继承关系</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><line x1="6" y1="3" x2="6" y2="21"/><polyline points="10 7 6 3 2 7"/><line x1="18" y1="21" x2="18" y2="3"/><polyline points="14 17 18 21 22 17"/></svg>
+            时序图 <span style="color:var(--text3);font-size:0.78rem;">调用链路 · 交互流程</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><line x1="8.5" y1="7.5" x2="11" y2="16"/><line x1="15.5" y1="7.5" x2="13" y2="16"/></svg>
+            依赖图 <span style="color:var(--text3);font-size:0.78rem;">模块关系 · 循环检测</span>
+          </div>
+        </div>
+      </div>
+      <!-- 生成性能 -->
+      <div style="background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:30px 22px 24px;">
+        <div style="font-size:2.4rem;font-weight:800;background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1;">2–5<span style="font-size:0.4em"> min</span></div>
+        <div style="font-weight:700;font-size:1rem;margin:4px 0 14px;">生成耗时</div>
+        <div style="display:flex;flex-direction:column;gap:7px;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+            4 阶段并发管线
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            10 万行代码规模
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="1"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+            &lt; 2 GB 内存峰值
+          </div>
+        </div>
+      </div>
+      <!-- 运行平台 -->
+      <div style="background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:30px 22px 24px;">
+        <div style="font-size:2.4rem;font-weight:800;background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1;">3</div>
+        <div style="font-weight:700;font-size:1rem;margin:4px 0 14px;">运行平台</div>
+        <div style="display:flex;flex-direction:column;gap:7px;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M20 16V8a3 3 0 10-6 0v8a3 3 0 10-6 0V8a3 3 0 00-6 0v8"/></svg>
+            macOS
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="1"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+            Linux
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--text2);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="1"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Windows
+          </div>
+        </div>
+        <div style="color:var(--text3);font-size:0.76rem;margin-top:10px;">单二进制 · Go 编译 · 零依赖</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== CLI + 浏览器使用指南 ===== -->
+<section class="section" id="how" style="background: var(--bg2);">
+  <div class="section-inner">
+    <div class="section-label">使用方式</div>
+    <h2 class="section-title">三步上手：CLI 生成 + 浏览器浏览</h2>
+    <p class="section-desc">纯本地运行，零配置，单二进制。所有操作都在你自己的机器上完成。</p>
+
+    <div style="display:flex; gap:24px; align-items:stretch;">
+      <div style="flex:1;background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:32px 28px;text-align:center;">
+        <div style="width:40px;height:40px;border-radius:50%;background:var(--gradient);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:1.05rem;">1</div>
+        <h4 style="font-size:1.08rem;font-weight:700;margin-bottom:6px;">初始化配置</h4>
+        <p style="color:var(--text3);font-size:0.9rem;margin-bottom:14px;">选择远程 API（OpenAI / Claude / Gemini / 智谱）或本地 Ollama 模型</p>
+        <code style="display:inline-block;background:rgba(99,102,241,0.07);color:var(--accent);padding:6px 16px;border-radius:6px;font-size:0.88rem;font-family:'SF Mono','Fira Code','Consolas',monospace;">codewiki config</code>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;width:48px;flex-shrink:0;color:var(--accent3);font-size:1.4rem;">→</div>
+      <div style="flex:1;background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:32px 28px;text-align:center;">
+        <div style="width:40px;height:40px;border-radius:50%;background:var(--gradient);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:1.05rem;">2</div>
+        <h4 style="font-size:1.08rem;font-weight:700;margin-bottom:6px;">生成 Wiki</h4>
+        <p style="color:var(--text3);font-size:0.9rem;margin-bottom:14px;">AST 解析 → 依赖图构建 → LLM 叙事生成 → 图表输出，全自动</p>
+        <code style="display:inline-block;background:rgba(99,102,241,0.07);color:var(--accent);padding:6px 16px;border-radius:6px;font-size:0.88rem;font-family:'SF Mono','Fira Code','Consolas',monospace;">codewiki generate</code>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;width:48px;flex-shrink:0;color:var(--accent3);font-size:1.4rem;">→</div>
+      <div style="flex:1;background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:32px 28px;text-align:center;">
+        <div style="width:40px;height:40px;border-radius:50%;background:var(--gradient);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:1.05rem;">3</div>
+        <h4 style="font-size:1.08rem;font-weight:700;margin-bottom:6px;">浏览器浏览 &amp; 提问</h4>
+        <p style="color:var(--text3);font-size:0.9rem;margin-bottom:14px;">本地 Web 服务，阅读文档、查看图表、AI 问答一站式</p>
+        <code style="display:inline-block;background:rgba(99,102,241,0.07);color:var(--accent);padding:6px 16px;border-radius:6px;font-size:0.88rem;font-family:'SF Mono','Fira Code','Consolas',monospace;">codewiki serve</code>
+      </div>
+    </div>
+
+    <p style="text-align:center; color: var(--text3); margin-top: 20px; font-size: 0.92rem;">
+      也可在终端直接提问：<code style="background:rgba(99,102,241,0.07);color:var(--accent);padding:3px 10px;border-radius:4px;font-size:0.88rem;">codewiki ask "这个项目的认证流程是怎样的？"</code>
+    </p>
+
+    <p style="text-align:center; color: var(--text3); margin-top: 10px; font-size: 0.86rem;">
+      常用参数：<code style="background:rgba(99,102,241,0.04);color:var(--text2);padding:2px 6px;border-radius:3px;font-size:0.84rem;">--force</code> 强制重新解析 &nbsp;|&nbsp;
+      <code style="background:rgba(99,102,241,0.04);color:var(--text2);padding:2px 6px;border-radius:3px;font-size:0.84rem;">--lang zh</code> 指定中文输出 &nbsp;|&nbsp;
+      <code style="background:rgba(99,102,241,0.04);color:var(--text2);padding:2px 6px;border-radius:3px;font-size:0.84rem;">--port 9090</code> 指定端口 &nbsp;|&nbsp;
+      <code style="background:rgba(99,102,241,0.04);color:var(--text2);padding:2px 6px;border-radius:3px;font-size:0.84rem;">--max-functions N</code> 函数描述上限
+    </p>
+  </div>
+</section>
+
+<!-- ===== FEATURE SHOWCASE ===== -->
+<section class="section" id="showcase">
+  <div class="section-inner">
+    <div class="section-label" style="font-size:0.9rem;">产品亮点</div>
+    <h2 class="section-title" style="font-size:2.8rem;">不止于文档，更是学习伴侣</h2>
+    <p class="section-desc">从"结构说明书"到"学习百科"，fine codewiki 重新定义代码文档工具的标准。</p>
+
+    <!-- Showcase 1 -->
+    <div class="showcase">
+      <div class="showcase-text">
+        <div class="num">01 / 交互式 Web 预览</div>
+        <h3>一键 serve，即开即看</h3>
+        <p>运行 <code style="background:rgba(99,102,241,0.08);color:var(--accent);padding:2px 8px;border-radius:4px;font-size:0.92em;">codewiki serve</code> 即刻启动本地 Web 服务。左侧导航分层折叠、右侧内容区居中阅读、顶栏搜索 + Ask AI 快捷入口。磨砂玻璃态侧栏、阅读进度条、暗色主题 —— 不只是文档工具，更是精致的阅读体验。</p>
+      </div>
+      <div class="showcase-visual">
+        <img src="p2.png" alt="fine codewiki serve 模式 — 本地 Web 预览与交互式导航">
+      </div>
+    </div>
+
+    <!-- Showcase 2 -->
+    <div class="showcase reverse">
+      <div class="showcase-text">
+        <div class="num">02 / 智能图表生成</div>
+        <h3>架构图 + 类图 + 时序图，自动生成</h3>
+        <p>基于 AST 静态分析提取精确结构，LLM 注入语义理解，生成可交互的 Mermaid 图表。架构图按功能域和技术层双图穿插叙事，图表支持全屏查看和点击导航到源码。不再是枯燥的节点列表，而是有因果链的叙事。</p>
+      </div>
+      <div class="showcase-visual">
+        <img src="p3.png" alt="fine codewiki 自动生成的架构图与类图">
+      </div>
+    </div>
+
+    <!-- Showcase 3 -->
+    <div class="showcase">
+      <div class="showcase-text">
+        <div class="num">03 / 自然语言问答</div>
+        <h3>像聊天一样探索代码库</h3>
+        <p>输入自然语言问题，fine codewiki 从代码图谱和文档索引中检索相关上下文，生成精确回答。每个答案都附带源码文件路径和行号，点击可直接弹出语法高亮的源码窗口。支持多轮对话，上下文持续保持。</p>
+      </div>
+      <div class="showcase-visual">
+        <img src="p4.png" alt="fine codewiki RAG 问答 — 自然语言探索代码库">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== COMPARISON ===== -->
+<section class="section" id="compare">
+  <div class="section-inner">
+    <div class="section-label">竞品对比</div>
+    <h2 class="section-title">为什么 fine codewiki 是更好的选择？</h2>
+    <p class="section-desc">我们在 Google Code Wiki 的可视化能力和 Zread 的学习体验之间找到了最佳平衡点。</p>
+
+    <div class="compare-wrap">
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>能力维度</th>
+          <th>Google Code Wiki</th>
+          <th>Zread</th>
+          <th>fine codewiki</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>图表生成</td>
+          <td><span class="check">✓</span> 架构图 / 类图 / 时序图（3 种）</td>
+          <td><span class="check">✓</span> 架构图等可视化</td>
+          <td><span class="check">✓</span> 4 种图表 + 全屏交互 + 点击跳转源码</td>
+        </tr>
+        <tr>
+          <td>分析方式</td>
+          <td><span class="cross">✗</span> 纯 LLM，无 AST 结构提取</td>
+          <td><span class="cross">✗</span> 纯 LLM，无 AST 结构提取</td>
+          <td><span class="check">✓</span> <strong>AST 静态分析 + LLM 语义生成</strong><br><span style="font-size:0.82rem;color:var(--text3);">精确结构提取 + 设计意图推断，双重互补</span></td>
+        </tr>
+        <tr>
+          <td>AI 文档生成</td>
+          <td><span class="check">✓</span> Gemini 驱动，自动生成</td>
+          <td><span class="check">✓</span> 多模型可选，叙事式 Wiki</td>
+          <td><span class="check">✓</span> 5 篇叙事文章 + 设计决策显性化 + 学习路径</td>
+        </tr>
+        <tr>
+          <td>AI 问答</td>
+          <td><span class="check">✓</span> NotebookLM 集成</td>
+          <td><span class="check">✓</span> 对话式问答</td>
+          <td><span class="check">✓</span> RAG 代码级问答 + 源码溯源 + 多轮对话</td>
+        </tr>
+        <tr>
+          <td>运行方式</td>
+          <td><span class="cross">✗</span> 云端，代码需上传</td>
+          <td><span class="check">✓</span> 本地 CLI</td>
+          <td><span class="check">✓</span> CLI 生成 + 本地 Web 浏览双模</td>
+        </tr>
+        <tr>
+          <td>本地 LLM</td>
+          <td><span class="cross">✗</span> 仅云端 Gemini</td>
+          <td><span class="cross">✗</span> 仅远程 API</td>
+          <td><span class="check">✓</span> 远程 API 或 Ollama 本地部署，自由切换</td>
+        </tr>
+        <tr>
+          <td>离线导出</td>
+          <td><span class="cross">✗</span> 不支持</td>
+          <td><span class="cross">✗</span> 不支持</td>
+          <td><span class="check">✓</span> 静态 HTML 三栏布局，可提交 Git</td>
+        </tr>
+        <tr>
+          <td>语言支持</td>
+          <td><span class="cross">✗</span> 仅英文输出</td>
+          <td><span class="check">✓</span> 中 / 英文</td>
+          <td><span class="check">✓</span> 中 / 英文双语文档 + 7 种编程语言解析</td>
+        </tr>
+        <tr>
+          <td>模型开放性</td>
+          <td><span class="cross">✗</span> 绑定 Gemini</td>
+          <td>智谱/OpenAI/MoonShot 等 5 家</td>
+          <td><span class="check">✓</span> <strong>任意兼容 OpenAI 接口的模型</strong>（含私有部署）</td>
+        </tr>
+        <tr>
+          <td>开源</td>
+          <td><span class="cross">✗</span> 闭源</td>
+          <td><span class="cross">✗</span> 闭源</td>
+          <td><span class="check">✓</span> <strong>MIT 开源</strong></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p style="text-align:center; color: var(--text3); font-size: 0.9rem; margin-top: 28px;">
+      fine codewiki <strong style="color:var(--accent);">独有优势</strong>：
+      依赖图 + 社区检测分层架构图 ·
+      PageRank 模块重要性排序 ·
+      流式优先 LLM + 3 级渐进降级 ·
+      4 阶段并发管线（2–5min） ·
+      磨砂玻璃态 Web UI + 暗色主题 ·
+      阅读进度 / 时长 / 难度徽章 ·
+      图表点击导航到源码 ·
+      模块中文名称智能生成 ·
+      增量缓存（文件级 mtime/size 去重） ·
+      时序图调用链追踪
+    </p>
+  </div>
+</section>
+
+<!-- ===== TECH STACK ===== -->
+<section class="section" id="tech" style="background: var(--bg2);">
+  <div class="section-inner">
+    <div class="section-label">技术架构</div>
+    <h2 class="section-title">打磨每一个细节</h2>
+    <p class="section-desc">从 AST 解析到 LLM 调用，从图表 DSL 到向量检索，每一层都经过精密设计。</p>
+
+    <div class="tech-grid">
+      <div class="tech-item">
+        <div class="name">Go 1.26+</div>
+        <div class="role">CLI 语言 · 单二进制分发</div>
+      </div>
+      <div class="tech-item">
+        <div class="name">gotreesitter</div>
+        <div class="role">AST 解析 · 纯 Go 无 CGO</div>
+      </div>
+      <div class="tech-item">
+        <div class="name">Mermaid DSL</div>
+        <div class="role">图表描述 · Git 原生友好</div>
+      </div>
+      <div class="tech-item">
+        <div class="name">SQLite</div>
+        <div class="role">向量存储 · 零服务依赖</div>
+      </div>
+      <div class="tech-item">
+        <div class="name">流式优先 LLM</div>
+        <div class="role">3 级渐进降级 · Thinking 模式</div>
+      </div>
+      <div class="tech-item">
+        <div class="name">4 阶段并发管线</div>
+        <div class="role">异步并行 · 2–5 分钟生成</div>
+      </div>
+      <div class="tech-item">
+        <div class="name">双路 RAG 检索</div>
+        <div class="role">代码 + 文档混合检索</div>
+      </div>
+      <div class="tech-item">
+        <div class="name">增量缓存</div>
+        <div class="role">文件级增量 · 避免重复解析</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ===== CTA BANNER ===== -->
+<section class="section">
+  <div class="section-inner">
+    <div class="cta-banner">
+      <h3>准备好用自然语言探索代码库了吗？</h3>
+      <p>在项目目录运行一条命令，即刻拥有专属的代码百科全书。完全免费，MIT 开源许可。</p>
+      <a href="#features" class="btn-white">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+        了解核心能力
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ===== FOOTER ===== -->
+<footer class="footer">
+  <p>Built with Go · Code stays local · MIT License</p>
+  <p style="margin-top: 4px;">fine codewiki &mdash; 打开陌生代码世界认知之窗</p>
+</footer>
+
+</body>
+</html>
