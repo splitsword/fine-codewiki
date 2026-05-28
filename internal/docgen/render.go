@@ -787,40 +787,73 @@ function rpAskSend(){
   rpAppendMsg('user',q);
   inp.value='';
   btn.disabled=true;
-  var loadDiv=document.createElement('div');
-  loadDiv.className='rp-loading';
-  loadDiv.innerHTML='<span class="rp-loading-dot"></span><span class="rp-loading-dot"></span><span class="rp-loading-dot"></span><span>思考中...</span>';
-  chat.appendChild(loadDiv);
+  var fullText='';
+  var div=document.createElement('div');
+  div.className='rp-msg assistant';
+  var bubble=document.createElement('div');
+  bubble.className='rp-bubble';
+  bubble.innerHTML='<span class="rp-loading" style="display:inline-flex"><span class="rp-loading-dot"></span><span class="rp-loading-dot"></span><span class="rp-loading-dot"></span></span>';
+  div.appendChild(bubble);
+  chat.appendChild(div);
   chat.scrollTop=chat.scrollHeight;
-  fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:_rpHistory})})
+  fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:_rpHistory,stream:true})})
   .then(function(res){
-    loadDiv.remove();
-    if(!res.ok)return res.json().catch(function(){return{error:'请求失败'};}).then(function(e){rpAppendMsg('assistant','错误：'+(e.error||'请求失败'));throw new Error('done');});
-    return res.json();
+    if(!res.ok){res.json().then(function(e){bubble.textContent='错误：'+(e.error||'请求失败');});throw new Error('done');}
+    var reader=res.body.getReader();
+    var decoder=new TextDecoder();
+    var buf='';
+    function pump(){
+      return reader.read().then(function(r){
+        if(r.done)return;
+        buf+=decoder.decode(r.value,{stream:true});
+        var lines=buf.split('\n');
+        buf=lines.pop()||'';
+        lines.forEach(function(line){
+          if(!line.startsWith('data: '))return;
+          try{var d=JSON.parse(line.slice(6));}catch(e){return;}
+          if(d.type==='token'){
+            fullText+=d.text;
+            bubble.innerHTML=rpRenderMd(fullText);
+          }else if(d.type==='done'){
+            if(d.sources&&d.sources.length>0){
+              var sd=document.createElement('div');
+              sd.className='rp-sources';
+              d.sources.forEach(function(s){
+                var tag=document.createElement('button');
+                tag.className='rp-src-tag';
+                tag.textContent=s.Filename+(s.StartLine>0?':'+s.StartLine:'');
+                tag.title=s.Type+'：'+s.Name;
+                tag.onclick=function(){rpNavToArticle(s.Filename);};
+                sd.appendChild(tag);
+              });
+              div.appendChild(sd);
+            }
+            _rpHistory.push({question:q,answer:fullText});
+          }
+        });
+        chat.scrollTop=chat.scrollHeight;
+        return pump();
+      });
+    }
+    return pump();
   })
-  .then(function(data){
-    if(!data)return;
-    rpAppendMsg('assistant',data.text,data.sources);
-    _rpHistory.push({question:q,answer:data.text});
-  })
-  .catch(function(e){
-    loadDiv.remove();
-    if(e.message!=='done')rpAppendMsg('assistant','网络错误：'+e.message);
-  })
+  .catch(function(e){if(e.message!=='done')bubble.textContent='错误：'+e.message;})
   .finally(function(){btn.disabled=false;inp.focus();});
 }
 function rpNavToArticle(filename){
   var parts=filename.split(/[\/\\]/);
-  var module=parts.length>1?parts[parts.length-2]:'';
-  var file=parts[parts.length-1].replace(/\.[^.]+$/,'');
-  // Build keywords from module and file name
-  var keywords=[module,file];
+  // Try to find matching nav item by scanning sidebar and nav-group links
+  var searchTerms=[filename.replace(/\\/g,'/')]; // full path
+  if(parts.length>=2)searchTerms.push(parts.slice(-2).join('/')); // last 2 path segments
+  if(parts.length>=1)searchTerms.push(parts[parts.length-1].replace(/\.[^.]+$/,'')); // basename
   var best=null,bestScore=0;
-  document.querySelectorAll('.nav-group-items a').forEach(function(a){
+  document.querySelectorAll('.sidebar a[href], .nav-group-items a').forEach(function(a){
+    var href=(a.getAttribute('href')||'').toLowerCase();
     var text=a.textContent.toLowerCase();
     var score=0;
-    keywords.forEach(function(kw){
-      if(kw&&text.indexOf(kw)>=0)score+=kw.length;
+    searchTerms.forEach(function(t){
+      if(t&&href.indexOf(t.toLowerCase())>=0)score+=t.length*2;
+      if(t&&text.indexOf(t.toLowerCase())>=0)score+=t.length;
     });
     if(score>bestScore){bestScore=score;best=a;}
   });
@@ -828,12 +861,15 @@ function rpNavToArticle(filename){
     var href=best.getAttribute('href');
     if(href&&href.startsWith('#')){
       window.location.hash=href;
-      window.scrollTo({top:(document.querySelector(href)||{}).offsetTop-70||0,behavior:'smooth'});
+      var el=document.querySelector(href);
+      if(el)window.scrollTo({top:el.offsetTop-70,behavior:'smooth'});
     }else if(href){
       window.location.href=href;
     }
   }else if(typeof openSource==='function'){
     openSource(filename);
+  }else{
+    window.open('/api/source?file='+encodeURIComponent(filename),'_blank');
   }
 }
 function rpRenderMd(t){
