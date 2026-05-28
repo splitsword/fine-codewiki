@@ -976,6 +976,8 @@ em.source-em:hover { background:var(--accent-glow); border-radius:3px; padding:1
 var popup=null;
 function getPopup(){
 if(popup)return popup;
+var exist=document.getElementById('s-popup');
+if(exist){popup=exist;return popup;}
 popup=document.createElement('div');popup.id='s-popup';popup.className='s-popup-ov';
 popup.innerHTML='<div class="s-popup"><div class="s-popup-hd"><span></span><button class="s-popup-cl">&times;</button></div><div class="s-popup-bd"><pre></pre></div></div>';
 document.body.appendChild(popup);

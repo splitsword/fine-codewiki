@@ -790,6 +790,21 @@ func (h *serverHandler) handleSourceAPI(w http.ResponseWriter, r *http.Request) 
 		rest = rest[sepIdx+1:]
 		basePath = filepath.Join(h.sourceDir, rest)
 	}
+	// Try expanding "dir/name.ext" → "dir/name/name.ext" (LLM often
+	// abbreviates package paths, e.g. "internal/analyzer.go" instead of
+	// "internal/analyzer/analyzer.go").
+	if !found {
+		dir := filepath.Dir(cleanFile)
+		base := filepath.Base(cleanFile)
+		nameOnly := strings.TrimSuffix(base, filepath.Ext(base))
+		if nameOnly != "" {
+			candidate := filepath.Join(h.sourceDir, dir, nameOnly, base)
+			if _, err := os.Stat(candidate); err == nil {
+				basePath = candidate
+				found = true
+			}
+		}
+	}
 	// Last resort: try just the base filename
 	if !found {
 		baseName := filepath.Base(cleanFile)

@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-28 — fix(serve): 修复来源弹窗需双击关闭 + 缩写路径 404 两个问题 (472e7a4)
+
 - 2026-05-28 — fix(serve): 修复 AI 问答来源链接点击无效——openSource 作用域与注入目标双重错误 (81abed7)
 
 - 2026-05-28 — fix(serve): onclick 中显式使用 window.openSource 避免作用域问题 (2526180)
