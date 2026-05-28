@@ -296,16 +296,14 @@ func TestWikiHandlerDirectoryTraversal(t *testing.T) {
 	assert.Equal(t, 403, rr.Code)
 }
 
-func TestServeAskPageDisabled(t *testing.T) {
+func TestServeAskPageRemoved(t *testing.T) {
 	handler := newServerHandler(t.TempDir(), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/ask", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
-	assert.Equal(t, 200, rr.Code)
-	assert.Contains(t, rr.Body.String(), "问答终端")
-	assert.Contains(t, rr.Body.String(), "--source")
+	assert.Equal(t, 404, rr.Code)
 }
 
 func TestServeAskAPIDisabled(t *testing.T) {
@@ -1045,7 +1043,7 @@ func TestWikiHandlerRawJavaScript(t *testing.T) {
 	assert.Equal(t, "application/javascript; charset=utf-8", rr.Header().Get("Content-Type"))
 }
 
-func TestServeAskPageEnabled(t *testing.T) {
+func TestServeAskPageRemovedWithEngine(t *testing.T) {
 	mock := &mockAskProvider{}
 	store := vectorstore.New()
 	engine := rag.NewEngine(mock, store)
@@ -1055,10 +1053,7 @@ func TestServeAskPageEnabled(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
-	assert.Equal(t, 200, rr.Code)
-	assert.Contains(t, rr.Body.String(), "问答终端")
-	// Should NOT show "RAG 引擎未启用" when engine is available
-	assert.NotContains(t, rr.Body.String(), "RAG 引擎未启用")
+	assert.Equal(t, 404, rr.Code)
 }
 
 func TestRunBrowseWikiExists(t *testing.T) {

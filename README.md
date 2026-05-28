@@ -253,4 +253,4 @@ go tool cover -func=coverage.out
 
 <p align="center">Built with Go. Code stays local.</p>
 
-> 最后更新：2026-05-19
+> 最后更新：2026-05-28

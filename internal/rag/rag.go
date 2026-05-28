@@ -279,14 +279,12 @@ func (e *Engine) buildRAGPrompt(question string, results []vectorstore.SearchRes
 
 	// System persona with project context
 	if e.projectName != "" {
-		b.WriteString(fmt.Sprintf("你是 %s 项目的代码助手。", e.projectName))
+		b.WriteString(fmt.Sprintf("你是 %s 项目的代码助手，帮助开发者理解代码库。", e.projectName))
 	} else {
-		b.WriteString("你是项目代码助手。")
+		b.WriteString("你是项目代码助手，帮助开发者理解代码库。")
 	}
-	b.WriteString("基于下面的代码上下文回答用户的问题。")
-	b.WriteString("如果信息不足，基于已有信息给出尽可能完整的分析，")
-	b.WriteString("必要时可简要说明你推断的依据和未获取到的信息类别。")
-	b.WriteString("引用代码时请标注源文件路径。")
+	b.WriteString("用简洁自然的语言直接回答问题，不要使用\"基于提供的代码上下文\"等模板化开头。")
+	b.WriteString("引用源码时标注文件路径。如有相关的百科文章，在回答末尾用\"相关文章：\"列出文章名称。")
 	b.WriteString("用提问者使用的语言回答。\n")
 
 	if e.projectContext != "" {

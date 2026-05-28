@@ -490,11 +490,7 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Route matching uses raw URL path (cross-platform)
 	rawPath := r.URL.Path
 
-	// RAG endpoints
-	if rawPath == "/ask" && r.Method == http.MethodGet {
-		serveAskPage(w, h.engine != nil)
-		return
-	}
+	// RAG API endpoint (used by the right-panel AI tab)
 	if rawPath == "/api/ask" && r.Method == http.MethodPost {
 		h.handleAskAPI(w, r)
 		return
@@ -506,10 +502,20 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rawPath == "/" {
-		// Prefer the pre-generated three-column index.html; fall back to dynamic page.
 		indexPath := filepath.Join(h.root, "index.html")
 		if _, err := os.Stat(indexPath); err == nil {
-			http.ServeFile(w, r, indexPath)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			data, readErr := os.ReadFile(indexPath)
+			if readErr != nil {
+				http.Error(w, "读取文件出错", http.StatusInternalServerError)
+				return
+			}
+			// Inject source popup + right panel into pre-generated index.html
+			html := string(data)
+			if !strings.Contains(html, "openSource") {
+				html = strings.Replace(html, "</body>", docgen.SourcePopupJS+"\n</body>", 1)
+			}
+			w.Write(injectRightPanel([]byte(html)))
 		} else {
 			serveIndexPage(w, h.root)
 		}
@@ -564,28 +570,18 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For pre-built .html files without openSource(), inject the popup script
-	if ext == ".html" && !strings.Contains(string(data), "openSource") {
+	if ext == ".html" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		injected := strings.Replace(string(data), "</body>", docgen.SourcePopupJS+"\n</body>", 1)
-		w.Write([]byte(injected))
+		injected := string(data)
+		if !strings.Contains(injected, "openSource") {
+			injected = strings.Replace(injected, "</body>", docgen.SourcePopupJS+"\n</body>", 1)
+		}
+		w.Write(injectRightPanel([]byte(injected)))
 		return
 	}
 
 	w.Header().Set("Content-Type", contentTypeFor(path))
 	w.Write(data)
-}
-
-// serveAskPage renders the interactive Q&A HTML page.
-func serveAskPage(w http.ResponseWriter, enabled bool) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if !enabled {
-		w.Write([]byte(`<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><title>问答</title></head>
-<body><h1>问答终端</h1><p>使用 <code>--source</code> 启动 serve 以启用 RAG 问答。</p></body></html>`))
-		return
-	}
-	w.Write([]byte(askPageHTML))
 }
 
 // handleAskAPI processes a Q&A request and returns a JSON answer.
@@ -802,110 +798,267 @@ func (h *serverHandler) handleSourceAPI(w http.ResponseWriter, r *http.Request) 
 	w.Write(data)
 }
 
-// askPageHTML is the interactive Q&A web UI.
-const askPageHTML = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CodeWiki 问答终端</title>
-<style>
-* { box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; background: #f5f5f5; color: #333; }
-.container { max-width: 800px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; height: 100vh; }
-header { text-align: center; margin-bottom: 16px; }
-header h1 { margin: 0; font-size: 1.5em; }
-header p { margin: 4px 0 0; color: #666; font-size: 0.9em; }
-.chat { flex: 1; overflow-y: auto; background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-.message { margin-bottom: 12px; }
-.message.user { text-align: right; }
-.message.user .bubble { background: #0969da; color: #fff; display: inline-block; padding: 10px 14px; border-radius: 16px; max-width: 80%; word-break: break-word; }
-.message.assistant .bubble { background: #f0f0f0; color: #333; display: inline-block; padding: 10px 14px; border-radius: 16px; max-width: 80%; word-break: break-word; }
-.message.assistant .sources { margin-top: 6px; font-size: 0.85em; color: #555; }
-.message.assistant .sources span { display: block; margin: 2px 0; }
-.input-area { display: flex; gap: 8px; margin-top: 12px; }
-.input-area input { flex: 1; padding: 12px 16px; border: 1px solid #d0d7de; border-radius: 24px; font-size: 1em; outline: none; }
-.input-area input:focus { border-color: #0969da; }
-.input-area button { padding: 12px 24px; background: #0969da; color: #fff; border: none; border-radius: 24px; font-size: 1em; cursor: pointer; }
-.input-area button:hover { background: #0550ae; }
-.input-area button:disabled { background: #8ec2f7; cursor: not-allowed; }
-.loading { color: #666; font-style: italic; }
-</style>
-</head>
-<body>
-<div class="container">
-<header><h1>CodeWiki 问答终端</h1><p>基于项目代码库的 RAG 智能问答</p></header>
-<div class="chat" id="chat">
-  <div class="message assistant"><div class="bubble">你好！我是你的项目代码助手。请提出关于代码库的问题。</div></div>
+
+// injectRightPanel injects the right-side search/AI panel into a pre-generated
+// static HTML page so that it gains the same Ask AI experience as dynamically
+// rendered pages. The original page structure is preserved.
+func injectRightPanel(data []byte) []byte {
+	html := string(data)
+
+	// 1. CSS — inject before </style> (inside the existing <style> block)
+	rpCSS := `
+/* ---- Right panel (Ask AI + Search) ---- */
+.right-panel { position:fixed; top:0; right:0; width:380px; height:100vh; background:var(--bg); border-left:1px solid var(--border); z-index:65; display:flex; flex-direction:column; transform:translateX(100%); transition:transform .25s cubic-bezier(.4,0,.2,1); box-shadow:none; }
+.right-panel.open { transform:translateX(0); box-shadow:-4px 0 24px rgba(0,0,0,.08); }
+[data-theme="dark"] .right-panel.open { box-shadow:-4px 0 24px rgba(0,0,0,.3); }
+body.rp-open .right-sidebar { transform:translateX(100%); transition:transform .25s cubic-bezier(.4,0,.2,1); }
+body.rp-open .content { margin-right:380px; transition:margin-right .25s cubic-bezier(.4,0,.2,1); }
+body.rp-open .topbar { right:380px; transition:right .25s cubic-bezier(.4,0,.2,1); }
+.rp-header { display:flex; align-items:center; gap:0; padding:0; border-bottom:1px solid var(--border); background:var(--bg2); height:var(--topbar-h); flex-shrink:0; }
+.rp-tab { flex:1; padding:0 12px; height:100%; border:none; background:none; font-size:13px; font-weight:600; color:var(--text3); cursor:pointer; transition:all .2s; border-bottom:2px solid transparent; }
+.rp-tab:hover { color:var(--text); background:var(--accent-glow); }
+.rp-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.rp-close { width:42px; height:100%; border:none; background:none; font-size:18px; cursor:pointer; color:var(--text3); display:flex; align-items:center; justify-content:center; flex-shrink:0; border-left:1px solid var(--border); transition:all .15s; }
+.rp-close:hover { background:var(--bg3); color:var(--text); }
+.rp-body { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+.rp-pane { display:none; flex-direction:column; flex:1; overflow:hidden; }
+.rp-pane.active { display:flex; }
+.rp-search-input { width:100%; padding:12px 16px; border:none; border-bottom:1px solid var(--border); font-size:14px; background:var(--bg); color:var(--text); outline:none; flex-shrink:0; }
+.rp-search-input:focus { background:var(--bg2); }
+.rp-search-input::placeholder { color:var(--text3); }
+.rp-results { flex:1; overflow-y:auto; }
+.rp-result { display:block; padding:12px 16px; color:var(--text); text-decoration:none; border-bottom:1px solid var(--border2); transition:background .1s; cursor:pointer; }
+.rp-result:hover { background:var(--accent-glow); }
+.rp-result-title { font-size:13px; font-weight:600; display:block; }
+.rp-result-path { font-size:11px; color:var(--text3); display:block; margin-top:2px; }
+.rp-empty { padding:24px 16px; text-align:center; color:var(--text3); font-size:13px; }
+.rp-chat { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+.rp-msg { max-width:95%; animation:fadeUp .3s ease-out; }
+.rp-msg.user { align-self:flex-end; }
+.rp-msg .rp-bubble { padding:10px 14px; border-radius:12px; font-size:13px; line-height:1.6; word-break:break-word; }
+.rp-msg.user .rp-bubble { background:var(--accent-gradient); color:#fff; border-bottom-right-radius:4px; }
+.rp-msg.assistant .rp-bubble { background:var(--bg2); color:var(--text); border:1px solid var(--border); border-bottom-left-radius:4px; }
+.rp-msg .rp-sources { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }
+.rp-msg .rp-src-tag { font-size:11px; padding:2px 8px; border-radius:10px; background:var(--accent-glow); color:var(--accent); cursor:pointer; font-weight:500; transition:all .15s; border:none; }
+.rp-msg .rp-src-tag:hover { background:var(--accent); color:#fff; }
+.rp-loading { display:flex; align-items:center; gap:8px; padding:10px 14px; color:var(--text3); font-size:13px; }
+.rp-loading-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); animation:pulse 1.2s infinite; }
+.rp-loading-dot:nth-child(2) { animation-delay:.2s; }
+.rp-loading-dot:nth-child(3) { animation-delay:.4s; }
+.rp-input-area { display:flex; gap:8px; padding:12px; border-top:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
+.rp-input-area input { flex:1; padding:8px 14px; border:1px solid var(--border); border-radius:20px; font-size:13px; background:var(--bg); color:var(--text); outline:none; }
+.rp-input-area input:focus { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-glow); }
+.rp-input-area button { padding:8px 16px; background:var(--accent-gradient); color:#fff; border:none; border-radius:20px; font-size:13px; font-weight:600; cursor:pointer; transition:opacity .15s; }
+.rp-input-area button:hover { opacity:.9; }
+.rp-input-area button:disabled { opacity:.5; cursor:not-allowed; }
+.rp-welcome { padding:32px 20px; text-align:center; color:var(--text3); }
+.rp-welcome-icon { font-size:32px; margin-bottom:12px; }
+.rp-welcome-title { font-size:14px; font-weight:600; color:var(--text2); margin-bottom:6px; }
+.rp-welcome-desc { font-size:12px; line-height:1.6; }
+.topbar-search { max-width:560px; }
+.topbar-search kbd { right:92px; }
+.topbar-search .topbar-btn { position:absolute; right:10px; top:50%; transform:translateY(-50%); }
+`
+	html = strings.Replace(html, "</style>", rpCSS+"</style>", 1)
+
+	// 2. Topbar — add Ask AI button inside the search bar
+	askBtn := `<button onclick="togglePanel('ai')" class="topbar-btn primary" style="margin-left:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Ask AI</button>`
+	html = strings.Replace(html, `<kbd>Ctrl+K</kbd>`, `<kbd>Ctrl+K</kbd>`+"\n"+askBtn, 1)
+
+	// 3. Search box — make it open the right panel instead of the old overlay
+	html = strings.Replace(html,
+		`<input type="text" id="topbar-search-trigger" placeholder="搜索文章、模块..." readonly>`,
+		`<input type="text" id="topbar-search-trigger" placeholder="搜索文章、模块..." readonly onclick="togglePanel('search')">`,
+		1)
+
+	// 4. Right panel HTML + JS — inject before </body>
+	rpHTML := `<div class="right-panel" id="right-panel">
+<div class="rp-header">
+<button class="rp-tab active" data-tab="search" onclick="switchTab('search')">🔍 搜索</button>
+<button class="rp-tab" data-tab="ai" onclick="switchTab('ai')">🤖 AI 问答</button>
+<button class="rp-close" onclick="closePanel()" title="关闭">✕</button>
 </div>
-<div class="input-area">
-  <input type="text" id="question" placeholder="输入你的问题..." onkeydown="if(event.key==='Enter') send()" />
-  <button id="sendBtn" onclick="send()">发送</button>
+<div class="rp-body">
+<div class="rp-pane rp-search-pane active" data-pane="search">
+<input class="rp-search-input" type="text" id="rp-search-input" placeholder="搜索文章、模块..." oninput="rpFilterSearch(this.value)">
+<div class="rp-results" id="rp-search-results"></div>
+</div>
+<div class="rp-pane rp-ai-pane" data-pane="ai">
+<div class="rp-chat" id="rp-chat">
+<div class="rp-welcome">
+<div class="rp-welcome-icon">🤖</div>
+<div class="rp-welcome-title">CodeWiki AI 助手</div>
+<div class="rp-welcome-desc">基于项目代码库的 RAG 智能问答<br>输入问题开始对话</div>
+</div>
+</div>
+<div class="rp-input-area">
+<input type="text" id="rp-ai-input" placeholder="向代码库提问..." onkeydown="if(event.key==='Enter')rpAskSend()">
+<button id="rp-ai-btn" onclick="rpAskSend()">发送</button>
+</div>
+</div>
 </div>
 </div>
 <script>
-const chat = document.getElementById('chat');
-const input = document.getElementById('question');
-const btn = document.getElementById('sendBtn');
-let history = [];
-function appendBubble(role, text) {
-  const div = document.createElement('div');
-  div.className = 'message ' + role;
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  bubble.textContent = text;
-  div.appendChild(bubble);
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-  return div;
-}
-function appendSources(div, sources) {
-  if (!sources || sources.length === 0) return;
-  const sdiv = document.createElement('div');
-  sdiv.className = 'sources';
-  sdiv.innerHTML = '<strong>引用来源：</strong>';
-  sources.forEach(s => {
-    const span = document.createElement('span');
-    span.textContent = s.filename + (s.startLine > 0 ? ':' + s.startLine : '') + '（' + s.type + '：' + s.name + '）';
-    sdiv.appendChild(span);
-  });
-  div.appendChild(sdiv);
-  chat.scrollTop = chat.scrollHeight;
-}
-async function send() {
-  const q = input.value.trim();
-  if (!q) return;
-  appendBubble('user', q);
-  input.value = '';
-  btn.disabled = true;
-  const loading = appendBubble('assistant', '正在思考...');
-  try {
-    const res = await fetch('/api/ask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: q, history: history })
-    });
-    loading.remove();
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: '请求失败' }));
-      appendBubble('assistant', '错误：' + err.error);
-      return;
-    }
-    const data = await res.json();
-    const div = appendBubble('assistant', data.text);
-    appendSources(div, data.sources);
-    history.push({ question: q, answer: data.text });
-  } catch (e) {
-    loading.remove();
-    appendBubble('assistant', '网络错误：' + e.message);
-  } finally {
-    btn.disabled = false;
-    input.focus();
+// Build _navIdx from sidebar links for search
+var _navIdx=[];
+document.querySelectorAll('.nav-group-items a').forEach(function(a){
+  var t=a.querySelector('.nav-title');
+  if(t)_navIdx.push({f:a.getAttribute('href'),t:t.textContent});
+});
+
+function togglePanel(tab){
+  var p=document.getElementById('right-panel');
+  if(!p)return;
+  if(p.classList.contains('open')){
+    if(tab){
+      var cur=p.querySelector('.rp-tab.active');
+      if(cur&&cur.dataset.tab===tab){closePanel();return;}
+      switchTab(tab);
+    } else {closePanel();}
+  } else {
+    p.classList.add('open');
+    document.body.classList.add('rp-open');
+    if(tab)switchTab(tab);
+    var inp=p.querySelector('.rp-pane.active input');
+    if(inp)setTimeout(function(){inp.focus();},100);
   }
 }
+function closePanel(){
+  var p=document.getElementById('right-panel');
+  if(p){p.classList.remove('open');document.body.classList.remove('rp-open');}
+}
+function switchTab(tab){
+  var p=document.getElementById('right-panel');
+  if(!p)return;
+  p.querySelectorAll('.rp-tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab===tab);});
+  p.querySelectorAll('.rp-pane').forEach(function(pn){pn.classList.toggle('active',pn.dataset.pane===tab);});
+  var inp=p.querySelector('.rp-pane.active input');
+  if(inp)setTimeout(function(){inp.focus();},50);
+}
+function rpFilterSearch(q){
+  var r=document.getElementById('rp-search-results');
+  if(!r)return;
+  q=q.toLowerCase();
+  if(!q){r.innerHTML='';return;}
+  var html='';
+  _navIdx.forEach(function(n){
+    if(n.t.toLowerCase().indexOf(q)>=0||(n.f&&n.f.toLowerCase().indexOf(q)>=0)){
+      html+='<a class="rp-result" href="'+n.f+'"><span class="rp-result-title">'+n.t+'</span></a>';
+    }
+  });
+  r.innerHTML=html||'<div class="rp-empty">未找到匹配结果</div>';
+}
+var _rpHistory=[];
+function rpAskSend(){
+  var inp=document.getElementById('rp-ai-input');
+  var btn=document.getElementById('rp-ai-btn');
+  var chat=document.getElementById('rp-chat');
+  if(!inp||!btn||!chat)return;
+  var q=inp.value.trim();
+  if(!q)return;
+  var welcome=chat.querySelector('.rp-welcome');
+  if(welcome)welcome.remove();
+  rpAppendMsg('user',q);
+  inp.value='';
+  btn.disabled=true;
+  var loadDiv=document.createElement('div');
+  loadDiv.className='rp-loading';
+  loadDiv.innerHTML='<span class="rp-loading-dot"></span><span class="rp-loading-dot"></span><span class="rp-loading-dot"></span><span>思考中...</span>';
+  chat.appendChild(loadDiv);
+  chat.scrollTop=chat.scrollHeight;
+  fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:_rpHistory})})
+  .then(function(res){
+    loadDiv.remove();
+    if(!res.ok)return res.json().catch(function(){return{error:'请求失败'};}).then(function(e){rpAppendMsg('assistant','错误：'+(e.error||'请求失败'));throw new Error('done');});
+    return res.json();
+  })
+  .then(function(data){
+    if(!data)return;
+    rpAppendMsg('assistant',data.text,data.sources);
+    _rpHistory.push({question:q,answer:data.text});
+  })
+  .catch(function(e){
+    loadDiv.remove();
+    if(e.message!=='done')rpAppendMsg('assistant','网络错误：'+e.message);
+  })
+  .finally(function(){btn.disabled=false;inp.focus();});
+}
+function rpRenderMd(t){
+  t=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  t=t.replace(/^---$/gm,'<hr>');
+  t=t.replace(/^### (.+)$/gm,'<h4 style="margin:8px 0 4px;font-size:13px">$1</h4>');
+  t=t.replace(/^## (.+)$/gm,'<h3 style="margin:10px 0 4px;font-size:14px">$1</h3>');
+  t=t.replace(/^# (.+)$/gm,'<h3 style="margin:10px 0 4px;font-size:15px">$1</h3>');
+  t=t.replace(/\x60([^\x60]+)\x60/g,'<code style="background:var(--inline-code-bg);padding:1px 4px;border-radius:3px;font-size:12px">$1</code>');
+  t=t.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  t=t.replace(/^- (.+)$/gm,'<div style="padding-left:12px">• $1</div>');
+  t=t.replace(/\n\n/g,'</p><p style="margin:6px 0">');
+  t=t.replace(/\n/g,'<br>');
+  return '<p style="margin:6px 0">'+t+'</p>';
+}
+function rpNavToArticle(filename){
+  var parts=filename.split(/[\/\\]/);
+  var module=parts.length>1?parts[parts.length-2]:'';
+  var file=parts[parts.length-1].replace(/\.[^.]+$/,'');
+  var keywords=[module,file];
+  var best=null,bestScore=0;
+  document.querySelectorAll('.nav-group-items a').forEach(function(a){
+    var text=a.textContent.toLowerCase();
+    var score=0;
+    keywords.forEach(function(kw){
+      if(kw&&text.indexOf(kw)>=0)score+=kw.length;
+    });
+    if(score>bestScore){bestScore=score;best=a;}
+  });
+  if(best){
+    var href=best.getAttribute('href');
+    if(href&&href.startsWith('#')){
+      window.location.hash=href;
+      window.scrollTo({top:(document.querySelector(href)||{}).offsetTop-70||0,behavior:'smooth'});
+    }else if(href){
+      window.location.href=href;
+    }
+  }else if(typeof openSource==='function'){
+    openSource(filename);
+  }
+}
+function rpAppendMsg(role,text,sources){
+  var chat=document.getElementById('rp-chat');
+  if(!chat)return;
+  var div=document.createElement('div');
+  div.className='rp-msg '+role;
+  var bubble=document.createElement('div');
+  bubble.className='rp-bubble';
+  if(role==='assistant'){bubble.innerHTML=rpRenderMd(text);}else{bubble.textContent=text;}
+  div.appendChild(bubble);
+  if(sources&&sources.length>0){
+    var sd=document.createElement('div');
+    sd.className='rp-sources';
+    sources.forEach(function(s){
+      var tag=document.createElement('button');
+      tag.className='rp-src-tag';
+      tag.textContent=s.Filename+(s.StartLine>0?':'+s.StartLine:'');
+      tag.title=s.Type+'：'+s.Name;
+      tag.onclick=function(){rpNavToArticle(s.Filename);};
+      sd.appendChild(tag);
+    });
+    div.appendChild(sd);
+  }
+  chat.appendChild(div);
+  chat.scrollTop=chat.scrollHeight;
+}
+
+// Override Ctrl+K to open right panel instead of old overlay
+document.addEventListener('keydown',function(e){
+  if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();togglePanel('search');}
+  if(e.key==='Escape')closePanel();
+},true);
 </script>
-</body>
-</html>`
+`
+	html = strings.Replace(html, "</body>", rpHTML+"</body>", 1)
+
+	return []byte(html)
+}
 
 // serveIndexPage renders the wiki index/landing page.
 func serveIndexPage(w http.ResponseWriter, root string) {

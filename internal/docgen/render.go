@@ -1,4 +1,4 @@
-package docgen
+﻿package docgen
 
 import (
 	"fmt"
@@ -450,11 +450,12 @@ body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto San
 .topbar { position:fixed; top:0; left:var(--sidebar-w); right:0; height:var(--topbar-h); background:rgba(255,255,255,.72); backdrop-filter:blur(16px) saturate(180%); -webkit-backdrop-filter:blur(16px) saturate(180%); border-bottom:1px solid var(--border2); z-index:50; display:flex; align-items:center; padding:0 24px; gap:12px; transition:background .3s; }
 [data-theme="dark"] .topbar { background:rgba(13,17,23,.78); }
 .topbar-title { font-weight:700; font-size:14px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px; }
-.topbar-search { flex:1; max-width:420px; position:relative; }
+.topbar-search { flex:1; max-width:560px; position:relative; }
 .topbar-search input { width:100%; padding:7px 14px 7px 36px; border:1px solid var(--border); border-radius:8px; font-size:13px; background:var(--bg2); color:var(--text); outline:none; transition:all .2s; }
 .topbar-search input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
 .topbar-search .search-icon { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text3); pointer-events:none; }
-.topbar-search kbd { position:absolute; right:10px; top:50%; transform:translateY(-50%); font-size:11px; padding:2px 6px; background:var(--bg3); border:1px solid var(--border); border-radius:4px; color:var(--text3); font-family:inherit; }
+.topbar-search kbd { position:absolute; right:92px; top:50%; transform:translateY(-50%); font-size:11px; padding:2px 6px; background:var(--bg3); border:1px solid var(--border); border-radius:4px; color:var(--text3); font-family:inherit; }
+.topbar-search .topbar-btn { position:absolute; right:10px; top:50%; transform:translateY(-50%); }
 .topbar-actions { display:flex; align-items:center; gap:8px; margin-left:auto; }
 .topbar-btn { display:inline-flex; align-items:center; gap:6px; padding:6px 14px; font-size:12px; font-weight:600; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text2); cursor:pointer; transition:all .2s; text-decoration:none; }
 .topbar-btn:hover { background:var(--bg2); border-color:var(--accent); color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
@@ -493,8 +494,57 @@ body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto San
 .sidebar-summary { padding:10px 18px; font-size:11px; color:var(--text3); border-bottom:1px solid var(--border2); display:flex; align-items:center; gap:4px; }
 .sidebar-summary .dot { margin:0 2px; }
 
+/* ---- Right panel (Ask AI + Search) ---- */
+.right-panel { position:fixed; top:0; right:0; width:380px; height:100vh; background:var(--bg); border-left:1px solid var(--border); z-index:65; display:flex; flex-direction:column; transform:translateX(100%); transition:transform .25s cubic-bezier(.4,0,.2,1); box-shadow:none; }
+.right-panel.open { transform:translateX(0); box-shadow:-4px 0 24px rgba(0,0,0,.08); }
+[data-theme="dark"] .right-panel.open { box-shadow:-4px 0 24px rgba(0,0,0,.3); }
+body.rp-open .right-sidebar { transform:translateX(100%); transition:transform .25s cubic-bezier(.4,0,.2,1); }
+body.rp-open .content { margin-right:380px; transition:margin-right .25s cubic-bezier(.4,0,.2,1); }
+body.rp-open .topbar { right:380px; transition:right .25s cubic-bezier(.4,0,.2,1); }
+.rp-header { display:flex; align-items:center; gap:0; padding:0; border-bottom:1px solid var(--border); background:var(--bg2); height:var(--topbar-h); flex-shrink:0; }
+.rp-tab { flex:1; padding:0 12px; height:100%; border:none; background:none; font-size:13px; font-weight:600; color:var(--text3); cursor:pointer; transition:all .2s; border-bottom:2px solid transparent; }
+.rp-tab:hover { color:var(--text); background:var(--accent-glow); }
+.rp-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.rp-close { width:42px; height:100%; border:none; background:none; font-size:18px; cursor:pointer; color:var(--text3); display:flex; align-items:center; justify-content:center; flex-shrink:0; border-left:1px solid var(--border); transition:all .15s; }
+.rp-close:hover { background:var(--bg3); color:var(--text); }
+.rp-body { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+.rp-pane { display:none; flex-direction:column; flex:1; overflow:hidden; }
+.rp-pane.active { display:flex; }
+.rp-search-input { width:100%; padding:12px 16px; border:none; border-bottom:1px solid var(--border); font-size:14px; background:var(--bg); color:var(--text); outline:none; flex-shrink:0; }
+.rp-search-input:focus { background:var(--bg2); }
+.rp-search-input::placeholder { color:var(--text3); }
+.rp-results { flex:1; overflow-y:auto; }
+.rp-result { display:block; padding:12px 16px; color:var(--text); text-decoration:none; border-bottom:1px solid var(--border2); transition:background .1s; cursor:pointer; }
+.rp-result:hover { background:var(--accent-glow); }
+.rp-result-title { font-size:13px; font-weight:600; display:block; }
+.rp-result-path { font-size:11px; color:var(--text3); display:block; margin-top:2px; }
+.rp-empty { padding:24px 16px; text-align:center; color:var(--text3); font-size:13px; }
+.rp-chat { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+.rp-msg { max-width:95%; animation:fadeUp .3s ease-out; }
+.rp-msg.user { align-self:flex-end; }
+.rp-msg .rp-bubble { padding:10px 14px; border-radius:12px; font-size:13px; line-height:1.6; word-break:break-word; }
+.rp-msg.user .rp-bubble { background:var(--accent-gradient); color:#fff; border-bottom-right-radius:4px; }
+.rp-msg.assistant .rp-bubble { background:var(--bg2); color:var(--text); border:1px solid var(--border); border-bottom-left-radius:4px; }
+.rp-msg .rp-sources { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }
+.rp-msg .rp-src-tag { font-size:11px; padding:2px 8px; border-radius:10px; background:var(--accent-glow); color:var(--accent); cursor:pointer; font-weight:500; transition:all .15s; border:none; }
+.rp-msg .rp-src-tag:hover { background:var(--accent); color:#fff; }
+.rp-loading { display:flex; align-items:center; gap:8px; padding:10px 14px; color:var(--text3); font-size:13px; }
+.rp-loading-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); animation:pulse 1.2s infinite; }
+.rp-loading-dot:nth-child(2) { animation-delay:.2s; }
+.rp-loading-dot:nth-child(3) { animation-delay:.4s; }
+.rp-input-area { display:flex; gap:8px; padding:12px; border-top:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
+.rp-input-area input { flex:1; padding:8px 14px; border:1px solid var(--border); border-radius:20px; font-size:13px; background:var(--bg); color:var(--text); outline:none; }
+.rp-input-area input:focus { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-glow); }
+.rp-input-area button { padding:8px 16px; background:var(--accent-gradient); color:#fff; border:none; border-radius:20px; font-size:13px; font-weight:600; cursor:pointer; transition:opacity .15s; }
+.rp-input-area button:hover { opacity:.9; }
+.rp-input-area button:disabled { opacity:.5; cursor:not-allowed; }
+.rp-welcome { padding:32px 20px; text-align:center; color:var(--text3); }
+.rp-welcome-icon { font-size:32px; margin-bottom:12px; }
+.rp-welcome-title { font-size:14px; font-weight:600; color:var(--text2); margin-bottom:6px; }
+.rp-welcome-desc { font-size:12px; line-height:1.6; }
+
 /* ---- Content ---- */
-.content { margin-left:var(--sidebar-w); padding:calc(var(--topbar-h) + 28px) 48px 60px; max-width:900px; width:100%; }
+.content { margin-left:var(--sidebar-w); padding:calc(var(--topbar-h) + 28px) 48px 60px; max-width:900px; width:100%; transition:margin-right .25s cubic-bezier(.4,0,.2,1); }
 h1,h2,h3,h4,h5,h6 { margin-top:36px; margin-bottom:16px; font-weight:700; line-height:1.35; color:var(--text); }
 h1 { font-size:2.1em; border-bottom:2px solid var(--border); padding-bottom:.3em; background:var(--accent-gradient); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; border-image:var(--accent-gradient) 1; }
 h2 { font-size:1.55em; border-bottom:1px solid var(--border); padding-bottom:.25em; }
@@ -553,18 +603,6 @@ hr { height:1px; padding:0; margin:36px 0; background:var(--border); border:0; }
 .index-page .index-section li:last-child { border-bottom:none; }
 .index-page .index-ask { background:var(--accent-glow); padding:24px; border-radius:var(--radius-lg); border:1px solid rgba(99,102,241,.15); }
 .index-page .index-ask h2 { border:none; margin-top:0; }
-
-/* ---- Search overlay ---- */
-.search-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); backdrop-filter:blur(4px); z-index:999; }
-.search-overlay.active { display:flex; align-items:flex-start; justify-content:center; padding-top:15vh; }
-.search-modal { background:var(--bg); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); width:560px; max-height:60vh; overflow:hidden; border:1px solid var(--border); }
-.search-modal input { width:100%; padding:16px 20px; border:none; font-size:16px; background:transparent; color:var(--text); outline:none; border-bottom:1px solid var(--border); }
-.search-modal .search-results { overflow-y:auto; max-height:calc(60vh - 60px); }
-.search-modal .search-hit { display:block; padding:12px 20px; color:var(--text); text-decoration:none; border-bottom:1px solid var(--border2); transition:background .1s; }
-.search-modal .search-hit:hover, .search-modal .search-hit.selected { background:var(--accent-glow); }
-.search-modal .search-hit strong { display:block; font-size:14px; }
-.search-modal .search-hit small { color:var(--text3); font-size:12px; }
-.search-empty { padding:20px; text-align:center; color:var(--text3); }
 
 /* ---- Source reference ---- */
 .source-ref { display:inline-block; font-weight:700; color:var(--accent); cursor:pointer; background:var(--inline-code-bg); padding:0 5px; border-radius:4px; margin:0 2px; font-family:"Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace; font-size:85%; transition:background .15s; }
@@ -691,17 +729,154 @@ window.addEventListener('scroll',function(){
   bar.style.width=h>0?((window.scrollY/h)*100)+'%':'0';
 });
 
-/* ---- Ctrl+K search ---- */
+/* ---- Right panel logic ---- */
+function togglePanel(tab){
+  var p=document.getElementById('right-panel');
+  if(!p)return;
+  if(p.classList.contains('open')){
+    if(tab){
+      var cur=p.querySelector('.rp-tab.active');
+      if(cur&&cur.dataset.tab===tab){closePanel();return;}
+      switchTab(tab);
+    } else {closePanel();}
+  } else {
+    p.classList.add('open');
+    document.body.classList.add('rp-open');
+    if(tab)switchTab(tab);
+    var inp=p.querySelector('.rp-pane.active input');
+    if(inp)setTimeout(function(){inp.focus();},100);
+  }
+}
+function closePanel(){
+  var p=document.getElementById('right-panel');
+  if(p){p.classList.remove('open');document.body.classList.remove('rp-open');}
+}
+function switchTab(tab){
+  var p=document.getElementById('right-panel');
+  if(!p)return;
+  p.querySelectorAll('.rp-tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab===tab);});
+  p.querySelectorAll('.rp-pane').forEach(function(pn){pn.classList.toggle('active',pn.dataset.pane===tab);});
+  var inp=p.querySelector('.rp-pane.active input');
+  if(inp)setTimeout(function(){inp.focus();},50);
+}
+function rpFilterSearch(q){
+  var r=document.getElementById('rp-search-results');
+  if(!r)return;
+  q=q.toLowerCase();
+  if(!q){r.innerHTML='';return;}
+  var html='';
+  if(typeof _navIdx!=='undefined'){
+    _navIdx.forEach(function(n){
+      if(n.t.toLowerCase().indexOf(q)>=0||n.f.toLowerCase().indexOf(q)>=0){
+        html+='<a class="rp-result" href="'+n.f+'"><span class="rp-result-title">'+n.t+'</span><span class="rp-result-path">'+n.f+'</span></a>';
+      }
+    });
+  }
+  r.innerHTML=html||'<div class="rp-empty">未找到匹配结果</div>';
+}
+var _rpHistory=[];
+function rpAskSend(){
+  var inp=document.getElementById('rp-ai-input');
+  var btn=document.getElementById('rp-ai-btn');
+  var chat=document.getElementById('rp-chat');
+  if(!inp||!btn||!chat)return;
+  var q=inp.value.trim();
+  if(!q)return;
+  var welcome=chat.querySelector('.rp-welcome');
+  if(welcome)welcome.remove();
+  rpAppendMsg('user',q);
+  inp.value='';
+  btn.disabled=true;
+  var loadDiv=document.createElement('div');
+  loadDiv.className='rp-loading';
+  loadDiv.innerHTML='<span class="rp-loading-dot"></span><span class="rp-loading-dot"></span><span class="rp-loading-dot"></span><span>思考中...</span>';
+  chat.appendChild(loadDiv);
+  chat.scrollTop=chat.scrollHeight;
+  fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:_rpHistory})})
+  .then(function(res){
+    loadDiv.remove();
+    if(!res.ok)return res.json().catch(function(){return{error:'请求失败'};}).then(function(e){rpAppendMsg('assistant','错误：'+(e.error||'请求失败'));throw new Error('done');});
+    return res.json();
+  })
+  .then(function(data){
+    if(!data)return;
+    rpAppendMsg('assistant',data.text,data.sources);
+    _rpHistory.push({question:q,answer:data.text});
+  })
+  .catch(function(e){
+    loadDiv.remove();
+    if(e.message!=='done')rpAppendMsg('assistant','网络错误：'+e.message);
+  })
+  .finally(function(){btn.disabled=false;inp.focus();});
+}
+function rpNavToArticle(filename){
+  var parts=filename.split(/[\/\\]/);
+  var module=parts.length>1?parts[parts.length-2]:'';
+  var file=parts[parts.length-1].replace(/\.[^.]+$/,'');
+  // Build keywords from module and file name
+  var keywords=[module,file];
+  var best=null,bestScore=0;
+  document.querySelectorAll('.nav-group-items a').forEach(function(a){
+    var text=a.textContent.toLowerCase();
+    var score=0;
+    keywords.forEach(function(kw){
+      if(kw&&text.indexOf(kw)>=0)score+=kw.length;
+    });
+    if(score>bestScore){bestScore=score;best=a;}
+  });
+  if(best){
+    var href=best.getAttribute('href');
+    if(href&&href.startsWith('#')){
+      window.location.hash=href;
+      window.scrollTo({top:(document.querySelector(href)||{}).offsetTop-70||0,behavior:'smooth'});
+    }else if(href){
+      window.location.href=href;
+    }
+  }else if(typeof openSource==='function'){
+    openSource(filename);
+  }
+}
+function rpRenderMd(t){
+  t=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  t=t.replace(/^---$/gm,'<hr>');
+  t=t.replace(/^### (.+)$/gm,'<h4 style="margin:8px 0 4px;font-size:13px">$1</h4>');
+  t=t.replace(/^## (.+)$/gm,'<h3 style="margin:10px 0 4px;font-size:14px">$1</h3>');
+  t=t.replace(/^# (.+)$/gm,'<h3 style="margin:10px 0 4px;font-size:15px">$1</h3>');
+  t=t.replace(/\x60([^\x60]+)\x60/g,'<code style="background:var(--inline-code-bg);padding:1px 4px;border-radius:3px;font-size:12px">$1</code>');
+  t=t.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  t=t.replace(/^- (.+)$/gm,'<div style="padding-left:12px">• $1</div>');
+  t=t.replace(/\n\n/g,'</p><p style="margin:6px 0">');
+  t=t.replace(/\n/g,'<br>');
+  return '<p style="margin:6px 0">'+t+'</p>';
+}
+function rpAppendMsg(role,text,sources){
+  var chat=document.getElementById('rp-chat');
+  if(!chat)return;
+  var div=document.createElement('div');
+  div.className='rp-msg '+role;
+  var bubble=document.createElement('div');
+  bubble.className='rp-bubble';
+  if(role==='assistant'){bubble.innerHTML=rpRenderMd(text);}else{bubble.textContent=text;}
+  div.appendChild(bubble);
+  if(sources&&sources.length>0){
+    var sd=document.createElement('div');
+    sd.className='rp-sources';
+    sources.forEach(function(s){
+      var tag=document.createElement('button');
+      tag.className='rp-src-tag';
+      tag.textContent=s.Filename+(s.StartLine>0?':'+s.StartLine:'');
+      tag.title=s.Type+'：'+s.Name;
+      tag.onclick=function(){rpNavToArticle(s.Filename);};
+      sd.appendChild(tag);
+    });
+    div.appendChild(sd);
+  }
+  chat.appendChild(div);
+  chat.scrollTop=chat.scrollHeight;
+}
 document.addEventListener('keydown',function(e){
-  if((e.ctrlKey||e.metaKey)&&e.key==='k'){
-    e.preventDefault();
-    var ov=document.querySelector('.search-overlay');
-    if(ov){ov.classList.toggle('active');if(ov.classList.contains('active'))ov.querySelector('input').focus();}
-  }
-  if(e.key==='Escape'){
-    var ov=document.querySelector('.search-overlay');
-    if(ov)ov.classList.remove('active');
-  }
+  if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();togglePanel('search');}
+  if(e.key==='Escape')closePanel();
 });
 
 	/* ---- Scroll spy for nav ---- */
@@ -862,21 +1037,41 @@ func BuildWikiPage(title, body, currentURL string, sections []NavSection, totalA
 		out.WriteString(`</div>
 <div class="topbar-search">
 <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-<input type="text" placeholder="` + "搜索文章、模块..." + `" readonly onclick="document.querySelector('.search-overlay').classList.add('active');document.querySelector('.search-overlay input').focus();">
+<input type="text" placeholder="` + "搜索文章、模块..." + `" readonly onclick="togglePanel('search')">
 <kbd>Ctrl+K</kbd>
+	<button onclick="togglePanel('ai')" class="topbar-btn primary" style="margin-left:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Ask AI</button>
 </div>
 <div class="topbar-actions">
-<a href="/ask" class="topbar-btn primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Ask AI</a>
 <button id="theme-toggle" class="theme-toggle" title="` + "切换主题" + `"></button>
 </div>
 </div>
 `)
 
-		// Search overlay — build index from structured sections
-		out.WriteString(`<div class="search-overlay" onclick="if(event.target===this)this.classList.remove('active')">
-<div class="search-modal">
-<input type="text" id="search-input" placeholder="` + "搜索文章、模块..." + `" oninput="filterSearch(this.value)">
-<div class="search-results" id="search-results"></div>
+		// Right panel (Search + AI Q&A) — build nav index for search tab
+		out.WriteString(`<div class="right-panel" id="right-panel">
+<div class="rp-header">
+<button class="rp-tab active" data-tab="search" onclick="switchTab('search')">` + "\U0001F50D 搜索" + `</button>
+<button class="rp-tab" data-tab="ai" onclick="switchTab('ai')">` + "\U0001F916 AI 问答" + `</button>
+<button class="rp-close" onclick="closePanel()" title="关闭">✕</button>
+</div>
+<div class="rp-body">
+<div class="rp-pane rp-search-pane active" data-pane="search">
+<input class="rp-search-input" type="text" id="rp-search-input" placeholder="` + "搜索文章、模块..." + `" oninput="rpFilterSearch(this.value)">
+<div class="rp-results" id="rp-search-results"></div>
+</div>
+<div class="rp-pane rp-ai-pane" data-pane="ai">
+<div class="rp-chat" id="rp-chat">
+<div class="rp-welcome">
+<div class="rp-welcome-icon">` + "\U0001F916" + `</div>
+<div class="rp-welcome-title">` + "CodeWiki AI 助手" + `</div>
+<div class="rp-welcome-desc">` + "基于项目代码库的 RAG 智能问答<br>输入问题开始对话" + `</div>
+</div>
+</div>
+<div class="rp-input-area">
+<input type="text" id="rp-ai-input" placeholder="` + "向代码库提问..." + `" onkeydown="if(event.key==='Enter')rpAskSend()">
+<button id="rp-ai-btn" onclick="rpAskSend()">` + "发送" + `</button>
+</div>
+</div>
 </div>
 </div>
 <script>
@@ -892,18 +1087,6 @@ var _navIdx=[`)
 			}
 		}
 		out.WriteString(`];
-function filterSearch(q){
-  var r=document.getElementById('search-results');
-  q=q.toLowerCase();
-  if(!q){r.innerHTML='';return;}
-  var html='';
-  _navIdx.forEach(function(n){
-    if(n.t.toLowerCase().indexOf(q)>=0||n.f.toLowerCase().indexOf(q)>=0){
-      html+='<a class="search-hit" href="'+n.f+'"><strong>'+n.t+'</strong><small>'+n.f+'</small></a>';
-    }
-  });
-  r.innerHTML=html||'<div class="search-empty">` + "未找到匹配结果" + `</div>';
-}
 </script>
 `)
 
