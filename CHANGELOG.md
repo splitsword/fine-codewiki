@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-28 — fix(docgen): 修复来源标签中 LLM 输出 Markdown 链接导致路径乱码 (942dd0b)
+
 - 2026-05-28 — fix(serve): 修复来源弹窗需双击关闭 + 缩写路径 404 两个问题 (472e7a4)
 
 - 2026-05-28 — fix(serve): 修复 AI 问答来源链接点击无效——openSource 作用域与注入目标双重错误 (81abed7)

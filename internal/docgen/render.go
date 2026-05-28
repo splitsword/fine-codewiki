@@ -323,6 +323,23 @@ func makeSourceRefsClickable(html string, primaryExt string) string {
 		}
 		inner := m[1]
 
+		// Extract file paths from <a href="..."> tags (LLM sometimes
+		// outputs Markdown links that become anchors after rendering)
+		reAnchor := regexp.MustCompile(`<a\s+href="([^"]+)">[^<]*</a>[^,、，]*`)
+		anchors := reAnchor.FindAllStringSubmatch(inner, -1)
+		if len(anchors) > 0 {
+			var refs []string
+			for _, a := range anchors {
+				path := cleanSourcePath(a[1])
+				if path != "" {
+					refs = append(refs, buildSourceSpan(path, primaryExt))
+				}
+			}
+			if len(refs) > 0 {
+				return "来源：" + strings.Join(refs, "、")
+			}
+		}
+
 		// Extract individual file paths from <code> tags
 		reCode := regexp.MustCompile(`<code>([^<]+)</code>`)
 		codes := reCode.FindAllStringSubmatch(inner, -1)
@@ -340,7 +357,8 @@ func makeSourceRefsClickable(html string, primaryExt string) string {
 		}
 
 		// Fallback: split plain text on delimiters (handles comma-separated multi-path)
-		plain := reCode.ReplaceAllString(inner, "")
+		plain := reAnchor.ReplaceAllString(inner, "")
+		plain = reCode.ReplaceAllString(plain, "")
 		plain = strings.TrimSpace(plain)
 		if plain == "" {
 			return block
@@ -985,6 +1003,10 @@ popup.querySelector('.s-popup-cl').onclick=function(){popup.classList.remove('on
 popup.addEventListener('click',function(e){if(e.target===popup)popup.classList.remove('on');});
 return popup;}
 function openSource(file){
+if(!file)return;
+var hm=file.match(/href="([^"]+)"/);if(hm)file=hm[1];
+file=file.replace(/<[^>]+>/g,'').replace(/^\[|\]$/g,'').trim();
+if(!file)return;
 var p=getPopup();p.classList.add('on');
 p.querySelector('.s-popup-hd span').textContent=file;
 var bd=p.querySelector('.s-popup-bd');
@@ -1022,8 +1044,25 @@ css:'css',html:'html',xml:'xml',sql:'sql',sh:'bash'};return m2[x]||x;}
 	em.innerHTML=html;
 	});
 	}
-	if(document.readyState!=='loading'){upgradeSourceEms();}
-	else{document.addEventListener('DOMContentLoaded',upgradeSourceEms);}
+	function fixBrokenSourceRefs(){
+	document.querySelectorAll('.source-ref').forEach(function(sp){
+	var df=sp.dataset.file||'';
+	if(df&&df.indexOf('<')< 0)return;
+	var real='';
+	for(var i=0;i<sp.attributes.length;i++){
+	var n=sp.attributes[i].name;
+	if(/\.(go|py|js|ts|java|rs|rb|cpp|c|cs|md)$/i.test(n)||/^internal\/|^cmd\/|^pkg\//.test(n)){real=n;break;}
+	}
+	if(!real){var hm=df.match(/href="?([^">\s]+)/);if(hm)real=hm[1];}
+	if(real){
+	sp.dataset.file=real;
+	var disp=real.replace(/\\/g,'/').split('/').pop();
+	sp.innerHTML='<strong>'+disp+'</strong>';
+	}
+	});
+	}
+	if(document.readyState!=='loading'){upgradeSourceEms();fixBrokenSourceRefs();}
+	else{document.addEventListener('DOMContentLoaded',function(){upgradeSourceEms();fixBrokenSourceRefs();});}
 document.addEventListener('click',function(e){
 var s=e.target.closest('.source-ref');
 if(s&&s.dataset.file){e.preventDefault();openSource(s.dataset.file);return;}
