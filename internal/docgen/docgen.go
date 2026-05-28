@@ -44,6 +44,7 @@ type Wiki struct {
 	SequenceDiagram     string
 	SequenceDescription string
 	ModuleDocs          map[string]string // module name -> markdown content
+	ModuleChineseNames  map[string]string          // module name → LLM-generated Chinese name
 	ModuleThemes        map[string][]string        // theme -> sorted module names
 	ChapterTitles       map[string]ChapterTitle    // theme name → LLM-generated title
 	ThemeIntros         map[string]string          // theme name → LLM-generated 2-3 sentence intro
@@ -68,9 +69,10 @@ type wikiCheckpoint struct {
 	ArchNarrative string            `json:"arch_narrative,omitempty"`
 	FuncDescMap   map[string]string         `json:"func_desc_map,omitempty"`
 	Timestamp     time.Time                 `json:"timestamp"`
-	ChapterTitles map[string]ChapterTitle   `json:"chapter_titles,omitempty"`
-	ModuleThemes  map[string][]string       `json:"module_themes,omitempty"`
-	ThemeIntros        map[string]string         `json:"theme_intros,omitempty"`
+	ChapterTitles        map[string]ChapterTitle   `json:"chapter_titles,omitempty"`
+	ModuleChineseNames   map[string]string         `json:"module_chinese_names,omitempty"`
+	ModuleThemes         map[string][]string       `json:"module_themes,omitempty"`
+	ThemeIntros          map[string]string         `json:"theme_intros,omitempty"`
 	ChapterNarratives  map[string]string         `json:"chapter_narratives,omitempty"`
 	ProjectStructure   string                   `json:"project_structure,omitempty"`
 }
@@ -173,6 +175,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	var themeIntros map[string]string
 	var chapterTitles map[string]ChapterTitle
 	var chapterNarratives map[string]string
+	var moduleChineseNames map[string]string
 
 	if provider != nil {
 	var projectStructureNarrative string
@@ -361,6 +364,25 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			}()
 		}
 
+		// Task 7: Module Chinese Names
+		if cp.ModuleChineseNames != nil && len(cp.ModuleChineseNames) > 0 {
+			moduleChineseNames = cp.ModuleChineseNames
+			report("模块中文名", fmt.Sprintf("从 checkpoint 恢复 %d 个", len(moduleChineseNames)))
+		} else if graph != nil && len(graph.Nodes) > 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				report("模块中文名", "开始生成...")
+				names := generateModuleChineseNames(ctx, provider, projectName, graph.Nodes)
+				if len(names) > 0 {
+					moduleChineseNames = names
+					report("模块中文名", fmt.Sprintf("生成完成 → %d 个", len(names)))
+				} else {
+					report("模块中文名", "生成失败，将使用原始英文名")
+				}
+			}()
+		}
+
 		wg.Wait()
 		close(fatalCh)
 
@@ -420,6 +442,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			cp.ArchNarrative = archNarrative
 			cp.FuncDescMap = funcDescMap
 			cp.ProjectStructure = projectStructureNarrative
+			cp.ModuleChineseNames = moduleChineseNames
 			_ = saveWikiCheckpoint(cpPath, cp)
 		}
 	} else {
@@ -606,6 +629,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		ModuleDocs:          moduleDocs,
 		ModuleThemes:        moduleThemes,
 		ChapterTitles:       chapterTitles,
+		ModuleChineseNames:  moduleChineseNames,
 		ThemeIntros:         themeIntros,
 		ChapterNarratives:   chapterNarratives,
 	}, nil
@@ -734,8 +758,8 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName, readme, language str
 	fmt.Fprintf(&b, "要求：\n")
 	fmt.Fprintf(&b, "1. 描述这个项目的核心目标、主要功能和适用场景\n")
 	fmt.Fprintf(&b, "2. 概括整体架构风格（如 MVC、微服务、单体、工具库等）\n")
-	fmt.Fprintf(&b, "3. 说明关键模块的职责分工和协作方式\n")
-	fmt.Fprintf(&b, "4. 不要只是罗列模块名称和文件清单，要体现对代码逻辑的理解\n")
+	fmt.Fprintf(&b, "3. 只挑选 5-8 个最核心的模块深入说明其职责和协作，不要逐个列举所有模块\n")
+	fmt.Fprintf(&b, "4. 禁止使用列表格式罗列模块名，用连续的叙事段落来描述架构逻辑\n")
 	fmt.Fprintf(&b, "5. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：\n")
 	fmt.Fprintf(&b, "   本项目采用分层架构，将业务逻辑与数据访问解耦。\n")
 	fmt.Fprintf(&b, "   *来源：`services/user_service.py`、`repositories/user_repository.py`*\n")
@@ -802,8 +826,9 @@ func isChecklistLike(text string, graph *grapher.Graph) bool {
 		}
 	}
 
-	// If more than 70% of module names are mentioned, it's likely a checklist
-	if len(graph.Nodes) > 0 && float64(moduleHits)/float64(len(graph.Nodes)) > 0.7 {
+	// If more than 80% of module names are mentioned (and at least 12 modules), it's likely a checklist.
+	// Require a minimum absolute count so small projects aren't penalised for mentioning most modules.
+	if moduleHits >= 12 && float64(moduleHits)/float64(len(graph.Nodes)) > 0.8 {
 		return true
 	}
 
@@ -5620,4 +5645,55 @@ func buildProjectStructurePrompt(graph *grapher.Graph, projectName string) strin
 	fmt.Fprintf(&b, "直接输出 Markdown 正文，不要加任何 JSON 包装或代码围栏。")
 
 	return b.String()
+}
+
+// generateModuleChineseNames uses LLM to generate short Chinese names for all modules.
+// Returns a map from module full name to Chinese label, or nil on failure.
+func generateModuleChineseNames(ctx context.Context, provider llm.Provider, projectName string, nodes []*grapher.Node) map[string]string {
+	if len(nodes) == 0 || provider == nil {
+		return nil
+	}
+
+	// Cap to 60 modules to keep the LLM prompt manageable
+	const maxModules = 60
+	limited := nodes
+	if len(nodes) > maxModules {
+		limited = nodes[:maxModules]
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "你是一位软件项目文档编写者。请为下列代码模块各生成一个简短的中文名称（3-8字），让代码读者一眼看懂每个模块的用途。\n\n")
+	fmt.Fprintf(&b, "项目：%s\n\n", projectName)
+	fmt.Fprintf(&b, "严格按紧凑的 JSON 格式输出（不要换行、不要注释），键为模块完整路径，值为对应的中文名称：\n")
+	fmt.Fprintf(&b, `{"模块路径": "中文名称", ...}`+"\n\n")
+
+	for _, n := range limited {
+		fmt.Fprintf(&b, "- %s：%s\n", n.Name, inferModuleResponsibility(n))
+	}
+
+	fmt.Fprintf(&b, "\n直接输出 JSON，不要加任何解释说明。")
+
+	result, err := streamComplete(ctx, provider, b.String())
+	if err != nil || result == "" {
+		return nil
+	}
+
+	return parseChineseNamesJSON(result)
+}
+
+// parseChineseNamesJSON extracts a map[string]string from LLM JSON output.
+func parseChineseNamesJSON(raw string) map[string]string {
+	// Find JSON block: the first { to the last }
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start < 0 || end < 0 || start >= end {
+		return nil
+	}
+	jsonStr := raw[start : end+1]
+
+	var result map[string]string
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return nil
+	}
+	return result
 }

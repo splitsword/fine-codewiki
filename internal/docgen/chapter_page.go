@@ -193,7 +193,12 @@ func GenerateChapterPage(wiki *Wiki, theme string, graph *grapher.Graph) string 
 			secID := "module-" + mermaidEscape(modName)
 			if narrative != "" {
 				body.WriteString(fmt.Sprintf(`<details class="module-detail" id="%s">`, secID))
-				body.WriteString(fmt.Sprintf(`<summary>%s</summary>`, filepath.Base(modName)))
+				baseName := filepath.Base(modName)
+				summaryLabel := baseName
+				if cn, ok := wiki.ModuleChineseNames[modName]; ok && cn != "" {
+					summaryLabel = fmt.Sprintf("%s（%s）", cn, baseName)
+				}
+				body.WriteString(fmt.Sprintf(`<summary>%s</summary>`, summaryLabel))
 				body.WriteString(`<div class="module-body">`)
 				body.WriteString(makeSourceRefsClickable(RenderMarkdownBody([]byte(doc)), primaryExt))
 				body.WriteString("</div></details>\n")

@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-28 — @ feat(docgen): 模块详情参考添加 LLM 生成的中文名称 + 修复项目概述误判回退 (31bb7f4)
+
 - 2026-05-28 — @ fix(grapher): 修复 Go 项目依赖图产生 0 条边的问题 (e0b089b)
 
 - 2026-05-28 — fix(docgen): 修复来源标签中 LLM 输出 Markdown 链接导致路径乱码 (942dd0b)
