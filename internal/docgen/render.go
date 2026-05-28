@@ -823,7 +823,7 @@ function rpAskSend(){
                 tag.className='rp-src-tag';
                 tag.textContent=s.Filename+(s.StartLine>0?':'+s.StartLine:'');
                 tag.title=s.Type+'：'+s.Name;
-                tag.onclick=function(){rpNavToArticle(s.Filename);};
+                tag.onclick=function(){openSource(s.Filename);};
                 sd.appendChild(tag);
               });
               div.appendChild(sd);
@@ -902,7 +902,7 @@ function rpAppendMsg(role,text,sources){
       tag.className='rp-src-tag';
       tag.textContent=s.Filename+(s.StartLine>0?':'+s.StartLine:'');
       tag.title=s.Type+'：'+s.Name;
-      tag.onclick=function(){rpNavToArticle(s.Filename);};
+      tag.onclick=function(){openSource(s.Filename);};
       sd.appendChild(tag);
     });
     div.appendChild(sd);
