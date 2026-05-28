@@ -34,6 +34,13 @@ func (p *TreeSitterParser) Parse(filename, source string) (*FileResult, error) {
 	// Attempt real tree-sitter parsing; fall back to regex on failure or empty result.
 	result, err := extractFromTreeSitter(p.language, []byte(source), filename)
 	if err == nil && result != nil && (len(result.Classes) > 0 || len(result.Functions) > 0 || len(result.Imports) > 0) {
+		// Tree-sitter found structure but may have missed imports. If so,
+		// supplement with regex-parsed imports.
+		if len(result.Imports) == 0 && p.fallback != nil {
+			if fbResult, fbErr := p.fallback(filename, source); fbErr == nil && fbResult != nil {
+				result.Imports = fbResult.Imports
+			}
+		}
 		return result, nil
 	}
 	if p.fallback != nil {

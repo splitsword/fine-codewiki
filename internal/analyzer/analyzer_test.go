@@ -615,6 +615,94 @@ func TestParseJavaEmptyFile(t *testing.T) {
 	assert.Empty(t, result.Imports)
 }
 
+func TestParseGoGroupedImports(t *testing.T) {
+	src := `package main
+
+import (
+	"fmt"
+	"net/http"
+
+	"github.com/splitsword/fine-codewiki/internal/analyzer"
+	"github.com/splitsword/fine-codewiki/internal/grapher"
+)
+
+func main() {
+	fmt.Println("hello")
+}
+`
+	result, err := ParseGo("main.go", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Len(t, result.Imports, 4)
+	modules := make([]string, len(result.Imports))
+	for i, imp := range result.Imports {
+		modules[i] = imp.Module
+	}
+	assert.Contains(t, modules, "fmt")
+	assert.Contains(t, modules, "net/http")
+	assert.Contains(t, modules, "github.com/splitsword/fine-codewiki/internal/analyzer")
+	assert.Contains(t, modules, "github.com/splitsword/fine-codewiki/internal/grapher")
+
+	assert.Len(t, result.Functions, 1)
+	assert.Equal(t, "main", result.Functions[0].Name)
+}
+
+func TestParseGoAliasedImports(t *testing.T) {
+	src := `package main
+
+import (
+	ts "github.com/odvcencio/gotreesitter"
+	. "github.com/onsi/gomega"
+	_ "net/http/pprof"
+)
+
+func init() {}
+`
+	result, err := ParseGo("init.go", src)
+	require.NoError(t, err)
+	assert.Len(t, result.Imports, 3)
+	modules := make([]string, len(result.Imports))
+	for i, imp := range result.Imports {
+		modules[i] = imp.Module
+	}
+	assert.Contains(t, modules, "github.com/odvcencio/gotreesitter")
+	assert.Contains(t, modules, "github.com/onsi/gomega")
+	assert.Contains(t, modules, "net/http/pprof")
+}
+
+func TestParseFileGoGroupedImports(t *testing.T) {
+	src := `package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/splitsword/fine-codewiki/internal/analyzer"
+	ts "github.com/odvcencio/gotreesitter"
+)
+
+type App struct{}
+
+func NewApp(ctx context.Context) *App {
+	return &App{}
+}
+`
+	result, err := ParseFile("main.go", src)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	modules := make([]string, len(result.Imports))
+	for i, imp := range result.Imports {
+		modules[i] = imp.Module
+	}
+	assert.Contains(t, modules, "context")
+	assert.Contains(t, modules, "fmt")
+	assert.Contains(t, modules, "github.com/splitsword/fine-codewiki/internal/analyzer")
+	assert.Contains(t, modules, "github.com/odvcencio/gotreesitter")
+	assert.GreaterOrEqual(t, len(result.Imports), 4, "ParseFile should extract grouped Go imports")
+}
+
 func TestParseGoParams(t *testing.T) {
 	params := parseGoParams("name string, age int")
 	assert.Equal(t, []string{"name", "age"}, params)

@@ -152,6 +152,23 @@ func isImportNodeType(nodeType string) bool {
 func parseImportFromText(text, nodeType string) ImportInfo {
 	text = strings.TrimSpace(text)
 
+	// Go import_spec: bare quoted string like `"github.com/foo/bar"` or `alias "pkg"`
+	if nodeType == "import_spec" {
+		mod := extractQuotedString(text)
+		if mod != "" {
+			return ImportInfo{Module: mod}
+		}
+		return ImportInfo{}
+	}
+
+	// Go import_declaration: the whole `import ( ... )` block — extract individual
+	// specs from each line rather than only the first quoted string.
+	if nodeType == "import_declaration" {
+		// Return empty here; individual import_spec children will be visited
+		// separately by the tree walk.
+		return ImportInfo{}
+	}
+
 	// JS/TS: import/export ... from "module"
 	// Covers: import type { A } from "m", import { A } from "m",
 	//         import * as foo from "m", import foo from "m",

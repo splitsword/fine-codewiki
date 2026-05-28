@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-28 — @ fix(analyzer): 修复 Go 分组 import 解析失败导致依赖图 0 条边 (0294fcb)
+
 - 2026-05-28 — @ feat(docgen): 模块详情参考添加 LLM 生成的中文名称 + 修复项目概述误判回退 (31bb7f4)
 
 - 2026-05-28 — @ fix(grapher): 修复 Go 项目依赖图产生 0 条边的问题 (e0b089b)

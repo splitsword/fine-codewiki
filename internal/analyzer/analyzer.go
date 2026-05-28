@@ -430,9 +430,10 @@ func parseJSParams(paramsStr string) []string {
 // ---------- Go Parser ----------
 
 var (
-	goImportRegex = regexp.MustCompile(`^import\s+(?:\w+\s+)?"([^"]+)"`)
-	goFuncRegex   = regexp.MustCompile(`^func\s+(?:\(([^)]*)\)\s+)?(\w+)\s*\(([^)]*)\)(?:\s+([^{]+))?\s*\{`)
-	goStructRegex = regexp.MustCompile(`^type\s+(\w+)\s+struct\s*\{`)
+	goSingleImportRegex = regexp.MustCompile(`^import\s+(?:\w+\s+)?"([^"]+)"`)
+	goGroupedImportLine = regexp.MustCompile(`^\s*(?:[\w._]+\s+)?"([^"]+)"`)
+	goFuncRegex         = regexp.MustCompile(`^func\s+(?:\(([^)]*)\)\s+)?(\w+)\s*\(([^)]*)\)(?:\s+([^{]+))?\s*\{`)
+	goStructRegex       = regexp.MustCompile(`^type\s+(\w+)\s+struct\s*\{`)
 )
 
 // ParseGo parses a Go source file and extracts structural information.
@@ -440,14 +441,34 @@ func ParseGo(filename, source string) (*FileResult, error) {
 	result := &FileResult{Filename: filename}
 	lines := strings.Split(source, "\n")
 
+	inImportBlock := false
 	for i, line := range lines {
 		stripped := strings.TrimSpace(line)
 		if stripped == "" || strings.HasPrefix(stripped, "//") {
 			continue
 		}
 
-		// Import
-		if m := goImportRegex.FindStringSubmatch(stripped); m != nil {
+		// Grouped import block: import ( ... )
+		if strings.HasPrefix(stripped, "import (") || stripped == "import(" {
+			inImportBlock = true
+			continue
+		}
+		if inImportBlock {
+			if stripped == ")" {
+				inImportBlock = false
+				continue
+			}
+			if m := goGroupedImportLine.FindStringSubmatch(stripped); m != nil {
+				result.Imports = append(result.Imports, ImportInfo{
+					Module: m[1],
+					Name:   m[1],
+				})
+			}
+			continue
+		}
+
+		// Single-line import
+		if m := goSingleImportRegex.FindStringSubmatch(stripped); m != nil {
 			result.Imports = append(result.Imports, ImportInfo{
 				Module: m[1],
 				Name:   m[1],
