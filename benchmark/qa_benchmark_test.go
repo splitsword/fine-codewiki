@@ -145,7 +145,7 @@ func (p *qaProvider) Complete(_ context.Context, prompt string) (string, error) 
 	inQuestion := false
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "## Question" {
+		if line == "## Question" || line == "## 问题" {
 			inQuestion = true
 			continue
 		}
@@ -168,7 +168,7 @@ func (p *qaProvider) Complete(_ context.Context, prompt string) (string, error) 
 	inCode := false
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "### Context") {
+		if strings.HasPrefix(line, "### Context") || strings.HasPrefix(line, "### 上下文") {
 			// Format: ### Context N (filename - type)
 			start := strings.Index(line, "(")
 			end := strings.Index(line, " -")
@@ -296,6 +296,7 @@ func TestRAGAccuracy(t *testing.T) {
 	// 6. Run each case
 	engine := rag.NewEngine(provider, store)
 	engine.SetTopK(5)
+	engine.SetMinSimilarity(0.05)
 
 	var passed int
 	for _, tc := range bench.Cases {

@@ -250,5 +250,5 @@ Examples:
   %s ask "What does the auth module do?"
   %s ask --interactive
   %s config
-`, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe)
 }

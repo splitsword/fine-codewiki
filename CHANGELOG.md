@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-29 — fix(benchmark): 修复 RAG 基准测试失败 + main.go 格式参数缺失 (e064737)
+
 - 2026-05-29 — @ fix(release): 修复 CI Go 版本 + CLI help + 主页/README 文案 (32ee767)
 
 - 2026-05-29 — @ fix(docgen): 移除 render.go 开头的 UTF-8 BOM 字节 (fefc820)
