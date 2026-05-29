@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/splitsword/fine-codewiki/internal/cli"
 	"github.com/splitsword/fine-codewiki/internal/llm"
@@ -92,7 +93,7 @@ func runGenerate(args []string) {
 	fs := flag.NewFlagSet("generate", flag.ExitOnError)
 	sourceDir := fs.String("source", ".", "Source code directory to analyze")
 	outputDir := fs.String("output", "", "Output directory for wiki files (default: <source>/.codewiki/wiki)")
-	lang := fs.String("lang", "", "Language filter: python, javascript (empty = auto-detect)")
+	lang := fs.String("lang", "", "Language filter: python, javascript, typescript, go, java, rust, c, cpp (empty = auto-detect)")
 	name := fs.String("name", "", "Project name (default: directory name)")
 	maxFunctions := fs.Int("max-functions", -1, "Max functions for LLM semantic description: -1=auto (30%%), 0=skip, N=cap")
 	force := fs.Bool("force", false, "Force full regeneration, ignore checkpoints")
@@ -115,9 +116,9 @@ func runGenerate(args []string) {
 
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	dir := fs.String("dir", "", "Wiki directory to serve (default: ./.codewiki/wiki)")
+	dir := fs.String("dir", "", "Wiki directory to serve")
 	port := fs.Int("port", 8080, "HTTP server port")
-	source := fs.String("source", "", "Source directory for RAG Q&A (optional)")
+	source := fs.String("source", "", "Source directory for RAG Q&A (default: current dir)")
 	fs.Parse(args)
 
 	cfg := &cli.Config{
@@ -134,8 +135,8 @@ func runServe(args []string) {
 
 func runAsk(args []string) {
 	fs := flag.NewFlagSet("ask", flag.ExitOnError)
-	sourceDir := fs.String("source", ".", "Source code directory")
-	interactive := fs.Bool("interactive", false, "Enter interactive Q&A session")
+	sourceDir := fs.String("source", ".", "Source code directory for Q&A context")
+	interactive := fs.Bool("interactive", false, "Start interactive Q&A session (ask multiple questions)")
 	fs.Parse(args)
 
 	question := fs.Arg(0)
@@ -158,9 +159,9 @@ func runAsk(args []string) {
 
 func runBrowse(args []string) {
 	fs := flag.NewFlagSet("browse", flag.ExitOnError)
-	sourceDir := fs.String("source", ".", "Source code directory")
-	outputDir := fs.String("output", "", "Output directory for wiki files")
-	name := fs.String("name", "", "Project name")
+	sourceDir := fs.String("source", ".", "Source code directory to analyze")
+	outputDir := fs.String("output", "", "Output directory for wiki files (default: <source>/.codewiki/wiki)")
+	name := fs.String("name", "", "Project name (default: directory name)")
 	fs.Parse(args)
 
 	cfg := &cli.Config{
@@ -184,7 +185,7 @@ func runUpdate(args []string) {
 
 func runConfig(args []string) {
 	fs := flag.NewFlagSet("config", flag.ExitOnError)
-	path := fs.String("path", "", "Config file path (default: ~/.codewiki/config.yaml)")
+	path := fs.String("path", "", "Config file path (default: ~/.codewiki/config.yaml). Settings: LLM provider, model, API key, base URL")
 	fs.Parse(args)
 
 	cfg := &cli.Config{}
@@ -200,6 +201,8 @@ func runConfig(args []string) {
 
 func printUsage() {
 	exe := filepath.Base(os.Args[0])
+	// Strip .exe suffix on Windows so examples look consistent across platforms
+	exe = strings.TrimSuffix(exe, ".exe")
 	fmt.Printf(`fine-codewiki — turn any codebase into an interactive wiki
 
 Usage:
@@ -218,23 +221,34 @@ Commands:
 Generate flags:
   -source string   Source code directory (default ".")
   -output string   Output directory for wiki files
-  -lang string     Language filter: python, javascript
+  -lang string     Language filter: python, javascript, typescript, go, java, rust, c, cpp
+  -name string     Project name
+  -max-functions   Max functions for LLM semantic description: -1=auto, 0=skip, N=cap
+  -force           Force full regeneration, ignore checkpoints
+
+Browse flags:
+  -source string   Source code directory (default ".")
+  -output string   Output directory for wiki files
   -name string     Project name
 
 Serve flags:
   -dir string      Wiki directory to serve (default "./.codewiki/wiki")
   -port int        HTTP server port (default 8080)
+  -source string   Source directory for RAG Q&A (default: current dir)
 
 Ask flags:
   -source string   Source code directory (default ".")
-  -interactive     Enter interactive Q&A session
+  -interactive     Start interactive Q&A session
 
 Config flags:
   -path string     Config file path
 
 Examples:
-  %s generate -source ./my-project -name "My Project"
-  %s serve -port 3000
+  %s generate --source ./my-project --name "My Project" --lang go
+  %s browse
+  %s serve --port 3000
+  %s ask "What does the auth module do?"
+  %s ask --interactive
   %s config
-`, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe)
 }

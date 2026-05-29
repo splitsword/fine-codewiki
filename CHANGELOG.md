@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-29 — @ fix(release): 修复 CI Go 版本 + CLI help + 主页/README 文案 (32ee767)
+
 - 2026-05-29 — @ fix(docgen): 移除 render.go 开头的 UTF-8 BOM 字节 (fefc820)
 
 - 2026-05-29 — @ docs: M3 完成后即发布 v1.0 Beta，M4 延后至 V2 (54a62de)

@@ -106,7 +106,15 @@ CodeWiki 将自动：
 
 打开浏览器访问 `http://localhost:8080`，即可浏览生成的 Wiki、查看交互式图表、进行自然语言问答。
 
-### 4. 终端问答
+### 4. 一键浏览（生成 + 自动打开浏览器）
+
+```bash
+./codewiki browse
+```
+
+最简上手方式：自动完成 generate + serve 的全流程，无需手动切换命令。
+
+### 5. 终端问答
 
 ```bash
 ./codewiki ask
@@ -226,7 +234,7 @@ go tool cover -func=coverage.out
 
 - **M1**（已完成）：核心可行原型 —— AST 解析、文档生成、架构图/类图、本地 Web 预览
 - **M2**（已完成）：问答与图表增强 —— RAG 问答、时序图、本地 LLM 适配、增量索引、多轮对话
-- **M3**（进行中，完成后发布 v1.0 Beta）：
+- **M3**（已完成，v1.0 Beta 已发布）：
   - ✅ 主题导向文档（What it Does / Architecture / Project Structure / Key Concepts / Learning Path）
   - ✅ LLM 叙事化改造 + 设计决策显性化 + 学习路径引导
   - ✅ 架构说明多图叙事化（功能架构图 + 技术架构图双图穿插）
