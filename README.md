@@ -226,7 +226,7 @@ go tool cover -func=coverage.out
 
 - **M1**（已完成）：核心可行原型 —— AST 解析、文档生成、架构图/类图、本地 Web 预览
 - **M2**（已完成）：问答与图表增强 —— RAG 问答、时序图、本地 LLM 适配、增量索引、多轮对话
-- **M3**（基本完成）：
+- **M3**（进行中，完成后发布 v1.0 Beta）：
   - ✅ 主题导向文档（What it Does / Architecture / Project Structure / Key Concepts / Learning Path）
   - ✅ LLM 叙事化改造 + 设计决策显性化 + 学习路径引导
   - ✅ 架构说明多图叙事化（功能架构图 + 技术架构图双图穿插）
@@ -242,7 +242,7 @@ go tool cover -func=coverage.out
   - ✅ GitHub Releases 自动发布 + `codewiki update` 自更新
   - ✅ PDF 导出（纯 Go 零依赖，CJK 中文字体自动检测）
   - ❌ Homebrew / npm / winget（待后续补全）
-- **M4**（规划中）：生态扩展 —— Rust / C++ 支持、插件系统、VS Code 扩展、安装分发、Beta 公开发布
+- **V2 规划**：生态扩展 —— Rust / C++ 支持、VS Code 扩展、CI 集成（GitHub Action）、图结构自然语言查询
 
 详见 [prd.md](prd.md)。
 
