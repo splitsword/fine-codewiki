@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-29 — @ style(homepage): 添加浏览器标签页 favicon (022715c)
+
 - 2026-05-29 — @ style(homepage): 标题改为两行，副标题小字号紫色显示 (6f89f8f)
 
 - 2026-05-29 — @ style(homepage): 三步上手改为横排三列，固定高度居左 (549559d)
