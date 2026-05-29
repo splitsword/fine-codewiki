@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-29 — @ fix(docgen): 移除 render.go 开头的 UTF-8 BOM 字节 (fefc820)
+
 - 2026-05-29 — @ docs: M3 完成后即发布 v1.0 Beta，M4 延后至 V2 (54a62de)
 
 - 2026-05-29 — @ style(homepage): 添加浏览器标签页 favicon (022715c)
