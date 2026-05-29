@@ -1955,8 +1955,11 @@ func RunUpdate(cfg *Config) error {
 		if err := os.WriteFile(swapScript, []byte(script), 0644); err != nil {
 			return fmt.Errorf("创建替换脚本失败 (%w)", err)
 		}
-		fmt.Printf("更新已下载到 %s.new\n", execPath)
-		fmt.Printf("请运行以下命令完成更新：\n  start %s\n", swapScript)
+		if err := exec.Command("cmd", "/c", "start", "/min", swapScript).Start(); err != nil {
+			return fmt.Errorf("启动替换脚本失败 (%w)", err)
+		}
+		fmt.Println("更新文件已准备就绪，当前进程退出后将自动完成替换。")
+		fmt.Println("请重新运行 codewiki 以使用新版本。")
 	} else {
 		oldPath := execPath + ".old"
 		os.Remove(oldPath)

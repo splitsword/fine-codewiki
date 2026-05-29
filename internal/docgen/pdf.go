@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/signintech/gopdf"
@@ -56,7 +57,11 @@ func GeneratePDF(wiki *Wiki) ([]byte, error) {
 		content string
 	}{
 		{"项目概述", wiki.Overview},
+		{"项目能做什么", wiki.WhatItDoes},
 		{"架构说明", wiki.Architecture},
+		{"项目结构", wiki.ProjectStructure},
+		{"核心概念", wiki.KeyConcepts},
+		{"学习路径", wiki.LearningPath},
 		{"API 参考", wiki.APIReference},
 	}
 
@@ -65,6 +70,22 @@ func GeneratePDF(wiki *Wiki) ([]byte, error) {
 	}
 
 	renderDiagramAppendix(pdf, wiki, marginX, marginY, width)
+
+	// Module docs appendix
+	if len(wiki.ModuleDocs) > 0 {
+		modules := make([]string, 0, len(wiki.ModuleDocs))
+		for m := range wiki.ModuleDocs {
+			modules = append(modules, m)
+		}
+		sort.Strings(modules)
+		for _, module := range modules {
+			title := module
+			if cn, ok := wiki.ModuleChineseNames[module]; ok && cn != "" {
+				title = cn + " (" + module + ")"
+			}
+			renderMarkdownSection(pdf, title, wiki.ModuleDocs[module], marginX, marginY, width)
+		}
+	}
 
 	var buf bytes.Buffer
 	if err := pdf.Write(&buf); err != nil {

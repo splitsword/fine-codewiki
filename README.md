@@ -232,13 +232,16 @@ go tool cover -func=coverage.out
   - ✅ 架构说明多图叙事化（功能架构图 + 技术架构图双图穿插）
   - ✅ 静态 HTML 导出（三栏布局、文件树、离线可浏览）
   - ✅ Web UI 全面升级（暗色主题、阅读进度、Ctrl+K 搜索、代码复制、图表全屏）
+  - ✅ 右侧面板整合搜索与 AI 问答（serve 模式双 Tab 面板，替代旧弹窗和独立 /ask 页面）
+  - ✅ 流式 AI 回答（实时流式输出，来源可点击弹出源码窗口）
   - ✅ 来源溯源弹窗（点击查看源码，语法高亮）
   - ✅ 流式优先 LLM + 3 级渐进降级 + Thinking 模式适配
   - ✅ 4 阶段异步并行生成管线
   - ✅ 图表质量升级（节点角色标注、颜色图例、边类型区分）
   - 🟡 性能优化（部分完成）
-  - ❌ 安装分发（Homebrew / npm / winget）
-  - ❌ PDF 导出
+  - ✅ GitHub Releases 自动发布 + `codewiki update` 自更新
+  - ✅ PDF 导出（纯 Go 零依赖，CJK 中文字体自动检测）
+  - ❌ Homebrew / npm / winget（待后续补全）
 - **M4**（规划中）：生态扩展 —— Rust / C++ 支持、插件系统、VS Code 扩展、安装分发、Beta 公开发布
 
 详见 [prd.md](prd.md)。

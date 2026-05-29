@@ -279,6 +279,76 @@
     padding: 40px 32px; text-align: center; color: var(--text3); font-size: 0.86rem;
   }
 
+  /* ===== INSTALL ===== */
+  .install-grid {
+    display: flex; flex-direction: column; gap: 16px;
+    max-width: 960px;
+  }
+  .install-card {
+    background: #1e1e2e;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.28);
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .install-card:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(0,0,0,0.36); }
+  .terminal-header {
+    background: #2a2a3c;
+    padding: 6px 12px;
+    display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .terminal-header .dots { display: flex; gap: 5px; }
+  .terminal-header .dots span {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+  .terminal-header .dots .r { background: #ff5f56; }
+  .terminal-header .dots .y { background: #ffbd2e; }
+  .terminal-header .dots .g { background: #27c93f; }
+  .terminal-header .title {
+    color: #a0a0b0; font-size: 0.75rem; font-weight: 500;
+  }
+  .terminal-body {
+    padding: 10px 14px 10px;
+    font-family: 'SF Mono','Fira Code','Consolas',monospace;
+    font-size: 0.82rem; line-height: 1.45;
+  }
+  .terminal-body .cmd {
+    color: #c8c8d0; white-space: nowrap; overflow-x: auto;
+  }
+  .terminal-body .cmd::-webkit-scrollbar { height: 3px; }
+  .terminal-body .cmd::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+  .terminal-body .cmd::before {
+    content: '$ '; color: #27c93f; font-weight: 600;
+  }
+  .terminal-body .hint {
+    color: #7878a0; font-size: 0.72rem; margin-top: 6px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  }
+  .terminal-body .param {
+    color: #9898b0; font-size: 0.76rem;
+    padding-left: 16px; margin-top: 1px; line-height: 1.6;
+    font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  }
+  .terminal-body .param b { color: #c8c8d0; font-weight: 600; }
+
+  /* ===== STEP ===== */
+  .step-item { margin-bottom: 28px; }
+  .step-item:last-child { margin-bottom: 0; }
+  .step-header {
+    display: flex; align-items: flex-start; gap: 12px;
+    margin-bottom: 10px;
+  }
+  .step-header .step-num {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--gradient); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 0.85rem; flex-shrink: 0;
+  }
+  .step-header h4 { font-size: 1.05rem; font-weight: 700; margin-bottom: 2px; color: var(--text); }
+  .step-header p { color: var(--text3); font-size: 0.86rem; line-height: 1.55; }
+
   /* ===== RESPONSIVE ===== */
   @media (max-width: 900px) {
     .nav-links { display: none; }
@@ -308,6 +378,7 @@
     </a>
     <ul class="nav-links">
       <li><a href="#features">核心能力</a></li>
+      <li><a href="#install">快速安装</a></li>
       <li><a href="#showcase">产品亮点</a></li>
       <li><a href="#compare">对比</a></li>
       <li><a href="#tech">技术栈</a></li>
@@ -472,6 +543,48 @@
   </div>
 </section>
 
+<!-- ===== INSTALL ===== -->
+<section class="section" id="install">
+  <div class="section-inner">
+    <div class="section-label">快速安装</div>
+    <h2 class="section-title">一条命令，即刻拥有</h2>
+    <p class="section-desc">单二进制零依赖，下载即用。支持 macOS、Linux 和 Windows。</p>
+
+    <div class="install-grid">
+      <div class="install-card">
+        <div class="terminal-header">
+          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <span class="title">macOS &amp; Linux</span>
+        </div>
+        <div class="terminal-body">
+          <div class="cmd">curl -fsSL https://raw.githubusercontent.com/splitsword/fine-codewiki/main/scripts/install.sh | sh</div>
+          <p class="hint">自动检测系统架构，安装到 PATH 目录</p>
+        </div>
+      </div>
+      <div class="install-card">
+        <div class="terminal-header">
+          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <span class="title">Windows</span>
+        </div>
+        <div class="terminal-body">
+          <div class="cmd">irm https://raw.githubusercontent.com/splitsword/fine-codewiki/main/scripts/install.ps1 | iex</div>
+          <p class="hint">PowerShell 一键安装，自动配置环境</p>
+        </div>
+      </div>
+      <div class="install-card">
+        <div class="terminal-header">
+          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <span class="title">Go</span>
+        </div>
+        <div class="terminal-body">
+          <div class="cmd">go install github.com/splitsword/fine-codewiki/cmd/codewiki@latest</div>
+          <p class="hint">已有 Go 环境时最简洁的方式</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ===== CLI + 浏览器使用指南 ===== -->
 <section class="section" id="how" style="background: var(--bg2);">
   <div class="section-inner">
@@ -479,39 +592,71 @@
     <h2 class="section-title">三步上手：CLI 生成 + 浏览器浏览</h2>
     <p class="section-desc">纯本地运行，零配置，单二进制。所有操作都在你自己的机器上完成。</p>
 
-    <div style="display:flex; gap:24px; align-items:stretch;">
-      <div style="flex:1;background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:32px 28px;text-align:center;">
-        <div style="width:40px;height:40px;border-radius:50%;background:var(--gradient);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:1.05rem;">1</div>
-        <h4 style="font-size:1.08rem;font-weight:700;margin-bottom:6px;">初始化配置</h4>
-        <p style="color:var(--text3);font-size:0.9rem;margin-bottom:14px;">选择远程 API（OpenAI / Claude / Gemini / 智谱）或本地 Ollama 模型</p>
-        <code style="display:inline-block;background:rgba(99,102,241,0.07);color:var(--accent);padding:6px 16px;border-radius:6px;font-size:0.88rem;font-family:'SF Mono','Fira Code','Consolas',monospace;">codewiki config</code>
+    <div class="step-item">
+      <div class="step-header">
+        <div class="step-num">1</div>
+        <div>
+          <h4>初始化配置</h4>
+          <p>选择远程 API（OpenAI / Claude / Gemini / 智谱）或本地 Ollama 模型</p>
+        </div>
       </div>
-      <div style="display:flex;align-items:center;justify-content:center;width:48px;flex-shrink:0;color:var(--accent3);font-size:1.4rem;">→</div>
-      <div style="flex:1;background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:32px 28px;text-align:center;">
-        <div style="width:40px;height:40px;border-radius:50%;background:var(--gradient);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:1.05rem;">2</div>
-        <h4 style="font-size:1.08rem;font-weight:700;margin-bottom:6px;">生成 Wiki</h4>
-        <p style="color:var(--text3);font-size:0.9rem;margin-bottom:14px;">AST 解析 → 依赖图构建 → LLM 叙事生成 → 图表输出，全自动</p>
-        <code style="display:inline-block;background:rgba(99,102,241,0.07);color:var(--accent);padding:6px 16px;border-radius:6px;font-size:0.88rem;font-family:'SF Mono','Fira Code','Consolas',monospace;">codewiki generate</code>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:center;width:48px;flex-shrink:0;color:var(--accent3);font-size:1.4rem;">→</div>
-      <div style="flex:1;background:var(--card-bg);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius-lg);padding:32px 28px;text-align:center;">
-        <div style="width:40px;height:40px;border-radius:50%;background:var(--gradient);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:1.05rem;">3</div>
-        <h4 style="font-size:1.08rem;font-weight:700;margin-bottom:6px;">浏览器浏览 &amp; 提问</h4>
-        <p style="color:var(--text3);font-size:0.9rem;margin-bottom:14px;">本地 Web 服务，阅读文档、查看图表、AI 问答一站式</p>
-        <code style="display:inline-block;background:rgba(99,102,241,0.07);color:var(--accent);padding:6px 16px;border-radius:6px;font-size:0.88rem;font-family:'SF Mono','Fira Code','Consolas',monospace;">codewiki serve</code>
+      <div class="install-card">
+        <div class="terminal-header">
+          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <span class="title">config</span>
+        </div>
+        <div class="terminal-body">
+          <div class="cmd">codewiki config</div>
+          <p class="hint">交互式向导，引导完成 LLM 提供商、模型、API Key 等配置</p>
+        </div>
       </div>
     </div>
 
-    <p style="text-align:center; color: var(--text3); margin-top: 20px; font-size: 0.92rem;">
-      也可在终端直接提问：<code style="background:rgba(99,102,241,0.07);color:var(--accent);padding:3px 10px;border-radius:4px;font-size:0.88rem;">codewiki ask "这个项目的认证流程是怎样的？"</code>
-    </p>
+    <div class="step-item">
+      <div class="step-header">
+        <div class="step-num">2</div>
+        <div>
+          <h4>生成 Wiki</h4>
+          <p>AST 解析 → 依赖图构建 → LLM 叙事生成 → 图表输出，全自动流水线</p>
+        </div>
+      </div>
+      <div class="install-card">
+        <div class="terminal-header">
+          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <span class="title">generate</span>
+        </div>
+        <div class="terminal-body">
+          <div class="cmd">codewiki generate --source . --lang zh</div>
+          <div class="param"><b>--source</b> &lt;dir&gt;    源码目录（默认当前目录）</div>
+          <div class="param"><b>--lang</b> zh|en      文档语言</div>
+          <div class="param"><b>--force</b>           强制重新解析（忽略缓存）</div>
+          <div class="param"><b>--max-functions</b>   函数描述上限</div>
+          <div class="param"><b>--output</b> &lt;dir&gt;   输出目录</div>
+        </div>
+      </div>
+    </div>
 
-    <p style="text-align:center; color: var(--text3); margin-top: 10px; font-size: 0.86rem;">
-      常用参数：<code style="background:rgba(99,102,241,0.04);color:var(--text2);padding:2px 6px;border-radius:3px;font-size:0.84rem;">--force</code> 强制重新解析 &nbsp;|&nbsp;
-      <code style="background:rgba(99,102,241,0.04);color:var(--text2);padding:2px 6px;border-radius:3px;font-size:0.84rem;">--lang zh</code> 指定中文输出 &nbsp;|&nbsp;
-      <code style="background:rgba(99,102,241,0.04);color:var(--text2);padding:2px 6px;border-radius:3px;font-size:0.84rem;">--port 9090</code> 指定端口 &nbsp;|&nbsp;
-      <code style="background:rgba(99,102,241,0.04);color:var(--text2);padding:2px 6px;border-radius:3px;font-size:0.84rem;">--max-functions N</code> 函数描述上限
-    </p>
+    <div class="step-item">
+      <div class="step-header">
+        <div class="step-num">3</div>
+        <div>
+          <h4>浏览 &amp; 问答</h4>
+          <p>本地 Web 服务阅读文档，或在终端用自然语言直接提问</p>
+        </div>
+      </div>
+      <div class="install-card">
+        <div class="terminal-header">
+          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <span class="title">serve &amp; ask</span>
+        </div>
+        <div class="terminal-body">
+          <div class="cmd">codewiki serve --port 8080</div>
+          <div class="cmd">codewiki ask "认证流程涉及哪些模块？"</div>
+          <p class="hint">serve 启动本地 Web 预览；ask 支持直接提问或 --interactive 交互会话</p>
+        </div>
+      </div>
+    </div>
+
   </div>
 </section>
 
