@@ -6,183 +6,50 @@
 
 ## [Unreleased]
 
-- 2026-05-29 — fix(benchmark): 修复 RAG 基准测试失败 + main.go 格式参数缺失 (e064737)
-
-- 2026-05-29 — @ fix(release): 修复 CI Go 版本 + CLI help + 主页/README 文案 (32ee767)
-
-- 2026-05-29 — @ fix(docgen): 移除 render.go 开头的 UTF-8 BOM 字节 (fefc820)
-
-- 2026-05-29 — @ docs: M3 完成后即发布 v1.0 Beta，M4 延后至 V2 (54a62de)
-
-- 2026-05-29 — @ style(homepage): 添加浏览器标签页 favicon (022715c)
-
-- 2026-05-29 — @ style(homepage): 标题改为两行，副标题小字号紫色显示 (6f89f8f)
-
-- 2026-05-29 — @ style(homepage): 三步上手改为横排三列，固定高度居左 (549559d)
-
-- 2026-05-29 — @ feat(M3): 完成安装分发与PDF导出，主页新增安装指南与三步上手 (8bd850e)
-
-- 2026-05-29 — @ style(homepage): 截图增加浮出阴影效果 (d81c110)
-
-- 2026-05-29 — @ feat(homepage): 新增产品官网主页 (631af43)
-
-- 2026-05-28 — @ fix(analyzer): 修复 Go 分组 import 解析失败导致依赖图 0 条边 (0294fcb)
-
-- 2026-05-28 — @ feat(docgen): 模块详情参考添加 LLM 生成的中文名称 + 修复项目概述误判回退 (31bb7f4)
-
-- 2026-05-28 — @ fix(grapher): 修复 Go 项目依赖图产生 0 条边的问题 (e0b089b)
-
-- 2026-05-28 — fix(docgen): 修复来源标签中 LLM 输出 Markdown 链接导致路径乱码 (942dd0b)
-
-- 2026-05-28 — fix(serve): 修复来源弹窗需双击关闭 + 缩写路径 404 两个问题 (472e7a4)
-
-- 2026-05-28 — fix(serve): 修复 AI 问答来源链接点击无效——openSource 作用域与注入目标双重错误 (81abed7)
-
-- 2026-05-28 — fix(serve): onclick 中显式使用 window.openSource 避免作用域问题 (2526180)
-
-- 2026-05-28 — fix(serve): 修复预生成 index.html 中来源链接无法弹出源码窗口 (07f4ee1)
-
-- 2026-05-28 — fix(serve): 修复来源链接点击无反应——openSource 未暴露到全局作用域 (14cd0cd)
-
-- 2026-05-28 — fix(serve): AI 回答来源链接点击弹出源码窗口 (ecde3d8)
-
-- 2026-05-28 — fix(serve): 实现流式 AI 回答 + 修复来源链接不可点击 (df36d70)
-
-- 2026-05-28 — feat(serve): 右侧面板整合搜索与 AI 问答，替代旧搜索弹窗和独立 /ask 页面 (6ba578c)
-
-- 2026-05-19 — @ docs(readme): 同步 v0.10 实现覆盖——核心特性/项目结构/路线图全面更新 (3b5db90)
-
-- 2026-05-19 — @ fix(docgen): 修复核心能力表对应模块列中出现字面量 `<br>` 的问题 (e7cf8d6)
-
-- 2026-05-19 — @ fix(docgen): 修复来源弹窗弹出失败——正则语法错误导致JS脚本整体失效 (1064239)
-
-- 2026-05-19 — @ fix(docgen): 修复来源弹窗无效 + 源码块单色两个回归问题 (f029d7d)
-
-- 2026-05-19 — @ fix(docgen): 修复来源引用 hover 串扰 + 点击加载错误文件 (50a3693)
-
-- 2026-05-19 — @ fix(docgen,cli): 来源引用弹窗全面修复 — 高亮着色 + 可点击样式 + 语言感知 (cceba59)
-
-- 2026-05-17 — @ fix(docgen): 核心模块源码缺失修复 — 两处路径 Bug + 格式化 (41117f9)
-
-- 2026-05-17 — @ feat(docgen): 架构说明多图叙事化 + KeyConcepts 合并入架构叙事 (9c3074a)
-
-- 2026-05-17 — @ docs(prd): v0.10 架构说明多图叙事化 + KeyConcepts 并入设计 (5967fea)
-
-- 2026-05-17 — @ fix(docgen): 修复项目结构标题缺失 + WhatItDoes 标题重复 (17aa08e)
-
-- 2026-05-17 — @ chore(docgen): 移除 Wiki.ProjectStructureNarrative 死字段 (dc95b4e)
-
-- 2026-05-17 — @ feat(docgen, cli): 项目结构页 LLM 叙事化重构 + 来源弹窗 (93a5501)
-
-- 2026-05-17 — @ feat(prd): 项目结构页 LLM 叙事化重构设计文档 (e41c115)
-
-- 2026-05-16 — feat(diagram, rag): 图表质量全面升级 + RAG 检索增强 (88eb127)
-
-- 2026-05-15 — feat(docgen, rag, chunker): RAG 问答系统改造 + 生成管线异步并行化 (57b9d5e)
-
-- 2026-05-15 — feat(docgen): 架构说明叙事化重构 — 对标 Zread 从数据展示转向叙事构建 (468f757)
-
-- 2026-05-15 — ﻿feat(llm, docgen): LLM 生成可靠性工程 — P0/P1 三合一修复 + 4项 Bug 修复 (4bbc4e5)
-
-- 2026-05-15 — @ feat(llm, docgen): LLM 生成可靠性工程 — P0/P1 三合一修复 + 4项 Bug 修复 (3fc72ce)
-
-- 2026-05-12 — feat(docgen, cli): Web UI 全面升级 — 14项交互特性 + Zread 体验对标 (27cac31)
-
-- 2026-05-12 — @ feat(docgen, cli): Web UI 全面升级 — 14项交互特性 + Zread 体验对标 (4183ef0)
-
-- 2026-05-10 — feat(docgen): 图表跟随主题文章内嵌，移除独立 .mmd 文件 (241bb2f)
-
-- 2026-05-10 — fix(cache): 深拷贝 FileResult 防止缓存腐败，升级缓存版本 (faf5dbb)
-
-- 2026-05-10 — feat(sequencer): 诊断输出增加 sourceDir、path 和 resolved 路径 (8bd29b5)
-
-- 2026-05-10 — fix(cli): 缓存中的相对路径 Filename 导致 BuildCallGraph 读取文件失败 (10a853f)
-
-- 2026-05-10 — feat(sequencer): 为 BuildCallGraph 添加逐文件诊断日志 (f3f3da0)
-
-- 2026-05-10 — feat(cli, sequencer): --force 强制重新解析 AST，添加调用链诊断日志 (4d75120)
-
-- 2026-05-10 — 修复 BuildCallGraph 返回 0 调用的问题 (476b1a5)
-
-- 2026-05-10 — feat(docgen, cli): 完成第三批 Zread 体验对齐 (8297287)
-
-- 2026-05-10 — feat(cli, docgen, diagram): 完成第一批与第二批 PRD 差距修复 (6c1040c)
-
-- 2026-05-08 — feat(analyzer): tree-sitter grammar 捆绑（`gotreesitter/grammars`），tags query 提取 class/function，AST walk 提取 import，regex 兜底回退
-- 2026-05-08 — feat(docgen): LLM 幻觉检测，检查反引号/加粗标识符是否真实存在于代码库，阈值 ≥2 处或 >30% 时回退到静态描述
-- 2026-05-08 — feat(llm): Ollama 连接拒绝时返回友好提示，引导用户检查服务状态
-- 2026-05-08 — feat(llm): OpenAI JSON 解析失败时返回包含原始响应的错误信息
-- 2026-05-08 — feat(analyzer): Rust / C++ AST 正则解析支持（struct、trait、impl、class、#include、方法等）
-- 2026-05-08 — fix(docgen): 修复 `transform_` 前缀动词推断时截断错误（`name[11:]` 修正为 `name[10:]`）
-- 2026-05-08 — test(docgen): 新增 `languagePromptHint`、`selectTopFunctions`、`buildFunctionDescriptionPrompt`、`parseFunctionDescriptions` 单元测试
-- 2026-05-08 — test(docgen): 补充 35+ 动词模式覆盖（`__str__`、`register`、`logout`、`encode_` 等），覆盖率从 73.6% 提升至 83.6%
-- 2026-05-08 — docs(PRD_COVERAGE): 修复 Prompt 快照回归、mmdc 语法校验、增量索引、覆盖率基准等状态不一致
-- 2026-05-08 — feat(docgen): 按语言定制 LLM prompt 模板（Python/Go/JS/Java/Rust/C++）
-- 2026-05-08 — feat(docgen): LLM batch prompt 为前 5 个关键函数生成语义描述并注入 API Reference
-- 2026-05-08 — feat(docgen): 空函数/抽象函数自动降级描述（"占位函数" / "抽象方法"）
-- 2026-05-08 — feat(diagram): 为依赖图添加基础静态 `%%` 语义注释
-- 2026-05-08 — fix(docgen): architecture LLM 增强添加 `isChecklistLike` 检测，避免清单化输出
-- 2026-05-08 — docs: 建立覆盖率基准文件 `coverage-baseline.md`
-- 2026-05-08 — docs(cli): 补全 `--help` 中缺失的 Ask flags
-- 2026-05-08 — feat(docgen): 实现 Wiki Markdown 合辑导出 (f31cf8b)
-
-- 2026-05-08 — docs(PRD_COVERAGE): 更新 M3-3.1 和 M3-3.3 静态层完成状态 (86639cd)
-
-- 2026-05-08 — feat(sequencer): 为时序图添加调用链路场景描述 (d3d370f)
-
-- 2026-05-08 — feat(docgen): 添加函数级静态语义摘要 (ef1c09a)
-
-- 2026-05-08 — docs: 将 CHANGELOG.md 提交历史描述翻译为简体中文 (f057ea5)
-
-- 2026-05-08 — docs(PRD_COVERAGE): 更新 M3 已完成项状态 (6e64421)
-
-- 2026-05-08 — feat(diagram): 为 Mermaid DSL 输出添加语义注释 (fe93808)
-
-- 2026-05-08 — feat(benchmark): 添加性能基准测试套件 (1ce3c47)
-
-- 2026-05-08 — feat(docgen): 在架构 Markdown 中添加模块角色列 (a975a54)
-
-- 2026-05-08 — feat(grapher): 基于 PageRank 实现模块角色推断 (f4ff10b)
-
-- 2026-05-08 — 更新 PRD_COVERAGE.md：添加 M3 成功标准、测试计划和工程基建项 (e246c7c)
-
-- 2026-05-08 — docs(prd): 根据 M1-M2 审计结果扩展 M3 工程基建内容 (4e000aa)
-
-- 2026-05-08 — docs: 添加 PRD 覆盖追踪文档 (84c9df8)
-
-- 2026-05-08 — chore(docgen): LLM 请求超时时打印超时提示 (f197e7d)
-
-- 2026-05-08 — feat(docgen): 在 LLM 提示词中优先注入 README 和核心模块 (f1730d0)
-
-- 2026-05-08 — fix(docgen): 截断提示词模块列表以避免 API 超时 (3bd8719)
-
-- 2026-05-08 — fix(docgen): 添加 LLM 错误日志以诊断增强失败 (9939cc0)
-
-- 2026-05-07 — fix(docgen): 在自动描述中跳过无意义的社区分组 (14f817e)
-
-- 2026-05-07 — fix(docgen): 恢复 overview.md 中的项目描述 (623ab2a)
-
-- 2026-05-07 — docs(prd): 更新 M2 完成状态及 M3 文档深度增强 (246b581)
-
-- 2026-05-07 — feat(llm): 将配置拆分为生成模型和向量模型 (80d5511)
-
-- 2026-05-07 — feat: 将所有 Wiki 输出和 CLI 本地化为简体中文 (4485ff0)
-
-- 2026-05-07 — docs: 更新变更日志，补充时序图修复 (d9379fc)
-
-- 2026-05-07 — fix(sequencer): 修复类作用域重置、正则交叉污染和自环源检测导致的时序图为空问题 (98177ea)
-
-- 2026-05-07 — chore: 添加 post-commit 钩子自动更新文档 (02ab102)
-
-### 修复
-- **时序图空输出修复**：修复 `sequencer` 模块中导致时序图为空的三个交互 bug
-  - Python 空行错误重置类作用域，导致方法名丢失类前缀
-  - 跨语言正则污染（Java 正则匹配 Python 代码）产生虚假函数定义
-  - 自循环边（如 `main()` 模块级调用）破坏入度计算，导致无法找到起始节点
-  - 新增 `python-basic` 集成测试，确保端到端序列图生成正常
-
-### 文档
-- 新增 README.md 与 CHANGELOG.md
+- 2026-05-29 — docs(changelog): 插入 v1.0-beta 发布章节，清空 Unreleased (986cd18)
+
+---
+
+## [v1.0-beta] — 2026-05-29
+
+### M3 完成与 v1.0 Beta 发布
+
+**主题**：从"结构百科"转向"学习百科"——主题导向文档、设计决策显性化、学习路径引导、导出功能、安装分发。
+
+#### 新增
+- **主题导向叙事文档**：生成 5 篇主题文章 —— 项目概述 / 能做什么 / 架构说明 / 核心概念 / 学习路径，按"概念→架构→实现"组织，替代冷冰冰的模块清单
+- **架构说明多图叙事化**：功能架构图 + 技术架构图双图穿插叙事，节点标注模块角色（Controller / Service / Repository 等），颜色图例与边类型区分
+- **静态 HTML 导出**：完整离线 Wiki 三栏布局（导航 + 内容 + 文件树），支持暗色主题、Ctrl+K 搜索、代码复制、图表全屏、滚动导航高亮
+- **流式 AI 问答**：`serve` 模式右侧面板整合搜索与 AI 问答，实时流式输出，来源可点击弹出暗色源码窗口（语法高亮）
+- **PDF 导出**：纯 Go 零依赖实现（`signintech/gopdf`），自动检测系统 CJK 字体，含封面、Markdown 渲染、图表附录、模块文档附录
+- **产品官网主页**：独立 `homepage/index.html`，含安装指南、三步上手、功能对比、技术栈展示
+- **`codewiki update` 自更新**：从 GitHub Releases 自动检测并下载新版本，Windows 下后台自动替换二进制
+- **GitHub Releases 自动发布**：`.github/workflows/release.yml` 多平台构建（linux/darwin/windows × amd64/arm64）
+- **4 阶段异步并行生成管线**：LLM 调用全并行 + 依赖型并行 + 主题级并行，10 万行代码生成耗时 2–5 分钟
+- **流式优先 LLM + 3 级渐进降级**：Thinking/Reasoning 模式自动适配，超时/限流时自动降为非流式并重试
+- **图表质量升级**：架构图节点角色标注、颜色图例、循环依赖虚线标注；类图支持多继承与空类；时序图添加场景描述
+- **增量缓存机制**：基于文件 `mtime + size` 的增量向量索引与 AST 解析缓存，避免重复计算
+- **模块角色推断**：基于 PageRank 自动推断模块在架构中的角色（Controller、Service、Repository 等）
+- **RAG 双路检索**：文档 chunks 优先 + 代码 chunks 补充，确保 LLM 上下文既有百科文章又有精确源码
+- **性能基准测试套件**：`benchmark/` 目录含 100K 行端到端性能测试与 RAG 问答准确率评测
+
+#### 改进
+- **Web UI 全面升级**：磨砂玻璃态设计、阅读进度 / 预估时长 / 难度徽章、来源溯源弹窗、图表全屏查看、模块中文名称智能生成
+- **LLM 生成可靠性**：幻觉检测（反引号/加粗标识符真实性校验）、按语言定制 prompt 模板、空函数自动降级描述、batch 语义描述生成
+- **CLI 体验优化**：`browse` 命令一键生成并打开浏览器，`config` 交互式向导，`--help` 全面补全
+- **源码溯源**：AI 回答每段标注来源文件，点击弹出暗色代码窗口，支持预生成静态 HTML 中的来源弹窗
+
+#### 修复
+- RAG 基准测试 mock LLM 适配中文 prompt 标题（`## 问题` / `### 上下文`）
+- 来源弹窗弹出失败（正则语法错误导致 JS 脚本整体失效）
+- 来源引用 hover 串扰 + 点击加载错误文件
+- 核心能力表对应模块列中出现字面量 `<br>`
+- 来源标签中 LLM 输出 Markdown 链接导致路径乱码
+- 来源弹窗需双击关闭 + 缩写路径 404
+- AI 问答来源链接点击无效（`openSource` 作用域与注入目标双重错误）
+- Go 分组 import 解析失败导致依赖图 0 条边
+- `render.go` 开头的 UTF-8 BOM 字节导致 `go test -cover` 编译失败
+- CI Go 版本矩阵与 `go.mod` 不一致（1.23/1.24 → 1.26）
 
 ---
 
