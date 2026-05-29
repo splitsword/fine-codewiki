@@ -334,20 +334,25 @@
   .terminal-body .param b { color: #c8c8d0; font-weight: 600; }
 
   /* ===== STEP ===== */
-  .step-item { margin-bottom: 28px; }
-  .step-item:last-child { margin-bottom: 0; }
+  .steps-row {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+    max-width: 1080px;
+  }
+  .step-item { margin-bottom: 0; display: flex; flex-direction: column; }
+  .steps-row .install-card { height: 260px; }
+  .steps-row .terminal-body { overflow-y: auto; }
   .step-header {
-    display: flex; align-items: flex-start; gap: 12px;
+    display: flex; align-items: flex-start; gap: 10px;
     margin-bottom: 10px;
   }
   .step-header .step-num {
-    width: 30px; height: 30px; border-radius: 50%;
+    width: 26px; height: 26px; border-radius: 50%;
     background: var(--gradient); color: #fff;
     display: flex; align-items: center; justify-content: center;
-    font-weight: 800; font-size: 0.85rem; flex-shrink: 0;
+    font-weight: 800; font-size: 0.8rem; flex-shrink: 0;
   }
-  .step-header h4 { font-size: 1.05rem; font-weight: 700; margin-bottom: 2px; color: var(--text); }
-  .step-header p { color: var(--text3); font-size: 0.86rem; line-height: 1.55; }
+  .step-header h4 { font-size: 0.95rem; font-weight: 700; margin-bottom: 2px; color: var(--text); }
+  .step-header p { color: var(--text3); font-size: 0.8rem; line-height: 1.5; }
 
   /* ===== RESPONSIVE ===== */
   @media (max-width: 900px) {
@@ -360,6 +365,7 @@
     .compare-table { font-size: 0.82rem; }
     .compare-table thead th, .compare-table tbody td { padding: 10px 12px; }
     .section-title { font-size: 1.8rem; }
+    .steps-row { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -592,67 +598,69 @@
     <h2 class="section-title">三步上手：CLI 生成 + 浏览器浏览</h2>
     <p class="section-desc">纯本地运行，零配置，单二进制。所有操作都在你自己的机器上完成。</p>
 
-    <div class="step-item">
-      <div class="step-header">
-        <div class="step-num">1</div>
-        <div>
-          <h4>初始化配置</h4>
-          <p>选择远程 API（OpenAI / Claude / Gemini / 智谱）或本地 Ollama 模型</p>
+    <div class="steps-row">
+      <div class="step-item">
+        <div class="step-header">
+          <div class="step-num">1</div>
+          <div>
+            <h4>初始化配置</h4>
+            <p>选择远程 API 或本地 Ollama 模型</p>
+          </div>
+        </div>
+        <div class="install-card">
+          <div class="terminal-header">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span class="title">config</span>
+          </div>
+          <div class="terminal-body">
+            <div class="cmd">codewiki config</div>
+            <p class="hint">交互式向导，引导完成 LLM 提供商、模型、API Key 等配置</p>
+          </div>
         </div>
       </div>
-      <div class="install-card">
-        <div class="terminal-header">
-          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
-          <span class="title">config</span>
-        </div>
-        <div class="terminal-body">
-          <div class="cmd">codewiki config</div>
-          <p class="hint">交互式向导，引导完成 LLM 提供商、模型、API Key 等配置</p>
-        </div>
-      </div>
-    </div>
 
-    <div class="step-item">
-      <div class="step-header">
-        <div class="step-num">2</div>
-        <div>
-          <h4>生成 Wiki</h4>
-          <p>AST 解析 → 依赖图构建 → LLM 叙事生成 → 图表输出，全自动流水线</p>
+      <div class="step-item">
+        <div class="step-header">
+          <div class="step-num">2</div>
+          <div>
+            <h4>生成 Wiki</h4>
+            <p>AST 解析 → 依赖图 → LLM 叙事 → 图表</p>
+          </div>
+        </div>
+        <div class="install-card">
+          <div class="terminal-header">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span class="title">generate</span>
+          </div>
+          <div class="terminal-body">
+            <div class="cmd">codewiki generate --source . --lang zh</div>
+            <div class="param"><b>--source</b> &lt;dir&gt;</div>
+            <div class="param"><b>--lang</b> zh|en</div>
+            <div class="param"><b>--force</b></div>
+            <div class="param"><b>--max-functions</b></div>
+            <div class="param"><b>--output</b> &lt;dir&gt;</div>
+          </div>
         </div>
       </div>
-      <div class="install-card">
-        <div class="terminal-header">
-          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
-          <span class="title">generate</span>
-        </div>
-        <div class="terminal-body">
-          <div class="cmd">codewiki generate --source . --lang zh</div>
-          <div class="param"><b>--source</b> &lt;dir&gt;    源码目录（默认当前目录）</div>
-          <div class="param"><b>--lang</b> zh|en      文档语言</div>
-          <div class="param"><b>--force</b>           强制重新解析（忽略缓存）</div>
-          <div class="param"><b>--max-functions</b>   函数描述上限</div>
-          <div class="param"><b>--output</b> &lt;dir&gt;   输出目录</div>
-        </div>
-      </div>
-    </div>
 
-    <div class="step-item">
-      <div class="step-header">
-        <div class="step-num">3</div>
-        <div>
-          <h4>浏览 &amp; 问答</h4>
-          <p>本地 Web 服务阅读文档，或在终端用自然语言直接提问</p>
+      <div class="step-item">
+        <div class="step-header">
+          <div class="step-num">3</div>
+          <div>
+            <h4>浏览 &amp; 问答</h4>
+            <p>本地 Web 预览或终端提问</p>
+          </div>
         </div>
-      </div>
-      <div class="install-card">
-        <div class="terminal-header">
-          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
-          <span class="title">serve &amp; ask</span>
-        </div>
-        <div class="terminal-body">
-          <div class="cmd">codewiki serve --port 8080</div>
-          <div class="cmd">codewiki ask "认证流程涉及哪些模块？"</div>
-          <p class="hint">serve 启动本地 Web 预览；ask 支持直接提问或 --interactive 交互会话</p>
+        <div class="install-card">
+          <div class="terminal-header">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span class="title">serve &amp; ask</span>
+          </div>
+          <div class="terminal-body">
+            <div class="cmd">codewiki serve --port 8080</div>
+            <div class="cmd">codewiki ask "..."</div>
+            <p class="hint">serve 启动本地 Web 预览；ask 支持直接提问或交互会话</p>
+          </div>
         </div>
       </div>
     </div>
