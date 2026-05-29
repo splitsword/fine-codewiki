@@ -1,7 +1,7 @@
 # PRD 覆盖追踪文档
 
 > 本文档将 PRD 中的能力、测试、里程碑、发布门禁映射到实际实现状态。每次提交前更新对应条目，确保无遗漏。
-> 文档版本：v0.4 | 最后更新：2026-05-15
+> 文档版本：v0.5 | 最后更新：2026-05-29
 
 ---
 
@@ -11,8 +11,8 @@
 |--------|------|----------|--------|
 | M1 — 核心可行原型 | ✅ 已完成 | AST/文档/图表/CLI/Web | 无 |
 | M2 — 问答与图表增强 | ✅ 已完成 | RAG/时序图/本地LLM/配置/中文 | 无 |
-| M3 — 产品化打磨 | 🔄 接近完成 | LLM 可靠性工程已完成（流式优先+渐进降级+thinking模式）；Web UI 14项特性+JS修复；叙事生成已可靠 | 分发渠道(3.8)待补，其余核心项均已完成 |
-| M4 — 生态扩展 | ⏳ 未开始 | IDE/CI/图查询/1.0发布 | 无 |
+| M3 — 产品化打磨 | ✅ 已完成 | 主题导向叙事文档、多图叙事化架构说明、静态 HTML/PDF 导出、流式 AI 问答、Web UI 14项特性、4 阶段并发管线、流式优先 LLM、update 自更新、GitHub Releases 自动发布 | 无 |
+| M4 — 生态扩展 | ⏳ 延后至 V2 | Rust/C++ 支持、VS Code 扩展、CI 集成（GitHub Action）、图结构自然语言查询 | 无 |
 
 ---
 
@@ -114,8 +114,8 @@
 | 3.9 | 大规模仓库性能优化 | `internal/cli/cli.go` (RunAsk) + `benchmark/benchmark_test.go` | ✅ | AST+Graph 缓存已实现，增量索引已实现；`BenchmarkEndToEnd100K` 验证 100K 行生成 < 4s；CI 性能门禁已配置 |
 | 3.10 | 提示词优化（按语言）+ Prompt 快照回归 | `internal/docgen/docgen.go` | ✅ | prompt 已统一中文；按语言定制模板已实现（Python/Go/JS/Java/Rust/C++）；快照回归机制已建立 (`testdata/expected/prompts/`) |
 | 3.11 | Rust / C++ AST 支持 + tree-sitter grammar 捆绑 | `internal/analyzer/analyzer.go` | ✅ | Rust/C++ 正则解析已实现；tree-sitter grammar 已捆绑（`gotreesitter/grammars` 自动检测 + tags query 提取），含 regex 兜底回退 |
-| 3.12 | Beta 公开发布 | `README.md` + `CHANGELOG.md` | ⚠️ | 文档已较完整（README/CHANGELOG/PRD 覆盖追踪）；缺少安装分发指南（3.8 延后） |
-| 3.13 | 工程基建：性能基准套件 + 预期 DSL 快照 + mmdc 语法校验 + CI 跨平台矩阵 | `benchmark/benchmark_test.go` + `internal/testutil/snapshot.go` | 🔄 | 性能基准套件已建立；图表 DSL 快照已建立；mmdc 语法校验已实现 (`internal/diagram/mmdc_test.go`)；CI 跨平台矩阵仍待实现 (G3、G5、G6 完成, G7 仍待) |
+| 3.12 | Beta 公开发布 | `README.md` + `CHANGELOG.md` + `homepage/index.html` | ✅ | v1.0 Beta 已发布：README/CHANGELOG/PRD/主页全部同步；GitHub Releases + update 自更新就绪；Homebrew/npm/winget 待 V2 补全 |
+| 3.13 | 工程基建：性能基准套件 + 预期 DSL 快照 + mmdc 语法校验 + CI 跨平台矩阵 | `benchmark/benchmark_test.go` + `internal/testutil/snapshot.go` | ✅ | 性能基准套件已建立；图表 DSL 快照已建立；mmdc 语法校验已实现 (`internal/diagram/mmdc_test.go`)；CI 跨平台矩阵已实现 (ubuntu/macOS/windows × Go 1.26) |
 
 ### M3 核心痛点回应追踪
 
@@ -139,8 +139,8 @@
 | 10 万行仓库 < 3 分钟生成 | ✅ | `BenchmarkEndToEnd100K` 验证约 100K 行合成项目生成耗时 < 4s（阈值 180s）；CI 已配置性能门禁步骤 |
 | 向量存储支持增量索引 | ✅ | `RunAsk` 通过 `ShouldIndexFile` / `PruneFiles` / `MarkFileIndexed` 实现增量更新 |
 | Prompt 变更可被回归测试发现 | ✅ | `testdata/expected/prompts/` 存储 overview/architecture prompt 快照；`SnapshotCompare` 支持 `-update` 更新 |
-| 发布到 Homebrew/npm/winget | ❌ | 未实现 |
-| 发布后第一个月 100+ star | ⏳ | Beta 未发布 |
+| 发布到 Homebrew/npm/winget | 🟡 | GitHub Releases + 一键脚本已就绪；包管理器待 V2 补全 |
+| 发布后第一个月 100+ star | ⏳ | Beta 已发布，等待市场反馈 |
 | **Web UI 对标 Zread 体验质量** | ✅ | 14 项 UI 特性已实现（磨砂玻璃态/暗色主题/阅读进度条/代码块复制/图表全屏/折叠导航/Ctrl+K搜索/Ask AI/滚动高亮/时长徽章/难度徽章/主题切换/图表导航/版本备份） |
 | **Serve 与 Static HTML 双路径视觉一致** | ✅ | 共享 `wikiPageCSS` + `wikiPageJS`，渲染测试覆盖 |
 | **新开发者 5 分钟内理解项目定位** | ✅ | 阅读时长徽章 + 难度星级 + "下一步阅读 →"导航 + 五分钟快速上手路径 |
@@ -169,7 +169,7 @@
 | Mermaid 语法校验 (mmdc) | ✅ | `internal/diagram/mmdc_test.go` 使用 `mmdc` CLI 验证快照和生成图表的语法正确性 |
 | Rust / C++ AST 解析 | ✅ | `analyzer` 单元测试覆盖 struct/trait/impl/class/include/method |
 | tree-sitter grammar 捆绑验证 | ✅ | `grammar_bundle.go` + `gotreesitter/grammars` 自动检测；`treesitter_extract.go` tags query 提取定义 + AST walk 提取 import；正则兜底回退 |
-| CI 跨平台矩阵 | ✅ | GitHub Actions: ubuntu-latest / macos-latest / windows-latest × Go 1.23 / 1.24 |
+| CI 跨平台矩阵 | ✅ | GitHub Actions: ubuntu-latest / macos-latest / windows-latest × Go 1.26 |
 | **代码块语言标签+复制** | ✅ | `TestMarkdownToHTMLCodeBlock` 验证 `<pre><code` + 语言标签 + 复制按钮 |
 | **Mermaid 全屏展开** | ✅ | `TestGenerateStaticHTML` 验证 `mermaid-wrap` + expand 按钮 |
 | **折叠导航分组** | ✅ | `TestWriteWikiFiles` + `TestGenerateStaticHTML` 验证 `nav-group` 结构 + 图标 span |
@@ -215,8 +215,8 @@
 | 覆盖率未下降 | ⚠️ | ⚠️ | ✅ | `coverage-baseline.md` 已建立，容差 -2% |
 | 安全扫描 (govulncheck) | ⚠️ | ⚠️ | M3 完成 | CI 中已配置 `govulncheck ./...`（continue-on-error）；本地标准库版本漏洞需升级 Go 版本 |
 | CLI --help 完整性 | ✅ | ✅ | M3 完成 | 人工检查：已补全 Ask flags |
-| 安装验证 (brew/npm/winget) | ❌ | ❌ | M3 完成 | 手动安装测试 |
-| 跨平台编译矩阵 | ✅ | ✅ | M3 完成 | GitHub Actions (ubuntu/macOS/windows × Go 1.23/1.24) |
+| 安装验证 (brew/npm/winget) | ❌ | ❌ | 🟡 延后 | GitHub Releases + 一键脚本已就绪；包管理器待 V2 补全 |
+| 跨平台编译矩阵 | ✅ | ✅ | M3 完成 | GitHub Actions (ubuntu/macOS/windows × Go 1.26) |
 
 ---
 
@@ -231,7 +231,7 @@
 | ~~G4~~ | ~~向量存储无增量索引，每次全量重建~~ | ~~M2 RAG 大项目体验~~ | ~~M3 性能阶段~~ | ~~2.2~~ |
 | ~~G5~~ | ~~无 `expected/` 目录存储预期图表 DSL~~ | ~~M1 图表回归测试~~ | ~~M3 工程基建~~ | ~~1.3, 3.13~~ |
 | ~~G6~~ | ~~Mermaid 语法无 `mmdc` 自动化校验~~ | ~~M1 图表正确性~~ | ~~M3 工程基建~~ | ~~1.3, 3.13~~ |
-| ~~G7~~ | ~~无 CI/CD 跨平台矩阵~~ | ~~M3 发布门禁~~ | ~~M3 发布前~~ | ~~3.13, 发布门禁~~ |
+| ~~G7~~ | ~~无 CI/CD 跨平台矩阵~~ | ~~M3 发布门禁~~ | ~~M3 已完成~~ | ~~3.13, 发布门禁~~ |
 
 ---
 

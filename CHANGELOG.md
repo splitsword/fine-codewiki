@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-29 — docs(prd-coverage): 同步 M3 完成状态与 v1.0 Beta 发布 (891077b)
+
 - 2026-05-29 — docs(changelog): 插入 v1.0-beta 发布章节，清空 Unreleased (986cd18)
 
 ---
