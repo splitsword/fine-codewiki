@@ -42,6 +42,7 @@ type Config struct {
 	ConfigPath      string
 	Force           bool
 	Version         string
+	PDFOutputPath   string // for export pdf command
 }
 
 // RunGenerate executes the full generate pipeline: parse → graph → diagram → doc.
@@ -2035,6 +2036,68 @@ func RunBrowse(cfg *Config) error {
 	absPath, _ := filepath.Abs(indexPath)
 	fmt.Printf("正在浏览器中打开 %s\n", absPath)
 	return openBrowser("file://" + absPath)
+}
+
+// RunExportPDF exports the generated wiki as a PDF file.
+// If the wiki has not been generated yet, it runs the generate pipeline first.
+func RunExportPDF(cfg *Config) error {
+	if cfg.SourceDir == "" {
+		cfg.SourceDir = "."
+	}
+	if cfg.OutputDir == "" {
+		cfg.OutputDir = filepath.Join(cfg.SourceDir, ".codewiki", "wiki")
+	}
+	if cfg.ProjectName == "" {
+		cfg.ProjectName = filepath.Base(cfg.SourceDir)
+	}
+
+	indexPath := filepath.Join(cfg.OutputDir, "index.html")
+	srcPDF := filepath.Join(cfg.OutputDir, "wiki.pdf")
+
+	// If index.html missing, run full generate pipeline
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		fmt.Println("Wiki 尚未生成，正在自动生成...")
+		genCfg := &Config{
+			SourceDir:   cfg.SourceDir,
+			OutputDir:   cfg.OutputDir,
+			ProjectName: cfg.ProjectName,
+			Language:    cfg.Language,
+		}
+		if err := RunGenerate(genCfg); err != nil {
+			return fmt.Errorf("生成 wiki 失败: %w", err)
+		}
+	} else if _, err := os.Stat(srcPDF); os.IsNotExist(err) {
+		// Wiki exists but PDF was deleted → regenerate PDF only from existing files
+		fmt.Println("Wiki 已存在但 PDF 缺失，正在从已有文档重新生成 PDF...")
+		wiki, err := docgen.LoadWikiFromDir(cfg.OutputDir)
+		if err != nil {
+			return fmt.Errorf("读取已有 wiki 失败: %w", err)
+		}
+		if wiki.ProjectName == "" {
+			wiki.ProjectName = cfg.ProjectName
+		}
+		if err := docgen.GeneratePDFViaChrome(wiki, nil, srcPDF); err != nil {
+			return fmt.Errorf("生成 PDF 失败: %w", err)
+		}
+	}
+
+	data, err := os.ReadFile(srcPDF)
+	if err != nil {
+		return fmt.Errorf("读取 PDF 失败: %w", err)
+	}
+
+	outPath := cfg.PDFOutputPath
+	if outPath == "" {
+		outPath = cfg.ProjectName + ".pdf"
+	}
+
+	if err := os.WriteFile(outPath, data, 0644); err != nil {
+		return fmt.Errorf("写入 PDF 失败: %w", err)
+	}
+
+	absOut, _ := filepath.Abs(outPath)
+	fmt.Printf("PDF 已导出: %s\n", absOut)
+	return nil
 }
 
 func openBrowser(url string) error {

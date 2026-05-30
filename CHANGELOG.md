@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-05-30 — feat(pdf): Chrome headless PDF 导出 + export pdf 命令 (b0d2547)
+
 - 2026-05-30 — docs(homepage): 竞品对照文案微调 (d770e2a)
 
 - 2026-05-29 — docs(prd): 同步 M3 里程碑状态为全部已完成 (6032d98)

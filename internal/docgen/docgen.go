@@ -110,6 +110,153 @@ func ClearWikiCheckpoint(sourceDir string) {
 	_ = os.Remove(path)
 }
 
+// stripFrontmatter removes YAML frontmatter from markdown content.
+func stripFrontmatter(data []byte) string {
+	s := string(data)
+	if !strings.HasPrefix(s, "---\n") {
+		return s
+	}
+	end := strings.Index(s[4:], "\n---")
+	if end < 0 {
+		return s
+	}
+	body := s[4+end+5:]
+	body = strings.TrimLeft(body, "\n")
+	return body
+}
+
+// LoadWikiFromDir rebuilds a Wiki struct from previously-generated markdown files.
+// It reads 00-*.md, api-reference.md, modules/*.md and modules/README.md to
+// reconstruct enough state for PDF re-export without re-running LLM.
+func LoadWikiFromDir(dir string) (*Wiki, error) {
+	wiki := &Wiki{
+		ModuleDocs:        make(map[string]string),
+		ModuleThemes:      make(map[string][]string),
+		ChapterTitles:     make(map[string]ChapterTitle),
+		ThemeIntros:       make(map[string]string),
+		ChapterNarratives: make(map[string]string),
+	}
+
+	// Try to load project name from compilation.md frontmatter
+	if data, err := os.ReadFile(filepath.Join(dir, "compilation.md")); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "project: ") {
+				wiki.ProjectName = strings.Trim(strings.TrimPrefix(line, "project: "), `"`)
+				break
+			}
+		}
+	}
+
+	fileMap := map[string]*string{
+		"00-overview.md":          &wiki.Overview,
+		"01-what-it-does.md":      &wiki.WhatItDoes,
+		"02-architecture.md":      &wiki.Architecture,
+		"03-project-structure.md": &wiki.ProjectStructure,
+		"05-learning-path.md":     &wiki.LearningPath,
+		"api-reference.md":        &wiki.APIReference,
+	}
+	for fname, ptr := range fileMap {
+		data, err := os.ReadFile(filepath.Join(dir, fname))
+		if err != nil {
+			continue
+		}
+		*ptr = stripFrontmatter(data)
+	}
+
+	// Key concepts has a prefixed heading when written
+	if data, err := os.ReadFile(filepath.Join(dir, "04-key-concepts.md")); err == nil {
+		content := stripFrontmatter(data)
+		content = strings.TrimPrefix(content, "# 核心概念与设计决策\n\n")
+		wiki.KeyConcepts = content
+	}
+
+	// Module docs
+	modulesDir := filepath.Join(dir, "modules")
+	entries, err := os.ReadDir(modulesDir)
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() || e.Name() == "README.md" || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(modulesDir, e.Name()))
+			if err != nil {
+				continue
+			}
+			content := stripFrontmatter(data)
+			// Try to extract module name from frontmatter title
+			modName := ""
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				if strings.HasPrefix(line, "title: ") {
+					modName = strings.Trim(strings.TrimPrefix(line, "title: "), `"`)
+					break
+				}
+			}
+			if modName == "" {
+				// Fallback: first heading
+				for _, line := range strings.Split(content, "\n") {
+					if strings.HasPrefix(line, "# ") {
+						modName = strings.TrimPrefix(line, "# ")
+						break
+					}
+				}
+			}
+			if modName == "" {
+				modName = strings.TrimSuffix(e.Name(), ".md")
+			}
+			wiki.ModuleDocs[modName] = content
+		}
+	}
+
+	// Module themes & chapter titles from modules/README.md
+	readmePath := filepath.Join(modulesDir, "README.md")
+	if data, err := os.ReadFile(readmePath); err == nil {
+		content := stripFrontmatter(data)
+		var currentTheme string
+		for _, line := range strings.Split(content, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "## ") {
+				currentTheme = strings.TrimPrefix(line, "## ")
+				wiki.ModuleThemes[currentTheme] = nil
+				wiki.ChapterTitles[currentTheme] = ChapterTitle{Title: currentTheme}
+				continue
+			}
+			if currentTheme == "" || !strings.HasPrefix(line, "|") {
+				continue
+			}
+			// Parse table row like: | [module_name](file.md) | ⭐⭐⭐ 深入 | ... |
+			parts := strings.Split(line, "|")
+			if len(parts) < 3 {
+				continue
+			}
+			cell := strings.TrimSpace(parts[1])
+			// Extract module name from [name](file.md)
+			start := strings.Index(cell, "[")
+			end := strings.Index(cell, "](")
+			if start >= 0 && end > start {
+				modName := cell[start+1 : end]
+				if modName != "" && modName != "模块" {
+					wiki.ModuleThemes[currentTheme] = append(wiki.ModuleThemes[currentTheme], modName)
+				}
+			}
+		}
+	}
+
+	// If no themes were found but module docs exist, group all into a single default theme
+	if len(wiki.ModuleThemes) == 0 && len(wiki.ModuleDocs) > 0 {
+		var mods []string
+		for m := range wiki.ModuleDocs {
+			mods = append(mods, m)
+		}
+		sort.Strings(mods)
+		wiki.ModuleThemes["模块详情"] = mods
+		wiki.ChapterTitles["模块详情"] = ChapterTitle{Title: "模块详情"}
+	}
+
+	return wiki, nil
+}
+
 // GenerateWiki produces a complete Wiki from analysis results and diagrams.
 func GenerateWiki(graph *grapher.Graph, projectName, archDSL, classDSL, seqDSL string) (*Wiki, error) {
 	return generateWikiEnhanced(context.Background(), nil, graph, "", projectName, archDSL, classDSL, seqDSL, "", 0)
@@ -3788,14 +3935,27 @@ func WriteWikiFiles(outputDir string, wiki *Wiki, graph *grapher.Graph) error {
 			}
 		}
 	}
-	// PDF export (best-effort: don't block other exports on font missing)
-	if pdfBytes, err := GeneratePDF(wiki); err == nil {
-		pdfPath := filepath.Join(outputDir, "wiki.pdf")
-		if err := os.WriteFile(pdfPath, pdfBytes, 0644); err != nil {
-			fmt.Printf("警告：写入 PDF 失败: %v\n", err)
+	// PDF export (best-effort: don't block other exports)
+	pdfPath := filepath.Join(outputDir, "wiki.pdf")
+	if HasChrome() {
+		if err := GeneratePDFViaChrome(wiki, graph, pdfPath); err != nil {
+			fmt.Printf("警告：Chrome PDF 导出失败 (%v)，尝试降级方案...\n", err)
+			if pdfBytes, err2 := GeneratePDF(wiki); err2 == nil {
+				if err2 := os.WriteFile(pdfPath, pdfBytes, 0644); err2 != nil {
+					fmt.Printf("警告：写入 PDF 失败: %v\n", err2)
+				}
+			} else {
+				fmt.Printf("警告：生成 PDF 失败: %v\n", err2)
+			}
 		}
 	} else {
-		fmt.Printf("警告：生成 PDF 失败: %v\n", err)
+		if pdfBytes, err := GeneratePDF(wiki); err == nil {
+			if err := os.WriteFile(pdfPath, pdfBytes, 0644); err != nil {
+				fmt.Printf("警告：写入 PDF 失败: %v\n", err)
+			}
+		} else {
+			fmt.Printf("警告：生成 PDF 失败: %v\n", err)
+		}
 	}
 
 	return nil

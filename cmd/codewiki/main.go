@@ -31,6 +31,8 @@ func main() {
 		runConfig(os.Args[2:])
 	case "browse":
 		runBrowse(os.Args[2:])
+	case "export":
+		runExport(os.Args[2:])
 	case "update":
 		runUpdate(os.Args[2:])
 	case "version", "-v", "--version":
@@ -175,6 +177,39 @@ func runBrowse(args []string) {
 	}
 }
 
+func runExport(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: codewiki export pdf [-source <dir>] [-dir <wiki-dir>] [-output <path>]")
+		os.Exit(1)
+	}
+	subCmd := args[0]
+	if subCmd != "pdf" {
+		fmt.Fprintf(os.Stderr, "Unknown export sub-command: %s\n", subCmd)
+		fmt.Fprintln(os.Stderr, "Usage: codewiki export pdf [-source <dir>] [-dir <wiki-dir>] [-output <path>]")
+		os.Exit(1)
+	}
+
+	fs := flag.NewFlagSet("export pdf", flag.ExitOnError)
+	sourceDir := fs.String("source", ".", "Source code directory")
+	wikiDir := fs.String("dir", "", "Wiki directory to export (default: <source>/.codewiki/wiki)")
+	outPath := fs.String("output", "", "Output PDF file path (default: <project-name>.pdf)")
+	lang := fs.String("lang", "", "Language filter")
+	name := fs.String("name", "", "Project name (default: directory name)")
+	fs.Parse(args[1:])
+
+	cfg := &cli.Config{
+		SourceDir:     *sourceDir,
+		OutputDir:     *wikiDir,
+		Language:      *lang,
+		ProjectName:   *name,
+		PDFOutputPath: *outPath,
+	}
+	if err := cli.RunExportPDF(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func runUpdate(args []string) {
 	cfg := &cli.Config{Version: version}
 	if err := cli.RunUpdate(cfg); err != nil {
@@ -213,6 +248,7 @@ Commands:
   browse     Generate (if needed) and open wiki in browser
   serve      Start a local HTTP server to preview the wiki
   ask        Ask a natural-language question about the codebase
+  export     Export wiki to PDF or other formats
   config     Configure LLM provider and API settings
   update     Check for and install the latest version
   version    Print version information
@@ -229,6 +265,13 @@ Generate flags:
 Browse flags:
   -source string   Source code directory (default ".")
   -output string   Output directory for wiki files
+  -name string     Project name
+
+Export pdf flags:
+  -source string   Source code directory (default ".")
+  -dir string      Wiki directory to export (default "<source>/.codewiki/wiki")
+  -output string   Output PDF file path (default "<project-name>.pdf")
+  -lang string     Language filter
   -name string     Project name
 
 Serve flags:
@@ -250,5 +293,6 @@ Examples:
   %s ask "What does the auth module do?"
   %s ask --interactive
   %s config
-`, exe, exe, exe, exe, exe, exe, exe)
+  %s export pdf --source ./my-project --dir ./my-project/.codewiki/wiki --output ./my-project.pdf
+`, exe, exe, exe, exe, exe, exe, exe, exe)
 }
