@@ -265,3 +265,66 @@ go tool cover -func=coverage.out
 <p align="center">Built with Go. Code stays local.</p>
 
 > 最后更新：2026-05-30
+
+---
+
+## CLI 帮助
+
+```
+fine-codewiki — turn any codebase into an interactive wiki
+
+Usage:
+  codewiki <command> [flags]
+
+Commands:
+  generate   Analyze code and generate wiki documentation
+  browse     Generate (if needed) and open wiki in browser
+  serve      Start a local HTTP server to preview the wiki
+  ask        Ask a natural-language question about the codebase
+  export     Export wiki to PDF or other formats
+  config     Configure LLM provider and API settings
+  update     Check for and install the latest version
+  version    Print version information
+  help       Show this help message
+
+Generate flags:
+  -source string   Source code directory (default ".")
+  -output string   Output directory for wiki files
+  -lang string     Language filter: python, javascript, typescript, go, java, rust, c, cpp
+  -name string     Project name
+  -max-functions   Max functions for LLM semantic description: -1=auto, 0=skip, N=cap
+  -force           Force full regeneration, ignore checkpoints
+
+Browse flags:
+  -source string   Source code directory (default ".")
+  -output string   Output directory for wiki files
+  -name string     Project name
+
+Export pdf flags:
+  -source string   Source code directory (default ".")
+  -dir string      Wiki directory to export (default "<source>/.codewiki/wiki")
+  -output string   Output PDF file path (default "<project-name>.pdf")
+  -lang string     Language filter
+  -name string     Project name
+
+Serve flags:
+  -dir string      Wiki directory to serve (default "./.codewiki/wiki")
+  -port int        HTTP server port (default 8080)
+  -source string   Source directory for RAG Q&A (default: current dir)
+
+Ask flags:
+  -source string   Source code directory (default ".")
+  -interactive     Start interactive Q&A session
+
+Config flags:
+  -path string     Config file path
+
+Examples:
+  codewiki generate --source ./my-project --name "My Project" --lang go
+  codewiki browse
+  codewiki serve --port 3000
+  codewiki ask "What does the auth module do?"
+  codewiki ask --interactive
+  codewiki config
+  codewiki export pdf --source ./my-project --dir ./my-project/.codewiki/wiki --output ./my-project.pdf
+```
