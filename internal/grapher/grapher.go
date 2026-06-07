@@ -439,9 +439,10 @@ func (g *Graph) PageRank() map[string]float64 {
 
 // ModuleRole describes the inferred architectural role of a module.
 type ModuleRole struct {
-	Name  string
-	Role  string // e.g. "核心领域", "入口层", "工具库", "业务模块", "支撑模块"
-	Score float64
+	Name     string
+	Filename string // full relative path with extension
+	Role     string // e.g. "核心领域", "入口层", "工具库", "业务模块", "支撑模块"
+	Score    float64
 }
 
 // InferModuleRoles uses PageRank and graph structure to infer each module's role.
@@ -494,9 +495,10 @@ func (g *Graph) InferModuleRoles() []ModuleRole {
 		}
 
 		roles = append(roles, ModuleRole{
-			Name:  n.Name,
-			Role:  role,
-			Score: score,
+			Name:     n.Name,
+			Filename: n.Filename,
+			Role:     role,
+			Score:    score,
 		})
 	}
 

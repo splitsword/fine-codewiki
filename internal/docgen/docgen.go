@@ -1088,7 +1088,7 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName, readme, language str
 			fmt.Fprintf(&b, "... 还有 %d 个模块未列出\n", len(important)-maxModulesInPrompt)
 			break
 		}
-		line := "- " + n.Name
+		line := "- " + n.Filename
 		if len(n.Classes) > 0 {
 			line += fmt.Sprintf("（%d 个类）", len(n.Classes))
 		}
@@ -1523,7 +1523,7 @@ func buildArchitecturePrompt(graph *grapher.Graph, projectName, readme, language
 			if i > 0 {
 				fmt.Fprintf(&b, "、")
 			}
-			fmt.Fprintf(&b, "%s", e.Name)
+			fmt.Fprintf(&b, "%s", e.Filename)
 		}
 		fmt.Fprintf(&b, "\n")
 	}
@@ -1669,7 +1669,7 @@ func buildWhatItDoesPrompt(graph *grapher.Graph, projectName, readme, language s
 	if len(filteredEntries) > 0 {
 		fmt.Fprintf(&b, "【入口模块】\n")
 		for _, e := range filteredEntries {
-			fmt.Fprintf(&b, "- %s\n", e.Name)
+			fmt.Fprintf(&b, "- %s\n", e.Filename)
 		}
 		fmt.Fprintln(&b)
 	}
@@ -1678,7 +1678,7 @@ func buildWhatItDoesPrompt(graph *grapher.Graph, projectName, readme, language s
 	fmt.Fprintf(&b, "【模块角色推断】\n")
 	for _, r := range roles {
 		if (r.Role == "核心领域" || r.Role == "入口层") && !isNoiseModule(r.Name) {
-			fmt.Fprintf(&b, "- %s（%s，得分 %.3f）\n", r.Name, r.Role, r.Score)
+			fmt.Fprintf(&b, "- %s（%s，得分 %.3f）\n", r.Filename, r.Role, r.Score)
 		}
 	}
 	fmt.Fprintln(&b)
@@ -1717,7 +1717,7 @@ func buildKeyConceptsPrompt(graph *grapher.Graph, projectName, language string) 
 	if len(entries) > 0 {
 		fmt.Fprintf(&b, "【入口模块】\n")
 		for _, e := range entries {
-			fmt.Fprintf(&b, "- %s\n", e.Name)
+			fmt.Fprintf(&b, "- %s\n", e.Filename)
 		}
 		fmt.Fprintln(&b)
 	}
@@ -1747,7 +1747,7 @@ func buildKeyConceptsPrompt(graph *grapher.Graph, projectName, language string) 
 		if (r.Role == "核心领域" || r.Role == "入口层" || r.Role == "工具库") && !isNoiseModule(r.Name) {
 			deps := graph.DependenciesOf(r.Name)
 			dependents := graph.DependentsOf(r.Name)
-			fmt.Fprintf(&b, "- %s（%s，依赖 %d 个模块，被 %d 个模块依赖）\n", r.Name, r.Role, len(deps), len(dependents))
+			fmt.Fprintf(&b, "- %s（%s，依赖 %d 个模块，被 %d 个模块依赖）\n", r.Filename, r.Role, len(deps), len(dependents))
 		}
 	}
 	fmt.Fprintln(&b)
@@ -1784,7 +1784,7 @@ func buildLearningPathPrompt(graph *grapher.Graph, projectName, language string)
 	if len(entries) > 0 {
 		fmt.Fprintf(&b, "【入口模块】\n")
 		for _, e := range entries {
-			fmt.Fprintf(&b, "- %s\n", e.Name)
+			fmt.Fprintf(&b, "- %s\n", e.Filename)
 		}
 		fmt.Fprintln(&b)
 	}
@@ -1793,7 +1793,7 @@ func buildLearningPathPrompt(graph *grapher.Graph, projectName, language string)
 	fmt.Fprintf(&b, "【模块角色】\n")
 	for _, r := range roles {
 		if r.Role == "核心领域" || r.Role == "入口层" {
-			fmt.Fprintf(&b, "- %s（%s）\n", r.Name, r.Role)
+			fmt.Fprintf(&b, "- %s（%s）\n", r.Filename, r.Role)
 		}
 	}
 	fmt.Fprintln(&b)
