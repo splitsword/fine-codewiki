@@ -317,7 +317,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	var projectStructureNarrative string
 
 		// ─── Phase 1: All independent LLM tasks run concurrently ───
-		pr.log(fmt.Sprintf("[Phase 1] 启动 %d 个并行 LLM 任务", 6))
+		pr.log(fmt.Sprintf("[Phase 1] 启动 %d 个并行 LLM 任务", 7))
 		phase1Start := time.Now()
 
 		var wg sync.WaitGroup
@@ -495,7 +495,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 						totalFuncs += len(c.Methods)
 					}
 				}
-				pr.log(fmt.Sprintf("[函数描述] 完成：%d/%d（%.0f%%）", len(fdm), totalFuncs, float64(len(fdm))*100/float64(totalFuncs)))
+				pr.log(fmt.Sprintf("[函数描述] 完成：%d/%d（%.0f%%）", len(fdm), len(topFuncs), float64(len(fdm))*100/float64(len(topFuncs))))
 				pr.remove("函数描述")
 			}()
 		}
@@ -1904,7 +1904,7 @@ func generateChapterTitles(ctx context.Context, provider llm.Provider, projectNa
 	defer batchCancel()
 	response, err := streamComplete(batchCtx, provider, prompt)
 	if err != nil {
-		warnf("警告：LLM 生成章节标题失败 (%v)，使用静态回退\n", err)
+		warnf("LLM 生成章节标题失败 (%v)，使用静态回退", err)
 		return generateChapterTitlesFallback(themes, graph)
 	}
 	response = strings.TrimSpace(response)
@@ -1926,7 +1926,7 @@ func generateChapterTitles(ctx context.Context, provider llm.Provider, projectNa
 		Prerequisites []string `json:"prerequisites"`
 	}
 	if err := json.Unmarshal([]byte(response), &entries); err != nil {
-		warnf("警告：解析 LLM 章节标题 JSON 失败 (%v)，使用静态回退\n", err)
+		warnf("解析 LLM 章节标题 JSON 失败 (%v)，使用静态回退", err)
 		return generateChapterTitlesFallback(themes, graph)
 	}
 	result := make(map[string]ChapterTitle)
@@ -1960,7 +1960,7 @@ func generateThemeIntros(ctx context.Context, provider llm.Provider, projectName
 	defer batchCancel()
 	response, err := streamComplete(batchCtx, provider, prompt)
 	if err != nil {
-		warnf("警告：LLM 生成主题简介失败 (%v)\n", err)
+		warnf("LLM 生成主题简介失败 (%v)", err)
 		return nil
 	}
 	response = strings.TrimSpace(response)
@@ -1978,7 +1978,7 @@ func generateThemeIntros(ctx context.Context, provider llm.Provider, projectName
 		Intro string `json:"intro"`
 	}
 	if err := json.Unmarshal([]byte(response), &entries); err != nil {
-		warnf("警告：解析 LLM 主题简介 JSON 失败 (%v)\n", err)
+		warnf("解析 LLM 主题简介 JSON 失败 (%v)", err)
 		return nil
 	}
 	result := make(map[string]string)
@@ -2305,21 +2305,21 @@ func generateChapterNarratives(ctx context.Context, provider llm.Provider, proje
 			warnf("重试章节叙事（精简流式）：%s（prompt %d 字）...", title.Title, len([]rune(prompt)))
 			response, err = tryStreamNarrative(ctx, provider, prompt, 10*time.Minute)
 			if err != nil {
-				warnf("警告：Level-2 精简流式失败 (%v)，尝试极简非流式...\n", err)
+				warnf("Level-2 精简流式失败 (%v)，尝试极简非流式...", err)
 
 				// Level 3: 极简 prompt + 非流式
 				prompt = buildMinimalNarrativePrompt(projectName, theme, title, modules)
 				warnf("最后重试（极简非流式）：%s（prompt %d 字）...", title.Title, len([]rune(prompt)))
 				response, err = tryCompleteNarrative(ctx, provider, prompt, 8*time.Minute)
 				if err != nil {
-					warnf("警告：所有级别均失败 (%v)，%s 将使用模块拼接模式\n", err, theme)
+					warnf("所有级别均失败 (%v)，%s 将使用模块拼接模式", err, theme)
 					continue
 				}
 			}
 		}
 
 		if isChecklistLike(response, graph) {
-			warnf("警告：LLM 返回的叙事像模块清单，%s 将使用模块拼接模式\n", theme)
+			warnf("LLM 返回的叙事像模块清单，%s 将使用模块拼接模式", theme)
 			continue
 		}
 
@@ -3267,7 +3267,7 @@ func generateModuleThemes(ctx context.Context, provider llm.Provider, projectNam
 
 	response, err := streamComplete(streamCtx, provider, prompt)
 	if err != nil {
-		warnf("警告：LLM 分组失败 (%v)，使用静态回退\n", err)
+		warnf("LLM 分组失败 (%v)，使用静态回退", err)
 		return groupModulesByTheme(graph)
 	}
 	response = strings.TrimSpace(response)
@@ -3292,7 +3292,7 @@ func generateModuleThemes(ctx context.Context, provider llm.Provider, projectNam
 		Modules []string `json:"modules"`
 	}
 	if err := json.Unmarshal([]byte(response), &entries); err != nil {
-		warnf("警告：解析 LLM 主题分组 JSON 失败 (%v)，使用静态回退\n", err)
+		warnf("解析 LLM 主题分组 JSON 失败 (%v)，使用静态回退", err)
 		return groupModulesByTheme(graph)
 	}
 
@@ -3326,7 +3326,7 @@ func generateModuleThemes(ctx context.Context, provider llm.Provider, projectNam
 
 	// If too many unassigned or too few themes, use two-phase LLM fallback
 	if len(unassigned) > len(graph.Nodes)/3 || len(result) < 2 {
-		warnf("LLM 一轮覆盖率不足（%d/%d 未分配），启动两阶段回退...\n",
+		warnf("LLM 一轮覆盖率不足（%d/%d 未分配），启动两阶段回退...",
 			len(unassigned), len(graph.Nodes))
 		return generateModuleThemesTwoPhase(ctx, provider, projectName, graph, result, unassigned)
 	}
@@ -3455,7 +3455,7 @@ func generateModuleThemesTwoPhase(ctx context.Context, provider llm.Provider, pr
 		}
 	}
 
-	warnf("两阶段回退完成：Phase A %d 主题 + Phase B %d 模块 + Phase C %d 残余\n",
+	warnf("两阶段回退完成：Phase A %d 主题 + Phase B %d 模块 + Phase C %d 残余",
 		len(themeDefs), len(assignedInPhaseB), len(unassigned)-len(assignedInPhaseB))
 	return result
 }
