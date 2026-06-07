@@ -27,28 +27,29 @@ func warnf(format string, args ...interface{}) {
 // spinnerFrames 用于进度条左侧的旋转动画。
 var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
-// progressRenderer 在终端中渲染单行动画进度条，已完成任务以上方留痕记录。
-// 非 TTY（管道/文件重定向）时自动降级为逐行打印，不输出 ANSI 转义序列。
+// progressRenderer 在终端中渲染单行动画进度条。历史行一次性写出（不会再次
+// 触碰），仅底部一行动画进度条用 \r\033[K 原地刷新，从根本上避免长行折行
+// 导致的 \033[NA 回退错位和全屏闪烁。
 type progressRenderer struct {
-	mu           sync.Mutex
-	total        int
-	completed    int
-	history      []string // 已完成的任务消息行，会以留痕方式展示在进度条上方
-	active       []activeEntry
-	startTime    time.Time
-	frame        int
-	isTTY        bool
-	ticker       *time.Ticker
-	stopped      chan struct{}
-	linesPrinted int // 上一次渲染占用的终端行数（用于 \033[NA 回退）
+	mu        sync.Mutex
+	total     int
+	completed int
+	active    []activeEntry
+	startTime time.Time
+	frame     int
+	isTTY     bool
+	ticker    *time.Ticker
+	stopped   chan struct{}
+
+	// 以下仅在 isTTY 时有效：追踪当前进度条行内容，避免无变化时刷屏。
+	lastBar string
 }
 
 type activeEntry struct {
 	name   string
-	detail string // 当前子状态，如 "第 3/8 批进行中"
+	detail string
 }
 
-// newProgressRenderer creates a renderer; call start() to begin the render loop.
 func newProgressRenderer() *progressRenderer {
 	fi, _ := os.Stdout.Stat()
 	isTTY := (fi.Mode() & os.ModeCharDevice) != 0
@@ -59,12 +60,14 @@ func newProgressRenderer() *progressRenderer {
 	}
 }
 
-// start begins the 100ms render ticker (no-op on non-TTY).
+// start begins the 250ms render ticker (no-op on non-TTY).
 func (p *progressRenderer) start() {
 	if !p.isTTY {
 		return
 	}
-	p.ticker = time.NewTicker(100 * time.Millisecond)
+	// 隐藏闪烁的光标
+	fmt.Fprint(os.Stdout, "\033[?25l")
+	p.ticker = time.NewTicker(250 * time.Millisecond)
 	go func() {
 		for {
 			select {
@@ -77,8 +80,8 @@ func (p *progressRenderer) start() {
 	}()
 }
 
-// stop halts the ticker, clears the bar area, reprints history cleanly,
-// and prints a green ✓ completion line.
+// stop halts the ticker, overwrites the bar line with a ✓ completion line,
+// and restores the cursor.
 func (p *progressRenderer) stop() {
 	if p.ticker != nil {
 		p.ticker.Stop()
@@ -89,35 +92,24 @@ func (p *progressRenderer) stop() {
 	defer p.mu.Unlock()
 
 	if p.isTTY {
-		// 清除进度条所占行
-		if p.linesPrinted > 0 {
-			fmt.Fprintf(os.Stdout, "\033[%dA", p.linesPrinted)
-			fmt.Fprint(os.Stdout, "\033[J")
-			p.linesPrinted = 0
-		}
-		// 重新干净地输出全部历史
-		for _, h := range p.history {
-			fmt.Fprintln(os.Stdout, h)
-			p.linesPrinted++
-		}
-		// 完成行
+		// 显示进度条最终完成行
 		bar := progressBarStr(100, 24)
 		elapsed := formatDuration(time.Since(p.startTime))
-		fmt.Fprintf(os.Stdout, "\033[32m✓ 文档生成完成\033[0m  [%s]  100%%  %d/%d  ·  %s\n",
+		fmt.Fprintf(os.Stdout, "\r\033[K\033[32m✓ 文档生成完成\033[0m  [%s]  100%%  %d/%d  ·  %s\n",
 			bar, p.total, p.total, elapsed)
+		// 恢复光标
+		fmt.Fprint(os.Stdout, "\033[?25h")
 	}
 }
 
-// --- 供 docgen 使用的状态报告 API ---
+// --- 状态报告 API ---
 
-// done marks a task as fully complete: counter++, history++, remove from active.
 func (p *progressRenderer) done(name, msg string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.completed++
 	line := fmt.Sprintf("[%s] %s", name, msg)
-	p.history = append(p.history, line)
 
 	for i, a := range p.active {
 		if a.name == name {
@@ -126,27 +118,30 @@ func (p *progressRenderer) done(name, msg string) {
 		}
 	}
 
-	if !p.isTTY {
+	if p.isTTY {
+		// 先把当前进度行清掉 → 换行写历史 → 重画进度条
+		fmt.Fprintf(os.Stdout, "\r\033[K%s\n", line)
+		p.lastBar = "" // 强制下一帧重绘进度条
+	} else {
 		fmt.Fprintln(os.Stdout, line)
 	}
 }
 
-// tick increments the counter and adds a history line without removing the
-// task from active. Useful for sub-completions like function description batches.
 func (p *progressRenderer) tick(name, msg string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.completed++
 	line := fmt.Sprintf("[%s] %s", name, msg)
-	p.history = append(p.history, line)
 
-	if !p.isTTY {
+	if p.isTTY {
+		fmt.Fprintf(os.Stdout, "\r\033[K%s\n", line)
+		p.lastBar = ""
+	} else {
 		fmt.Fprintln(os.Stdout, line)
 	}
 }
 
-// update adds or refreshes an active task display entry (e.g. "开始生成…").
 func (p *progressRenderer) update(name, detail string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -160,26 +155,24 @@ func (p *progressRenderer) update(name, detail string) {
 	p.active = append(p.active, activeEntry{name: name, detail: detail})
 }
 
-// log appends a message to the history without moving the completed counter.
 func (p *progressRenderer) log(msg string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.history = append(p.history, msg)
-
-	if !p.isTTY {
+	if p.isTTY {
+		fmt.Fprintf(os.Stdout, "\r\033[K%s\n", msg)
+		p.lastBar = ""
+	} else {
 		fmt.Fprintln(os.Stdout, msg)
 	}
 }
 
-// bump adds n to the total task count.
 func (p *progressRenderer) bump(n int) {
 	p.mu.Lock()
 	p.total += n
 	p.mu.Unlock()
 }
 
-// remove deletes a task from the active list without touching the counter.
 func (p *progressRenderer) remove(name string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -191,29 +184,16 @@ func (p *progressRenderer) remove(name string) {
 	}
 }
 
-// --- 渲染核心 ---
+// --- 渲染核心 — 仅刷新单行进度条 ---
 
 func (p *progressRenderer) render() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// 回退到本次渲染区域的起点并清屏
-	if p.linesPrinted > 0 {
-		fmt.Fprintf(os.Stdout, "\033[%dA", p.linesPrinted)
-		fmt.Fprint(os.Stdout, "\033[J")
+	if p.total == 0 {
+		return
 	}
-	p.linesPrinted = 0
-
-	// 重绘全部历史行
-	for _, h := range p.history {
-		fmt.Fprintln(os.Stdout, h)
-		p.linesPrinted++
-	}
-
-	// 重绘进度条
-	if p.total > 0 {
-		p.drawBar()
-	}
+	p.drawBar()
 }
 
 func (p *progressRenderer) drawBar() {
@@ -236,9 +216,16 @@ func (p *progressRenderer) drawBar() {
 		activeStr = strings.Join(parts[:3], "  ") + " …"
 	}
 
-	fmt.Fprintf(os.Stdout, "%s 生成中  [%s] %3.0f%%  %d/%d  ·  %s   ▸ %s",
+	line := fmt.Sprintf("%s 生成中  [%s] %3.0f%%  %d/%d  ·  %s   ▸ %s",
 		string(sp), bar, pct, p.completed, p.total, elapsed, activeStr)
-	p.linesPrinted++
+
+	// 仅当内容变化时才写终端，避免无意义的屏幕刷新
+	if line == p.lastBar {
+		return
+	}
+	p.lastBar = line
+
+	fmt.Fprintf(os.Stdout, "\r\033[K%s", line)
 }
 
 // --- 工具函数 ---
