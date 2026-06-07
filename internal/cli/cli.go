@@ -716,7 +716,10 @@ func extsForLang(lang string) []string {
 	return []string{".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".cpp", ".c", ".rb", ".php", ".swift", ".kt", ".md"}
 }
 
-// detectLanguageFromPaths infers the project language from the most common source file extension.
+// detectLanguageFromPaths returns all languages with ≥15% file share,
+// joined by "、" for prompt neutrality. For single-language projects (one
+// language ≥85%) the sole language name is returned. Returns "" if no
+// supported source extension is found.
 func detectLanguageFromPaths(paths []string) string {
 	extToLang := map[string]string{
 		".py": "python", ".go": "go",
@@ -727,20 +730,50 @@ func detectLanguageFromPaths(paths []string) string {
 		".rb": "ruby", ".php": "php",
 		".swift": "swift", ".kt": "kotlin",
 	}
-	counts := map[string]int{}
+	// Count by language name (merge .ts/.tsx → typescript, etc.)
+	langCounts := map[string]int{}
+	total := 0
 	for _, p := range paths {
 		ext := strings.ToLower(filepath.Ext(p))
-		if _, ok := extToLang[ext]; ok {
-			counts[ext]++
+		lang, ok := extToLang[ext]
+		if !ok {
+			continue
+		}
+		langCounts[lang]++
+		total++
+	}
+	if total == 0 {
+		return ""
+	}
+
+	type lc struct {
+		lang  string
+		count int
+	}
+	var ranked []lc
+	for lang, count := range langCounts {
+		ranked = append(ranked, lc{lang, count})
+	}
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].count > ranked[j].count })
+
+	// If one language dominates (≥85%), return just that name — the project is
+	// effectively single-language.
+	if pct := float64(ranked[0].count) * 100 / float64(total); pct >= 85 {
+		return ranked[0].lang
+	}
+
+	// Multi-language: include every language ≥15%.
+	var parts []string
+	for _, r := range ranked {
+		if pct := float64(r.count) * 100 / float64(total); pct >= 15 {
+			parts = append(parts, fmt.Sprintf("%s（%d 个文件）", r.lang, r.count))
 		}
 	}
-	bestExt, bestCount := "", 0
-	for ext, count := range counts {
-		if count > bestCount {
-			bestExt, bestCount = ext, count
-		}
+	if len(parts) == 0 {
+		// Degenerate case: no language reaches 15% — return the top one.
+		return ranked[0].lang
 	}
-	return extToLang[bestExt]
+	return strings.Join(parts, "、")
 }
 
 // handleSourceAPI serves source file content for the source-reference popup.

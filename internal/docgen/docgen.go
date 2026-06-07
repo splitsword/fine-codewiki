@@ -1326,7 +1326,24 @@ func isRealIdentifier(id string, realIDs map[string]bool) bool {
 
 // buildAutoDescription generates a static project description based on graph analysis.
 // languagePromptHint returns a language-specific hint for LLM prompts.
+// When the project contains multiple languages (language is "、" separated),
+// it generates a balanced, non-biased hint that lists every language with its
+// weight and instructs the LLM to treat each language fairly.
 func languagePromptHint(language string) string {
+	if language == "" {
+		return ""
+	}
+
+	// Multi-language: the string contains "、" (e.g. "java（338 个文件）、python（112 个文件）")
+	if strings.Contains(language, "、") {
+		return fmt.Sprintf(
+			"该项目使用多种编程语言：%s。\n"+
+				"重要：这是一份客观的代码库文档，请不要偏向任何一种语言。分析时应依据各语言的代码结构与模块职责如实描述，不得将项目定性为「Java 项目」或「Python 项目」——它就是一个多语言混合项目。",
+			language,
+		)
+	}
+
+	// Single language — provide focused analysis hints.
 	switch strings.ToLower(language) {
 	case "python":
 		return "该项目使用 Python。分析时可关注：装饰器模式、鸭子类型、FastAPI/Django/Flask 等 Web 框架惯例、PEP8 风格、以及 `__init__.py` 定义的包结构。"
