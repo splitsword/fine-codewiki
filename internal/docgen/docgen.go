@@ -287,8 +287,9 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	defer pr.stop()
 
 	activeRenderer = pr
-	// Phase 1 共 7 个并发任务（含函数描述），总数后续按批次动态调整
-	pr.bump(7)
+	// 一次性设定全部任务总数（Phase1 7 + 设计决策 1 + Phase2 2 + Phase3 2），
+	// 函数描述批次在运行时额外增量。避免分阶段 bump 导致百分比倒退。
+	pr.bump(12)
 
 	// Static generation — always runs first, instant
 	staticOverview, err := GenerateOverviewMarkdown(graph, projectName)
@@ -553,7 +554,6 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		pr.log(fmt.Sprintf("[Phase 1] 全部完成（耗时 %v）", time.Since(phase1Start).Round(time.Second)))
 
 		// Key Concepts: recover from checkpoint or extract from architecture narrative
-		pr.bump(1) // 设计决策
 		if cp.KeyConcepts != "" {
 			keyConcepts = cp.KeyConcepts
 			pr.done("设计决策", "从 checkpoint 恢复")
@@ -607,7 +607,6 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	}
 
 	// ─── Phase 2: Tasks depending on Phase 1 outputs ───
-	pr.bump(2) // 学习路径 + 章节标题
 	pr.log("[Phase 2] 启动依赖任务...")
 	phase2Start := time.Now()
 
@@ -692,7 +691,6 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 	// ─── Phase 3: Theme-dependent tasks (chapter intros + narratives) ───
 	if provider != nil && len(moduleThemes) > 0 && len(chapterTitles) > 0 {
-		pr.bump(2) // 主题简介 + 章节叙事
 		pr.log("[Phase 3] 启动主题相关任务...")
 		phase3Start := time.Now()
 		var wg3 sync.WaitGroup
