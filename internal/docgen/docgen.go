@@ -3435,6 +3435,7 @@ func keywordOverlap(source, target string) int {
 type dirCluster struct {
 	Dir     string   // directory path, e.g. "backend/src"
 	Count   int      // number of modules in this cluster
+	Domain  string   // inferred business domain keywords, e.g. "人员排布, 资源调度"
 	Exts    []string // file extension distribution (top 3), e.g. ["java(120)","py(30)"]
 	Samples []string // up to 5 representative module names
 }
@@ -3472,10 +3473,10 @@ func buildDirectoryClusters(graph *grapher.Graph) []dirCluster {
 				subDirs[sub] = append(subDirs[sub], n)
 			}
 			for sub, sns := range subDirs {
-				raw = append(raw, makeCluster(sub, sns))
+				raw = append(raw, makeCluster(sub, sns, graph))
 			}
 		} else {
-			raw = append(raw, makeCluster(dir, ns))
+			raw = append(raw, makeCluster(dir, ns, graph))
 		}
 	}
 
@@ -3511,9 +3512,36 @@ func buildDirectoryClusters(graph *grapher.Graph) []dirCluster {
 	return result
 }
 
-func makeCluster(dir string, nodes []*grapher.Node) dirCluster {
+// splitCamelCase splits a CamelCase identifier into lowercase words.
+func splitCamelCase(s string) []string {
+	var words []string
+	start := 0
+	for i := 1; i < len(s); i++ {
+		if s[i] >= 'A' && s[i] <= 'Z' {
+			if i > start {
+				words = append(words, strings.ToLower(s[start:i]))
+			}
+			start = i
+		}
+	}
+	if start < len(s) {
+		words = append(words, strings.ToLower(s[start:]))
+	}
+	return words
+}
+
+func makeCluster(dir string, nodes []*grapher.Node, graph *grapher.Graph) dirCluster {
 	c := dirCluster{Dir: dir, Count: len(nodes)}
 	extCount := make(map[string]int)
+
+	// Collect role + class/function names for domain keyword extraction
+	roles := graph.InferModuleRoles()
+	roleMap := make(map[string]string)
+	for _, r := range roles {
+		roleMap[r.Name] = r.Role
+	}
+
+	domainWords := make(map[string]int) // word frequency for domain summary
 	for i, n := range nodes {
 		if i < 5 {
 			c.Samples = append(c.Samples, n.Filename)
@@ -3522,7 +3550,51 @@ func makeCluster(dir string, nodes []*grapher.Node) dirCluster {
 		if ext != "" {
 			extCount[ext]++
 		}
+		// Extract domain-significant identifiers: class names and function names
+		// from core/business modules (not utility/infra)
+		role := roleMap[n.Name]
+		if role == "核心领域" || role == "业务模块" || role == "入口层" {
+			for _, cls := range n.Classes {
+				for _, word := range splitCamelCase(cls.Name) {
+					if len(word) >= 2 {
+						domainWords[word]++
+					}
+				}
+			}
+			for _, fn := range n.Functions {
+				for _, word := range splitCamelCase(fn.Name) {
+					if len(word) >= 2 {
+						domainWords[word]++
+					}
+				}
+			}
+		}
 	}
+	// Pick top 3 domain keywords (filter noise words)
+	noise := map[string]bool{"get": true, "set": true, "add": true, "del": true, "new": true,
+		"init": true, "run": true, "main": true, "test": true, "mock": true,
+		"util": true, "helper": true, "base": true, "impl": true, "abstract": true,
+		"default": true, "simple": true, "common": true, "basic": true,
+	}
+	type wc struct{ w string; n int }
+	var wcs []wc
+	for w, n := range domainWords {
+		if noise[strings.ToLower(w)] {
+			continue
+		}
+		wcs = append(wcs, wc{w, n})
+	}
+	sort.Slice(wcs, func(i, j int) bool { return wcs[i].n > wcs[j].n })
+	var keywords []string
+	for i, w := range wcs {
+		if i >= 3 {
+			break
+		}
+		keywords = append(keywords, w.w)
+	}
+	c.Domain = strings.Join(keywords, ", ")
+
+	// Top 3 extensions
 	// Top 3 extensions
 	type ec struct{ ext string; n int }
 	var ecs []ec
@@ -3645,7 +3717,7 @@ func resolveModuleName(input string, nodeMap map[string]*grapher.Node) *grapher.
 func buildModuleThemesPrompt(projectName string, graph *grapher.Graph) string {
 	clusters := buildDirectoryClusters(graph)
 	var b strings.Builder
-	fmt.Fprintf(&b, "你是一位资深软件架构师。请为以下项目的模块目录簇设计 3-8 个功能主题。\n\n")
+	fmt.Fprintf(&b, "你是一位资深软件架构师。请为以下项目的模块目录簇设计 6-8 个功能主题。\n\n")
 	fmt.Fprintf(&b, "项目：%s\n", projectName)
 	fmt.Fprintf(&b, "模块总数：%d\n", len(filterNonNoiseModules(graph.Nodes)))
 	fmt.Fprintf(&b, "目录簇：%d 个（已按目录结构预聚类）\n\n", len(clusters))
@@ -3657,6 +3729,9 @@ func buildModuleThemesPrompt(projectName string, graph *grapher.Graph) string {
 			langs = "  [" + strings.Join(c.Exts, ", ") + "]"
 		}
 		fmt.Fprintf(&b, "### %s/（%d 个模块）%s\n", c.Dir, c.Count, langs)
+		if c.Domain != "" {
+			fmt.Fprintf(&b, "领域：%s\n", c.Domain)
+		}
 		if len(c.Samples) > 0 {
 			fmt.Fprintf(&b, "代表：%s\n", strings.Join(c.Samples, ", "))
 		}
@@ -3664,12 +3739,12 @@ func buildModuleThemesPrompt(projectName string, graph *grapher.Graph) string {
 	}
 
 	fmt.Fprintf(&b, "## 要求\n")
-	fmt.Fprintf(&b, "1. 将上述目录簇合并/归类为 3-8 个主题（每个主题可横跨多个目录簇）\n")
+	fmt.Fprintf(&b, "1. 将上述目录簇合并/归类为 6-8 个主题（领域相同或相近的目录簇必须合并为同一主题）\n")
 	fmt.Fprintf(&b, "2. 主题名称用 3-8 个中文字，体现核心价值，如\"数据持久化\"\"入口与界面\"\n")
-	fmt.Fprintf(&b, "3. 每个主题至少包含 1 个目录簇\n")
+	fmt.Fprintf(&b, "3. 每个主题涵盖 1-4 个目录簇，主题数尽量接近 8，宁可拆分细一点也不要合并过度\n")
 	fmt.Fprintf(&b, "4. 不要创建\"其他\"\"杂项\"类主题\n")
 	fmt.Fprintf(&b, "5. 按理解难度排序（基础→进阶→深入）\n")
-	fmt.Fprintf(&b, "6. 参考语言分布信息，多语言项目在分组时考虑技术栈差异\n\n")
+	fmt.Fprintf(&b, "6. 领域关键词相同的目录簇必须合并到同一主题，不得分散\n\n")
 	fmt.Fprintf(&b, "输出 JSON（不要其他内容）：\n")
 	fmt.Fprintf(&b, `[{"theme":"主题名","dirs":["dir/a","dir/b"]}]`+"\n\n")
 	fmt.Fprintf(&b, "现在输出 JSON：")
