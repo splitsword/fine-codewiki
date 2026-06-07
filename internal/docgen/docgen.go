@@ -433,7 +433,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 				// 一批最多 concurrency 个请求并发，批内并发、批间串行。
 				// 总批次 = ⌈函数数 / (并发数 × 每请求函数数)⌉。
 				funcsPerReq := 5
-				concurrency := 20
+				concurrency := 10
 
 				// 先按每请求 funcsPerReq 个函数切分成请求单元
 				var reqs [][]funcRef
