@@ -3283,11 +3283,25 @@ func generateModuleThemes(ctx context.Context, provider llm.Provider, projectNam
 
 	var entries []struct {
 		Theme   string   `json:"theme"`
+		Dirs    []string `json:"dirs"`
 		Modules []string `json:"modules"`
 	}
 	if err := json.Unmarshal([]byte(response), &entries); err != nil {
 		warnf("解析 LLM 主题分组 JSON 失败 (%v)，使用静态回退", err)
 		return groupModulesByTheme(graph)
+	}
+
+	// Build directory->nodes index for expanding dir-based clusters
+	dirIndex := make(map[string][]*grapher.Node)
+	for _, n := range graph.Nodes {
+		clean := strings.ReplaceAll(n.Filename, "\\", "/")
+		parts := strings.SplitN(clean, "/", 3)
+		top := parts[0]
+		dirIndex[top] = append(dirIndex[top], n)
+		if len(parts) > 1 {
+			sub := top + "/" + parts[1]
+			dirIndex[sub] = append(dirIndex[sub], n)
+		}
 	}
 
 	// Build result map and validate coverage
@@ -3299,13 +3313,27 @@ func generateModuleThemes(ctx context.Context, provider llm.Provider, projectNam
 	assigned := make(map[string]bool)
 
 	for _, entry := range entries {
-		if entry.Theme == "" || len(entry.Modules) == 0 {
+		if entry.Theme == "" {
 			continue
 		}
+		// New dir-based cluster format
+		for _, dir := range entry.Dirs {
+			if nodes, ok := dirIndex[dir]; ok {
+				for _, n := range nodes {
+					if !assigned[n.Name] {
+						result[entry.Theme] = append(result[entry.Theme], n)
+						assigned[n.Name] = true
+					}
+				}
+			}
+		}
+		// Old module-name format (fuzzy matching)
 		for _, modName := range entry.Modules {
-			if n, ok := nodeMap[modName]; ok {
-				result[entry.Theme] = append(result[entry.Theme], n)
-				assigned[modName] = true
+			if n := resolveModuleName(modName, nodeMap); n != nil {
+				if !assigned[n.Name] {
+					result[entry.Theme] = append(result[entry.Theme], n)
+					assigned[n.Name] = true
+				}
 			}
 		}
 	}
@@ -3331,19 +3359,14 @@ func generateModuleThemes(ctx context.Context, provider llm.Provider, projectNam
 		result[bestTheme] = append(result[bestTheme], n)
 	}
 
-	// Remove "其他" / "Other" / "Misc" bucket — redistribute to real themes
-	if otherNodes, ok := result["其他"]; ok {
-		delete(result, "其他")
-		for _, n := range otherNodes {
-			best := findClosestTheme(n.Name, result)
-			result[best] = append(result[best], n)
-		}
-	}
-	if otherNodes, ok := result["Other"]; ok {
-		delete(result, "Other")
-		for _, n := range otherNodes {
-			best := findClosestTheme(n.Name, result)
-			result[best] = append(result[best], n)
+	// Remove "其他"/"Other"/"Misc" — redistribute to real themes
+	for _, bucket := range []string{"其他", "Other", "Misc"} {
+		if nodes, ok := result[bucket]; ok {
+			delete(result, bucket)
+			for _, n := range nodes {
+				best := findClosestTheme(n.Name, result)
+				result[best] = append(result[best], n)
+			}
 		}
 	}
 
@@ -3524,6 +3547,7 @@ func requestModuleClassification(ctx context.Context, provider llm.Provider, pro
 
 	var entries []struct {
 		Theme   string   `json:"theme"`
+		Dirs    []string `json:"dirs"`
 		Modules []string `json:"modules"`
 	}
 	if err := json.Unmarshal([]byte(response), &entries); err != nil {
@@ -3537,51 +3561,249 @@ func requestModuleClassification(ctx context.Context, provider llm.Provider, pro
 	return result
 }
 
-// buildModuleThemesPrompt builds the LLM prompt for semantic module grouping.
-func buildModuleThemesPrompt(projectName string, graph *grapher.Graph) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "你是一位资深软件架构师，正在为一本代码库技术书籍设计目录结构。\n\n")
-	cleanNodes := filterNonNoiseModules(graph.Nodes)
-	fmt.Fprintf(&b, "项目：%s\n", projectName)
-	fmt.Fprintf(&b, "模块总数：%d\n\n", len(cleanNodes))
-	fmt.Fprintf(&b, "请分析以下所有模块，将它们按语义归入 3-8 个有意义的主题章节中。\n\n")
+// dirCluster represents a group of modules within the same directory tree,
+// pre-clustered for the LLM to name and optionally merge.
+type dirCluster struct {
+	Dir     string   // directory path, e.g. "backend/src"
+	Count   int      // number of modules in this cluster
+	Exts    []string // file extension distribution (top 3), e.g. ["java(120)","py(30)"]
+	Samples []string // up to 5 representative module names
+}
 
-	// List all modules with their inferred responsibilities and roles
-	roles := graph.InferModuleRoles()
-	roleMap := make(map[string]string)
-	for _, r := range roles {
-		roleMap[r.Name] = r.Role
+// buildDirectoryClusters groups graph nodes by directory, merging tiny clusters
+// into the nearest larger one. Returns at most 20 clusters sorted by size.
+func buildDirectoryClusters(graph *grapher.Graph) []dirCluster {
+	nodes := filterNonNoiseModules(graph.Nodes)
+	if len(nodes) == 0 {
+		return nil
 	}
 
-	fmt.Fprintf(&b, "## 模块清单\n\n")
-	for _, n := range cleanNodes {
-		resp := inferModuleResponsibility(n)
-		role := roleMap[n.Name]
-		if role == "" {
-			role = "通用"
+	// Group by top-level directory
+	topDirs := make(map[string][]*grapher.Node)
+	for _, n := range nodes {
+		clean := strings.ReplaceAll(n.Filename, "\\", "/")
+		// Extract top-level dir: first path segment
+		seg := strings.SplitN(clean, "/", 2)
+		top := seg[0]
+		topDirs[top] = append(topDirs[top], n)
+	}
+
+	// Split large groups (> 100 modules) by second level
+	var raw []dirCluster
+	for dir, ns := range topDirs {
+		if len(ns) > 100 {
+			subDirs := make(map[string][]*grapher.Node)
+			for _, n := range ns {
+				clean := strings.ReplaceAll(n.Filename, "\\", "/")
+				parts := strings.SplitN(clean, "/", 3)
+				sub := parts[0]
+				if len(parts) > 1 {
+					sub += "/" + parts[1]
+				}
+				subDirs[sub] = append(subDirs[sub], n)
+			}
+			for sub, sns := range subDirs {
+				raw = append(raw, makeCluster(sub, sns))
+			}
+		} else {
+			raw = append(raw, makeCluster(dir, ns))
 		}
-		// List top dependencies
-		deps := graph.DependenciesOf(n.Name)
-		depStr := strings.Join(deps, ", ")
-		if len(deps) > 3 {
-			depStr = strings.Join(deps[:3], ", ")
+	}
+
+	// Merge tiny clusters (< 3 modules) into the nearest larger cluster
+	var result []dirCluster
+	var tiny []dirCluster
+	for _, c := range raw {
+		if c.Count < 3 {
+			tiny = append(tiny, c)
+		} else {
+			result = append(result, c)
 		}
-		if depStr == "" {
-			depStr = "无"
+	}
+	for _, t := range tiny {
+		best := findClosestCluster(t, result)
+		if best >= 0 {
+			result[best].Count += t.Count
+			result[best].Samples = append(result[best].Samples, t.Samples...)
+			if len(result[best].Samples) > 5 {
+				result[best].Samples = result[best].Samples[:5]
+			}
+			result[best].Exts = mergeExtCounts(result[best].Exts, t.Exts, result[best].Count)
+		} else {
+			result = append(result, t)
 		}
-		fmt.Fprintf(&b, "- **%s**\n  职责：%s\n  架构角色：%s\n  依赖：%s\n\n",
-			n.Name, resp, role, depStr)
+	}
+
+	// Sort by count descending, cap at 20
+	sort.Slice(result, func(i, j int) bool { return result[i].Count > result[j].Count })
+	if len(result) > 20 {
+		result = result[:20]
+	}
+	return result
+}
+
+func makeCluster(dir string, nodes []*grapher.Node) dirCluster {
+	c := dirCluster{Dir: dir, Count: len(nodes)}
+	extCount := make(map[string]int)
+	for i, n := range nodes {
+		if i < 5 {
+			c.Samples = append(c.Samples, n.Filename)
+		}
+		ext := strings.ToLower(filepath.Ext(n.Filename))
+		if ext != "" {
+			extCount[ext]++
+		}
+	}
+	// Top 3 extensions
+	type ec struct{ ext string; n int }
+	var ecs []ec
+	for ext, n := range extCount {
+		ecs = append(ecs, ec{ext, n})
+	}
+	sort.Slice(ecs, func(i, j int) bool { return ecs[i].n > ecs[j].n })
+	for i, e := range ecs {
+		if i >= 3 {
+			break
+		}
+		c.Exts = append(c.Exts, fmt.Sprintf("%s(%d)", e.ext, e.n))
+	}
+	return c
+}
+
+func findClosestCluster(c dirCluster, candidates []dirCluster) int {
+	best, bestScore := -1, -1
+	lower := strings.ToLower(c.Dir)
+	for i, t := range candidates {
+		score := keywordOverlap(lower, strings.ToLower(t.Dir))
+		if score > bestScore {
+			bestScore, best = score, i
+		}
+	}
+	return best
+}
+
+func mergeExtCounts(a, b []string, total int) []string {
+	// Simple: just re-count from the merged set. We take the top 3 from combined.
+	m := make(map[string]int)
+	for _, s := range a {
+		parts := strings.SplitN(s, "(", 2)
+		if len(parts) == 2 {
+			m[parts[0]] += atoi(parts[1])
+		}
+	}
+	for _, s := range b {
+		parts := strings.SplitN(s, "(", 2)
+		if len(parts) == 2 {
+			m[parts[0]] += atoi(parts[1])
+		}
+	}
+	type ec struct{ ext string; n int }
+	var ecs []ec
+	for ext, n := range m {
+		ecs = append(ecs, ec{ext, n})
+	}
+	sort.Slice(ecs, func(i, j int) bool { return ecs[i].n > ecs[j].n })
+	var out []string
+	for i, e := range ecs {
+		if i >= 3 {
+			break
+		}
+		out = append(out, fmt.Sprintf("%s(%d)", e.ext, e.n))
+	}
+	return out
+}
+
+func atoi(s string) int {
+	s = strings.TrimSuffix(s, ")")
+	v := 0
+	fmt.Sscanf(s, "%d", &v)
+	return v
+}
+
+// resolveModuleName tries to match an LLM-generated module name against the
+// actual node map. Supports: exact Name, exact Filename, Name+extension,
+// and prefix/contains as last resort.
+func resolveModuleName(input string, nodeMap map[string]*grapher.Node) *grapher.Node {
+	// 1. Exact match on Name (no extension)
+	if n, ok := nodeMap[input]; ok {
+		return n
+	}
+	// 2. Search by Filename
+	for _, n := range nodeMap {
+		if n.Filename == input {
+			return n
+		}
+	}
+	// 3. Try common extensions
+	for _, ext := range []string{".java", ".py", ".js", ".ts", ".tsx", ".vue", ".go", ".rs", ".cpp", ".c", ".h", ".kt", ".swift", ".rb", ".php"} {
+		if n, ok := nodeMap[input+ext]; ok {
+			return n
+		}
+	}
+	// 4. Try stripping known extensions from input (LLM might have included one)
+	withoutExt := strings.TrimSuffix(input, filepath.Ext(input))
+	if withoutExt != input {
+		if n, ok := nodeMap[withoutExt]; ok {
+			return n
+		}
+	}
+	// 5. Prefix match
+	lower := strings.ToLower(input)
+	var best *grapher.Node
+	bestLen := 0
+	for name, n := range nodeMap {
+		if strings.HasPrefix(strings.ToLower(name), lower) {
+			if len(name) > bestLen {
+				best, bestLen = n, len(name)
+			}
+		}
+	}
+	if best != nil {
+		return best
+	}
+	// 6. Contains match (last resort)
+	for name, n := range nodeMap {
+		if strings.Contains(strings.ToLower(name), lower) {
+			return n
+		}
+	}
+	return nil
+}
+
+// buildModuleThemesPrompt builds a compact LLM prompt using pre-clustered
+// directory groups — the LLM only names/merges clusters rather than examining
+// every individual module. Output size drops from ~50k to ~2k tokens.
+func buildModuleThemesPrompt(projectName string, graph *grapher.Graph) string {
+	clusters := buildDirectoryClusters(graph)
+	var b strings.Builder
+	fmt.Fprintf(&b, "你是一位资深软件架构师。请为以下项目的模块目录簇设计 3-8 个功能主题。\n\n")
+	fmt.Fprintf(&b, "项目：%s\n", projectName)
+	fmt.Fprintf(&b, "模块总数：%d\n", len(filterNonNoiseModules(graph.Nodes)))
+	fmt.Fprintf(&b, "目录簇：%d 个（已按目录结构预聚类）\n\n", len(clusters))
+
+	fmt.Fprintf(&b, "## 目录簇\n\n")
+	for _, c := range clusters {
+		langs := ""
+		if len(c.Exts) > 0 {
+			langs = "  [" + strings.Join(c.Exts, ", ") + "]"
+		}
+		fmt.Fprintf(&b, "### %s/（%d 个模块）%s\n", c.Dir, c.Count, langs)
+		if len(c.Samples) > 0 {
+			fmt.Fprintf(&b, "代表：%s\n", strings.Join(c.Samples, ", "))
+		}
+		fmt.Fprintln(&b)
 	}
 
 	fmt.Fprintf(&b, "## 要求\n")
-	fmt.Fprintf(&b, "1. 将每个模块归入恰好一个主题（**类型定义和接口**优先与使用它们的业务逻辑归入同一主题，不要单独成章）\n")
-	fmt.Fprintf(&b, "2. 主题名称用 3-8 个中文字，体现该主题的核心价值，如\"入口与命令行\"\"数据持久化\"\n")
-	fmt.Fprintf(&b, "3. 主题数量 3-8 个，每个主题至少包含 2 个模块\n")
-	fmt.Fprintf(&b, "4. 不要创建\"其他\"\"杂项\"\"Misc\"类主题——每个模块都必须归入有意义的主题\n")
-	fmt.Fprintf(&b, "5. 按理解难度排序（基础/入口 → 进阶/业务 → 深入/基础设施）\n\n")
-	fmt.Fprintf(&b, "输出格式（严格的 JSON 数组，不要输出其他内容）：\n")
-	fmt.Fprintf(&b, `[{"theme":"主题名","modules":["module/a","module/b"]}]`+"\n\n")
-	fmt.Fprintf(&b, "现在请输出 JSON：")
+	fmt.Fprintf(&b, "1. 将上述目录簇合并/归类为 3-8 个主题（每个主题可横跨多个目录簇）\n")
+	fmt.Fprintf(&b, "2. 主题名称用 3-8 个中文字，体现核心价值，如\"数据持久化\"\"入口与界面\"\n")
+	fmt.Fprintf(&b, "3. 每个主题至少包含 1 个目录簇\n")
+	fmt.Fprintf(&b, "4. 不要创建\"其他\"\"杂项\"类主题\n")
+	fmt.Fprintf(&b, "5. 按理解难度排序（基础→进阶→深入）\n")
+	fmt.Fprintf(&b, "6. 参考语言分布信息，多语言项目在分组时考虑技术栈差异\n\n")
+	fmt.Fprintf(&b, "输出 JSON（不要其他内容）：\n")
+	fmt.Fprintf(&b, `[{"theme":"主题名","dirs":["dir/a","dir/b"]}]`+"\n\n")
+	fmt.Fprintf(&b, "现在输出 JSON：")
 
 	return b.String()
 }
