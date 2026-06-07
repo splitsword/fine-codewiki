@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-08 — fix(docgen): 模块分组 LLM 失败时直接回退静态 + dir 模糊匹配 + 调试输出 (052ecbb)
+
 - 2026-06-08 — feat(docgen): C 方案 — 模块分组改为目录聚类 + LLM 命名（保留 D 模糊匹配） (c1f7de7)
 
 - 2026-06-07 — fix(docgen): 函数描述错峰到 Phase1 wg.Wait 之后（D方案精确版） (98b36a6)

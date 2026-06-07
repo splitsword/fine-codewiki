@@ -3316,9 +3316,20 @@ func generateModuleThemes(ctx context.Context, provider llm.Provider, projectNam
 		if entry.Theme == "" {
 			continue
 		}
-		// New dir-based cluster format
+		// New dir-based cluster format (with normalization + fuzzy fallback)
 		for _, dir := range entry.Dirs {
-			if nodes, ok := dirIndex[dir]; ok {
+			dir = strings.TrimSuffix(dir, "/")
+			nodes, ok := dirIndex[dir]
+			if !ok {
+				// Fuzzy: try matching dirIndex keys that contain or start with this dir
+				for key, ns := range dirIndex {
+					if strings.HasPrefix(key, dir) || strings.HasSuffix(key, dir) {
+						nodes = append(nodes, ns...)
+						ok = true
+					}
+				}
+			}
+			if ok {
 				for _, n := range nodes {
 					if !assigned[n.Name] {
 						result[entry.Theme] = append(result[entry.Theme], n)
@@ -3346,11 +3357,18 @@ func generateModuleThemes(ctx context.Context, provider llm.Provider, projectNam
 		}
 	}
 
-	// If too many unassigned or too few themes, use two-phase LLM fallback
+	// If too many unassigned, the new dir-based format likely failed —
+	// fall back directly to static grouping (faster and deterministic).
 	if len(unassigned) > len(graph.Nodes)/3 || len(result) < 2 {
-		warnf("LLM 一轮覆盖率不足（%d/%d 未分配），启动两阶段回退...",
+		warnf("LLM 分组覆盖率不足（%d/%d 未分配），回退静态分组",
 			len(unassigned), len(graph.Nodes))
-		return generateModuleThemesTwoPhase(ctx, provider, projectName, graph, result, unassigned)
+		// Log a snippet of the LLM response for debugging
+		if len(response) > 200 {
+			warnf("LLM 返回前 200 字：%s", response[:200])
+		} else {
+			warnf("LLM 返回：%s", response)
+		}
+		return groupModulesByTheme(graph)
 	}
 
 	// Distribute unassigned modules to the closest theme by naming similarity
