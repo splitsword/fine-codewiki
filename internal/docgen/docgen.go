@@ -5271,8 +5271,11 @@ func parseFunctionDescriptions(response string, funcs []funcRef) map[string]stri
 		name = strings.TrimSuffix(name, "**")
 		name = strings.TrimPrefix(name, "`")
 		name = strings.TrimSuffix(name, "`")
-		// Strip trailing parentheses that LLM often adds, e.g. "HookRegistry.clear()"
+		// Strip trailing parentheses: ASCII () and full-width （）
 		if idx := strings.Index(name, "("); idx > 0 {
+			name = name[:idx]
+		}
+		if idx := strings.Index(name, "（"); idx > 0 {
 			name = name[:idx]
 		}
 		desc := strings.TrimSpace(parts[1])
