@@ -284,7 +284,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	}
 	cp := loadWikiCheckpoint(cpPath)
 
-	readme := loadProjectReadme(sourceDir)
+	readme := loadProjectDocs(sourceDir)
 
 	// Status channel for structured concurrent output
 	statusCh := make(chan statusMsg, 40)
@@ -820,6 +820,152 @@ func loadProjectReadme(dir string) string {
 	return ""
 }
 
+// projectDoc 表示一篇被探测到的项目文档。
+type projectDoc struct {
+	title   string // 相对项目根目录的路径，用于在 prompt 中标注来源
+	content string
+}
+
+// docNameKeywords 匹配需求/设计/用户指导/PRD 等文档文件名（小写、中英文）。
+// 顺序即优先级：靠前的文档对"项目是什么"更具说明价值。
+var docNameKeywords = []string{
+	"readme", "prd", "requirement", "需求",
+	"design", "设计", "architecture", "架构",
+	"spec", "specification", "规格",
+	"overview", "概述", "introduction", "简介",
+	"guide", "manual", "tutorial", "getting-started", "getting_started",
+	"用户指南", "使用指南", "用户手册", "使用手册", "操作手册", "快速开始", "入门",
+}
+
+// docFileExts 限定可作为文档读取的文本扩展名。
+var docFileExts = map[string]bool{
+	".md": true, ".markdown": true, ".txt": true, ".rst": true, ".adoc": true,
+}
+
+// loadProjectDocs 在 README 之外，进一步探测需求/设计/用户指导/PRD 等中英文文档
+// （项目根目录顶层 + 递归 doc/docs 目录），读取并合并关键内容，
+// 为 LLM 提供真实的业务语义来源，避免在缺乏 README 时仅凭项目标题臆测。
+func loadProjectDocs(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	readme := loadProjectReadme(dir)
+	docs := collectProjectDocs(dir)
+	if readme == "" && len(docs) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	const maxTotalRunes = 8000
+	total := 0
+	appendDoc := func(title, content string) {
+		content = strings.TrimSpace(content)
+		if content == "" || total >= maxTotalRunes {
+			return
+		}
+		runes := []rune(content)
+		if remain := maxTotalRunes - total; len(runes) > remain {
+			runes = append(runes[:remain:remain], []rune("\n...（内容已截断）")...)
+		}
+		fmt.Fprintf(&b, "### %s\n%s\n\n", title, string(runes))
+		total += len(runes)
+	}
+	if readme != "" {
+		appendDoc("README", readme)
+	}
+	for _, d := range docs {
+		appendDoc(d.title, d.content)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// collectProjectDocs 在根目录顶层及递归的 doc/docs 目录中，
+// 按文件名关键词优先级查找文档，去重后返回（README 由 loadProjectReadme 单独处理）。
+func collectProjectDocs(dir string) []projectDoc {
+	// 1. 收集候选文件：根目录顶层 + doc/docs 递归（带遍历上限，避免大仓库开销）
+	var candidates []string
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				candidates = append(candidates, filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+	for _, sub := range []string{"doc", "docs"} {
+		root := filepath.Join(dir, sub)
+		if info, err := os.Stat(root); err != nil || !info.IsDir() {
+			continue
+		}
+		walked := 0
+		filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			walked++
+			if walked > 500 {
+				return filepath.SkipDir
+			}
+			if info != nil && !info.IsDir() {
+				candidates = append(candidates, path)
+			}
+			return nil
+		})
+	}
+
+	// 2. 按关键词优先级匹配并读取，去重，限制总篇数
+	var result []projectDoc
+	seen := map[string]bool{}
+	const maxDocs = 12
+	for _, kw := range docNameKeywords {
+		for _, path := range candidates {
+			if seen[path] {
+				continue
+			}
+			base := strings.ToLower(filepath.Base(path))
+			ext := strings.ToLower(filepath.Ext(path))
+			if !docFileExts[ext] {
+				continue
+			}
+			name := strings.TrimSuffix(base, ext)
+			if !strings.Contains(name, kw) {
+				continue
+			}
+			seen[path] = true
+			// README 系列已由 loadProjectReadme 处理，跳过避免重复
+			if strings.HasPrefix(name, "readme") {
+				continue
+			}
+			content := readDocFile(path)
+			if content == "" {
+				continue
+			}
+			rel, err := filepath.Rel(dir, path)
+			if err != nil {
+				rel = filepath.Base(path)
+			}
+			result = append(result, projectDoc{title: filepath.ToSlash(rel), content: content})
+			if len(result) >= maxDocs {
+				return result
+			}
+		}
+	}
+	return result
+}
+
+// readDocFile 读取单篇文档，去除 frontmatter 并按 rune 截断，避免 prompt 过长。
+func readDocFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	text := strings.TrimSpace(stripFrontmatter(data))
+	runes := []rune(text)
+	if len(runes) > 3000 {
+		text = string(runes[:3000]) + "\n...（已截断）"
+	}
+	return text
+}
+
 // isBuildArtifact returns true for paths that are typically build outputs.
 func isBuildArtifact(name string) bool {
 	lower := strings.ToLower(name)
@@ -927,10 +1073,11 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName, readme, language str
 	fmt.Fprintf(&b, "5. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：\n")
 	fmt.Fprintf(&b, "   本项目采用分层架构，将业务逻辑与数据访问解耦。\n")
 	fmt.Fprintf(&b, "   *来源：`services/user_service.py`、`repositories/user_repository.py`*\n")
-	fmt.Fprintf(&b, "6. 使用简体中文\n\n")
+	fmt.Fprintf(&b, "6. 使用简体中文\n")
+	fmt.Fprintf(&b, "7. 重要：项目名仅为生成时指定的展示标题，可能与真实业务无关，严禁据此推断项目的业务领域或用途；必须依据下方的项目文档与代码结构（模块名、类名、函数名）来判断项目实际做什么。若信息不足以确定业务领域，宁可如实概括代码结构，也不要臆造行业背景。\n\n")
 
 	if readme != "" {
-		fmt.Fprintf(&b, "【项目 README】\n%s\n\n", readme)
+		fmt.Fprintf(&b, "【项目文档】\n%s\n\n", readme)
 	}
 
 	fmt.Fprintf(&b, "项目：%s\n", projectName)
@@ -961,6 +1108,23 @@ func buildOverviewPrompt(graph *grapher.Graph, projectName, readme, language str
 		}
 		if len(n.Functions) > 0 {
 			line += fmt.Sprintf("（%d 个函数）", len(n.Functions))
+		}
+		// 注入代表性类名/函数名，给 LLM 真实的代码语义而非仅模块名
+		var ids []string
+		for _, c := range n.Classes {
+			if len(ids) >= 6 {
+				break
+			}
+			ids = append(ids, c.Name)
+		}
+		for _, f := range n.Functions {
+			if len(ids) >= 6 {
+				break
+			}
+			ids = append(ids, f.Name)
+		}
+		if len(ids) > 0 {
+			line += "：" + strings.Join(ids, ", ")
 		}
 		fmt.Fprintln(&b, line)
 	}
@@ -1314,9 +1478,10 @@ func buildArchitecturePrompt(graph *grapher.Graph, projectName, readme, language
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "你是一位资深软件架构师，正在为 %s 项目的代码 Wiki 撰写架构说明。\n", projectName)
-	fmt.Fprintf(&b, "目标读者是刚加入团队的开发者，他们需要在 5 分钟内理解系统的整体结构和设计逻辑。\n\n")
+	fmt.Fprintf(&b, "目标读者是刚加入团队的开发者，他们需要在 5 分钟内理解系统的整体结构和设计逻辑。\n")
+	fmt.Fprintf(&b, "注意：项目名仅为展示标题，可能与真实业务无关，请勿据此臆测业务领域，务必基于下方文档、目录结构与静态分析结果来判断。\n\n")
 
-	// --- README 架构信息提取 ---
+	// --- 项目文档架构信息提取 ---
 	if readme != "" {
 		hints := extractArchitectureHints(readme)
 		if hints != "" {
@@ -1489,10 +1654,11 @@ func buildWhatItDoesPrompt(graph *grapher.Graph, projectName, readme, language s
 	fmt.Fprintf(&b, "6. 每个段落末尾使用 `*来源：` 标注该段落涉及的核心文件，例如：\n")
 	fmt.Fprintf(&b, "   本项目提供用户认证与授权能力，支持多种登录方式。\n")
 	fmt.Fprintf(&b, "   *来源：`auth/service.py`、`oauth/providers.py`*\n")
-	fmt.Fprintf(&b, "7. 使用简体中文\n\n")
+	fmt.Fprintf(&b, "7. 使用简体中文\n")
+	fmt.Fprintf(&b, "8. 重要：项目名仅为展示标题，可能与真实业务无关，严禁据此臆测业务领域或行业背景；必须依据下方项目文档与代码结构判断项目实际能力。\n\n")
 
 	if readme != "" {
-		fmt.Fprintf(&b, "【项目 README】\n%s\n\n", readme)
+		fmt.Fprintf(&b, "【项目文档】\n%s\n\n", readme)
 	}
 
 	entries := graph.EntryPoints()
