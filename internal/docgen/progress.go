@@ -205,11 +205,7 @@ func (p *progressRenderer) drawBar() {
 
 	var parts []string
 	for _, a := range p.active {
-		if a.detail != "" {
-			parts = append(parts, a.detail)
-		} else {
-			parts = append(parts, a.name)
-		}
+		parts = append(parts, a.name)
 	}
 	activeStr := strings.Join(parts, "  ")
 	if len(parts) > 3 {
