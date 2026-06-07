@@ -54,11 +54,6 @@ type Wiki struct {
 	CallEdges           []sequencer.CallEdge       // raw call edges for per-module sequence diagrams
 }
 
-// statusMsg is sent through the status channel for structured concurrent output.
-type statusMsg struct {
-	task string
-	msg  string
-}
 
 // wikiCheckpoint persists partial LLM-enhanced results for resume support.
 type wikiCheckpoint struct {
@@ -286,21 +281,14 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 	readme := loadProjectDocs(sourceDir)
 
-	// Status channel for structured concurrent output
-	statusCh := make(chan statusMsg, 40)
-	doneCh := make(chan struct{})
-	go func() {
-		defer close(doneCh)
-		for s := range statusCh {
-			fmt.Printf("[%s] %s\n", s.task, s.msg)
-		}
-	}()
-	report := func(task, msg string) {
-		select {
-		case statusCh <- statusMsg{task: task, msg: msg}:
-		default:
-		}
-	}
+	// 进度渲染器：TTY 下动画进度条 + 留痕，非 TTY 逐行打印。
+	pr := newProgressRenderer()
+	pr.start()
+	defer pr.stop()
+
+	activeRenderer = pr
+	// Phase 1 共 7 个并发任务（含函数描述），总数后续按批次动态调整
+	pr.bump(7)
 
 	// Static generation — always runs first, instant
 	staticOverview, err := GenerateOverviewMarkdown(graph, projectName)
@@ -328,7 +316,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	var projectStructureNarrative string
 
 		// ─── Phase 1: All independent LLM tasks run concurrently ───
-		report("Phase 1", fmt.Sprintf("启动 %d 个并行 LLM 任务", 6))
+		pr.log(fmt.Sprintf("[Phase 1] 启动 %d 个并行 LLM 任务", 6))
 		phase1Start := time.Now()
 
 		var wg sync.WaitGroup
@@ -338,23 +326,23 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		// Task 1: Overview
 		if cp.Overview != "" {
 			overview = cp.Overview
-			report("项目概述", "从 checkpoint 恢复")
+			pr.done("项目概述", "从 checkpoint 恢复")
 		} else {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				report("项目概述", "开始生成...")
+				pr.update("项目概述", "开始生成...")
 				prompt := buildOverviewPrompt(graph, projectName, readme, language)
 				enhanced, err := streamComplete(ctx, provider, prompt)
 				if err != nil {
-					report("项目概述", fmt.Sprintf("LLM 失败 (%v)，回退静态", err))
+					pr.done("项目概述", fmt.Sprintf("LLM 失败 (%v)，回退静态", err))
 				} else if enhanced == "" {
-					report("项目概述", "LLM 返回空，回退静态")
+					pr.done("项目概述", "LLM 返回空，回退静态")
 				} else if isChecklistLike(enhanced, graph) {
-					report("项目概述", "内容像模块清单，回退静态")
+					pr.done("项目概述", "内容像模块清单，回退静态")
 				} else {
 					overview = fmt.Sprintf("# %s\n\n%s", projectName, enhanced)
-					report("项目概述", "生成完成")
+					pr.done("项目概述", "生成完成")
 				}
 			}()
 		}
@@ -362,21 +350,21 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		// Task 2: What It Does
 		if cp.WhatItDoes != "" {
 			whatItDoes = cp.WhatItDoes
-			report("核心能力", "从 checkpoint 恢复")
+			pr.done("核心能力", "从 checkpoint 恢复")
 		} else {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				report("核心能力", "开始生成...")
+				pr.update("核心能力", "开始生成...")
 				prompt := buildWhatItDoesPrompt(graph, projectName, readme, language)
 				enhanced, err := streamComplete(ctx, provider, prompt)
 				if err != nil {
-					report("核心能力", fmt.Sprintf("LLM 失败 (%v)，回退静态", err))
+					pr.done("核心能力", fmt.Sprintf("LLM 失败 (%v)，回退静态", err))
 				} else if enhanced != "" && !isChecklistLike(enhanced, graph) {
 					whatItDoes = enhanced
-					report("核心能力", "生成完成")
+					pr.done("核心能力", "生成完成")
 				} else {
-					report("核心能力", "内容无效，回退静态")
+					pr.done("核心能力", "内容无效，回退静态")
 				}
 			}()
 		}
@@ -384,44 +372,44 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		// Task 3: Architecture Narrative
 		if cp.ArchNarrative != "" {
 			archNarrative = cp.ArchNarrative
-			report("架构描述", "从 checkpoint 恢复")
+			pr.done("架构描述", "从 checkpoint 恢复")
 		} else {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				report("架构描述", "开始生成...")
+				pr.update("架构描述", "开始生成...")
 				prompt := buildArchitecturePrompt(graph, projectName, readme, language)
 				enhanced, err := streamComplete(ctx, provider, prompt)
 				if err != nil {
-					report("架构描述", fmt.Sprintf("LLM 失败 (%v)，回退静态", err))
+					pr.done("架构描述", fmt.Sprintf("LLM 失败 (%v)，回退静态", err))
 				} else if enhanced == "" {
-					report("架构描述", "LLM 返回空，回退静态")
+					pr.done("架构描述", "LLM 返回空，回退静态")
 				} else if isChecklistLike(enhanced, graph) {
-					report("架构描述", "内容像模块清单，回退静态")
+					pr.done("架构描述", "内容像模块清单，回退静态")
 				} else {
 					archNarrative = enhanced
-					report("架构描述", "生成完成")
+					pr.done("架构描述", "生成完成")
 				}
 			}()
 		}
 
 		// Task 4: Module Themes
 		if cp.ModuleThemes != nil && len(cp.ModuleThemes) > 0 {
-			report("模块主题", "从 checkpoint 恢复")
+			pr.done("模块主题", "从 checkpoint 恢复")
 		} else if graph != nil {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				report("模块主题", "开始语义分组...")
+				pr.update("模块主题", "开始语义分组...")
 				themeGroupsResult = generateModuleThemes(ctx, provider, projectName, graph)
-				report("模块主题", fmt.Sprintf("分组完成 → %d 个主题", len(themeGroupsResult)))
+				pr.done("模块主题", fmt.Sprintf("分组完成 → %d 个主题", len(themeGroupsResult)))
 			}()
 		}
 
 		// Task 5: Function Descriptions (parallel batching)
 		if maxLLMFunctions != 0 && len(cp.FuncDescMap) > 0 {
 			funcDescMap = cp.FuncDescMap
-			report("函数描述", fmt.Sprintf("从 checkpoint 恢复 %d 个函数", len(funcDescMap)))
+			pr.done("函数描述", fmt.Sprintf("从 checkpoint 恢复 %d 个函数", len(funcDescMap)))
 		} else if maxLLMFunctions != 0 {
 			wg.Add(1)
 			go func() {
@@ -436,7 +424,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 				}
 				topFuncs := selectTopFunctions(graph, callEdges, maxLLMFunctions)
 				if len(topFuncs) == 0 {
-					report("函数描述", "无需描述的函数")
+					pr.done("函数描述", "无需描述的函数")
 					return
 				}
 				fdm := make(map[string]string)
@@ -457,7 +445,11 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 					reqs = append(reqs, topFuncs[i:end])
 				}
 				totalBatches := (len(reqs) + concurrency - 1) / concurrency
-				report("函数描述", fmt.Sprintf("开始生成 %d 个函数（每请求 %d 个，每批并发 %d，共 %d 批）...", len(topFuncs), funcsPerReq, concurrency, totalBatches))
+				pr.update("函数描述", fmt.Sprintf("开始生成 %d 个函数（每请求 %d 个，每批并发 %d，共 %d 批）...", len(topFuncs), funcsPerReq, concurrency, totalBatches))
+				// 函数描述用 tick 逐个批次推进，总数调整为 totalBatches 次完成事件
+				if totalBatches > 1 {
+					pr.bump(totalBatches - 1)
+				}
 
 				for i := 0; i < len(reqs); i += concurrency {
 					end := i + concurrency
@@ -477,7 +469,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 							defer cancel()
 							enhanced, err := streamComplete(reqCtx, provider, prompt)
 							if err != nil {
-								report("函数描述", fmt.Sprintf("批次 %d/%d 失败 (%v)", batchNum, totalBatches, err))
+								pr.tick("函数描述", fmt.Sprintf("批次 %d/%d 失败 (%v)", batchNum, totalBatches, err))
 								return
 							}
 							if enhanced != "" {
@@ -491,7 +483,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 						}(r)
 					}
 					batchWG.Wait()
-					report("函数描述", fmt.Sprintf("第 %d/%d 批完成（累计 %d/%d 个函数）", batchNum, totalBatches, len(fdm), len(topFuncs)))
+				pr.tick("函数描述", fmt.Sprintf("第 %d/%d 批完成（累计 %d/%d 个函数）", batchNum, totalBatches, len(fdm), len(topFuncs)))
 				}
 
 				funcDescMap = fdm
@@ -502,28 +494,28 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 						totalFuncs += len(c.Methods)
 					}
 				}
-				report("函数描述", fmt.Sprintf("完成：%d/%d（%.0f%%）", len(fdm), totalFuncs, float64(len(fdm))*100/float64(totalFuncs)))
+				pr.log(fmt.Sprintf("[函数描述] 完成：%d/%d（%.0f%%）", len(fdm), totalFuncs, float64(len(fdm))*100/float64(totalFuncs)))
 			}()
 		}
 
 		// Task 6: Project Structure Narrative (LLM-based, replaces static table)
 		if cp.ProjectStructure != "" {
 			projectStructureNarrative = cp.ProjectStructure
-			report("项目结构", "从 checkpoint 恢复")
+			pr.done("项目结构", "从 checkpoint 恢复")
 		} else {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				report("项目结构", "开始生成叙事...")
+				pr.update("项目结构", "开始生成叙事...")
 				prompt := buildProjectStructurePrompt(graph, projectName)
 				enhanced, err := streamComplete(ctx, provider, prompt)
 				if err != nil {
-					report("项目结构", fmt.Sprintf("LLM 失败 (%v)，回退静态生成", err))
+					pr.done("项目结构", fmt.Sprintf("LLM 失败 (%v)，回退静态生成", err))
 				} else if enhanced != "" {
 					projectStructureNarrative = enhanced
-					report("项目结构", "叙事生成完成")
+					pr.done("项目结构", "叙事生成完成")
 				} else {
-					report("项目结构", "LLM 返回空，回退静态生成")
+					pr.done("项目结构", "LLM 返回空，回退静态生成")
 				}
 			}()
 		}
@@ -531,18 +523,18 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		// Task 7: Module Chinese Names
 		if cp.ModuleChineseNames != nil && len(cp.ModuleChineseNames) > 0 {
 			moduleChineseNames = cp.ModuleChineseNames
-			report("模块中文名", fmt.Sprintf("从 checkpoint 恢复 %d 个", len(moduleChineseNames)))
+			pr.done("模块中文名", fmt.Sprintf("从 checkpoint 恢复 %d 个", len(moduleChineseNames)))
 		} else if graph != nil && len(graph.Nodes) > 0 {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				report("模块中文名", "开始生成...")
+				pr.update("模块中文名", "开始生成...")
 				names := generateModuleChineseNames(ctx, provider, projectName, graph.Nodes)
 				if len(names) > 0 {
 					moduleChineseNames = names
-					report("模块中文名", fmt.Sprintf("生成完成 → %d 个", len(names)))
+				pr.done("模块中文名", fmt.Sprintf("生成完成 → %d 个", len(names)))
 				} else {
-					report("模块中文名", "生成失败，将使用原始英文名")
+					pr.done("模块中文名", "生成失败，将使用原始英文名")
 				}
 			}()
 		}
@@ -553,27 +545,26 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		// Propagate fatal errors
 		for err := range fatalCh {
 			if err != nil {
-				close(statusCh)
-				<-doneCh
 				return nil, err
 			}
 		}
 
-		report("Phase 1", fmt.Sprintf("全部完成（耗时 %v）", time.Since(phase1Start).Round(time.Second)))
+		pr.log(fmt.Sprintf("[Phase 1] 全部完成（耗时 %v）", time.Since(phase1Start).Round(time.Second)))
 
 		// Key Concepts: recover from checkpoint or extract from architecture narrative
+		pr.bump(1) // 设计决策
 		if cp.KeyConcepts != "" {
 			keyConcepts = cp.KeyConcepts
-			report("设计决策", "从 checkpoint 恢复")
+			pr.done("设计决策", "从 checkpoint 恢复")
 		} else if archNarrative != "" {
 			keyConcepts = extractKeyDesignDecisions(archNarrative)
 			if keyConcepts != "" {
-				report("设计决策", "从架构叙事提取完成")
+				pr.done("设计决策", "从架构叙事提取完成")
 			}
 		}
 		if keyConcepts == "" {
 			keyConcepts = GenerateKeyConceptsFallback(graph, projectName)
-			report("设计决策", "静态回退")
+			pr.done("设计决策", "静态回退")
 		}
 
 		// Replace static project structure with LLM-generated narrative
@@ -615,7 +606,8 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	}
 
 	// ─── Phase 2: Tasks depending on Phase 1 outputs ───
-	report("Phase 2", "启动依赖任务...")
+	pr.bump(2) // 学习路径 + 章节标题
+	pr.log("[Phase 2] 启动依赖任务...")
 	phase2Start := time.Now()
 
 
@@ -627,26 +619,26 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		// Learning Path
 		if cp.LearningPath != "" {
 			learningPath = cp.LearningPath
-			report("学习路径", "从 checkpoint 恢复")
+			pr.done("学习路径", "从 checkpoint 恢复")
 		} else {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
 				staticLP := GenerateLearningPathMarkdown(graph, projectName, hasConcepts)
-				report("学习路径", "开始生成...")
+				pr.update("学习路径", "开始生成...")
 				prompt := buildLearningPathPrompt(graph, projectName, language)
 				batchCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
 				defer cancel()
 				enhanced, err := streamComplete(batchCtx, provider, prompt)
 				if err != nil {
-					report("学习路径", fmt.Sprintf("LLM 失败 (%v)，静态回退", err))
+				pr.done("学习路径", fmt.Sprintf("LLM 失败 (%v)，静态回退", err))
 					learningPath = staticLP
 				} else if enhanced == "" {
-					report("学习路径", "LLM 返回空，静态回退")
+					pr.done("学习路径", "LLM 返回空，静态回退")
 					learningPath = staticLP
 				} else {
 					learningPath = fmt.Sprintf("# %s 学习路径\n\n%s", projectName, enhanced)
-					report("学习路径", "生成完成")
+					pr.done("学习路径", "生成完成")
 				}
 			}()
 		}
@@ -655,14 +647,14 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		if len(moduleThemes) > 0 {
 			if cp.ChapterTitles != nil && len(cp.ChapterTitles) > 0 {
 				chapterTitles = cp.ChapterTitles
-				report("章节标题", "从 checkpoint 恢复")
+				pr.done("章节标题", "从 checkpoint 恢复")
 			} else {
 				wg2.Add(1)
 				go func() {
 					defer wg2.Done()
-					report("章节标题", "开始生成...")
+					pr.update("章节标题", "开始生成...")
 					chapterTitles = generateChapterTitles(ctx, provider, projectName, moduleThemes, graph)
-					report("章节标题", "生成完成")
+					pr.done("章节标题", "生成完成")
 				}()
 			}
 		} else {
@@ -686,61 +678,58 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	// Architecture doc (LLM-enhanced text + static diagram/table append)
 	arch, err = GenerateArchitectureMarkdown(graph, archNarrative)
 	if err != nil {
-		close(statusCh)
-		<-doneCh
 		return nil, fmt.Errorf("generate architecture doc: %w", err)
 	}
 
 	// API Reference
 	apiRef, err = GenerateAPIReferenceMarkdown(graph, funcDescMap)
 	if err != nil {
-		close(statusCh)
-		<-doneCh
 		return nil, fmt.Errorf("generate api reference: %w", err)
 	}
 
-	report("Phase 2", fmt.Sprintf("全部完成（耗时 %v）", time.Since(phase2Start).Round(time.Second)))
+	pr.log(fmt.Sprintf("[Phase 2] 全部完成（耗时 %v）", time.Since(phase2Start).Round(time.Second)))
 
 	// ─── Phase 3: Theme-dependent tasks (chapter intros + narratives) ───
 	if provider != nil && len(moduleThemes) > 0 && len(chapterTitles) > 0 {
-		report("Phase 3", "启动主题相关任务...")
+		pr.bump(2) // 主题简介 + 章节叙事
+		pr.log("[Phase 3] 启动主题相关任务...")
 		phase3Start := time.Now()
 		var wg3 sync.WaitGroup
 
 		// Theme Intros
 		if cp.ThemeIntros != nil && len(cp.ThemeIntros) > 0 {
 			themeIntros = cp.ThemeIntros
-			report("主题简介", "从 checkpoint 恢复")
+			pr.done("主题简介", "从 checkpoint 恢复")
 		} else {
 			wg3.Add(1)
 			go func() {
 				defer wg3.Done()
-				report("主题简介", "开始生成...")
+				pr.update("主题简介", "开始生成...")
 				themeIntros = generateThemeIntros(ctx, provider, projectName, moduleThemes, chapterTitles, graph)
-				report("主题简介", "生成完成")
+				pr.done("主题简介", "生成完成")
 			}()
 		}
 
 		// Chapter Narratives (per-theme parallel inside)
 		if cp.ChapterNarratives != nil && len(cp.ChapterNarratives) > 0 {
 			chapterNarratives = cp.ChapterNarratives
-			report("章节叙事", fmt.Sprintf("从 checkpoint 恢复 %d 个", len(chapterNarratives)))
+			pr.done("章节叙事", fmt.Sprintf("从 checkpoint 恢复 %d 个", len(chapterNarratives)))
 		} else {
 			wg3.Add(1)
 			go func() {
 				defer wg3.Done()
-				report("章节叙事", "开始生成...")
-				chapterNarratives = generateChapterNarrativesParallel(ctx, provider, projectName, moduleThemes, chapterTitles, graph, report)
+				pr.update("章节叙事", "开始生成...")
+				chapterNarratives = generateChapterNarrativesParallel(ctx, provider, projectName, moduleThemes, chapterTitles, graph, pr)
 				if len(chapterNarratives) > 0 {
-					report("章节叙事", fmt.Sprintf("生成完成 → %d/%d 个主题", len(chapterNarratives), len(moduleThemes)))
+				pr.done("章节叙事", fmt.Sprintf("生成完成 → %d/%d 个主题", len(chapterNarratives), len(moduleThemes)))
 				} else {
-					report("章节叙事", "全部失败，将使用模块拼接模式")
+					pr.done("章节叙事", "全部失败，将使用模块拼接模式")
 				}
 			}()
 		}
 
 		wg3.Wait()
-		report("Phase 3", fmt.Sprintf("全部完成（耗时 %v）", time.Since(phase3Start).Round(time.Second)))
+		pr.log(fmt.Sprintf("[Phase 3] 全部完成（耗时 %v）", time.Since(phase3Start).Round(time.Second)))
 
 		if cpPath != "" {
 			cp.ThemeIntros = themeIntros
@@ -773,9 +762,6 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	if cpPath != "" {
 		_ = os.Remove(cpPath)
 	}
-
-	close(statusCh)
-	<-doneCh
 
 	return &Wiki{
 		ProjectName:         projectName,
@@ -2186,11 +2172,8 @@ func streamCollectWithLiveness(ctx context.Context, ch <-chan string, idleTimeou
 				}
 			}
 			timer.Reset(idleTimeout)
-			if charCount%500 < len([]rune(token)) {
-				fmt.Printf(".")
-			}
 		case <-timer.C:
-			fmt.Printf("\n警告：流式接收超过 %v 无新 token，中止\n", idleTimeout)
+			warnf("流式接收超过 %v 无新 token，中止", idleTimeout)
 			return raw.String(), false
 		case <-ctx.Done():
 			return raw.String(), false
@@ -2213,7 +2196,7 @@ func streamComplete(ctx context.Context, provider llm.Provider, prompt string) (
 	response, completed := streamCollectWithLiveness(ctx, ch, 3*time.Minute)
 	if response == "" {
 		if !completed {
-			fmt.Printf("（流式超时，降级到非流式）")
+			warnf("流式超时，降级到非流式")
 			return provider.Complete(ctx, prompt)
 		}
 		return "", fmt.Errorf("LLM 返回空响应")
@@ -2364,7 +2347,7 @@ func generateSingleChapterNarrative(ctx context.Context, provider llm.Provider, 
 
 // generateChapterNarrativesParallel generates narrative articles for all themes
 // in parallel using goroutines. Falls back to sequential execution if provider is nil.
-func generateChapterNarrativesParallel(ctx context.Context, provider llm.Provider, projectName string, themes map[string][]string, titles map[string]ChapterTitle, graph *grapher.Graph, report func(task, msg string)) map[string]string {
+func generateChapterNarrativesParallel(ctx context.Context, provider llm.Provider, projectName string, themes map[string][]string, titles map[string]ChapterTitle, graph *grapher.Graph, pr *progressRenderer) map[string]string {
 	if provider == nil || len(themes) == 0 {
 		return nil
 	}
@@ -2384,15 +2367,15 @@ func generateChapterNarrativesParallel(ctx context.Context, provider llm.Provide
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			report("章节叙事", fmt.Sprintf("开始生成：%s", title.Title))
+			pr.update("章节叙事", fmt.Sprintf("开始生成：%s", title.Title))
 			narrative := generateSingleChapterNarrative(ctx, provider, projectName, theme, title, modules, graph)
 			if narrative != "" {
 				mu.Lock()
 				result[theme] = narrative
 				mu.Unlock()
-				report("章节叙事", fmt.Sprintf("完成：%s（%d 字）", title.Title, len([]rune(narrative))))
+			pr.done("章节叙事", fmt.Sprintf("完成：%s（%d 字）", title.Title, len([]rune(narrative))))
 			} else {
-				report("章节叙事", fmt.Sprintf("失败：%s（将使用模块拼接模式）", title.Title))
+			pr.done("章节叙事", fmt.Sprintf("失败：%s（将使用模块拼接模式）", title.Title))
 			}
 		}()
 	}
