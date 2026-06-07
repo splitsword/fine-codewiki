@@ -441,42 +441,59 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 				}
 				fdm := make(map[string]string)
 				var fdmMu sync.Mutex
-				var batchWG sync.WaitGroup
-				batchSize := 8
-				totalBatches := (len(topFuncs) + batchSize - 1) / batchSize
-				report("函数描述", fmt.Sprintf("开始生成 %d 个函数（%d 批并行）...", len(topFuncs), totalBatches))
+				// 每个 LLM 请求描述 funcsPerReq 个函数，并发度 concurrency 控制同时在途的请求数：
+				// 一批最多 concurrency 个请求并发，批内并发、批间串行。
+				// 总批次 = ⌈函数数 / (并发数 × 每请求函数数)⌉。
+				funcsPerReq := 5
+				concurrency := 20
 
-				for i := 0; i < len(topFuncs); i += batchSize {
-					end := i + batchSize
+				// 先按每请求 funcsPerReq 个函数切分成请求单元
+				var reqs [][]funcRef
+				for i := 0; i < len(topFuncs); i += funcsPerReq {
+					end := i + funcsPerReq
 					if end > len(topFuncs) {
 						end = len(topFuncs)
 					}
-					batch := topFuncs[i:end]
-					batchNum := i/batchSize + 1
+					reqs = append(reqs, topFuncs[i:end])
+				}
+				totalBatches := (len(reqs) + concurrency - 1) / concurrency
+				report("函数描述", fmt.Sprintf("开始生成 %d 个函数（每请求 %d 个，每批并发 %d，共 %d 批）...", len(topFuncs), funcsPerReq, concurrency, totalBatches))
 
-					batchWG.Add(1)
-					go func(bn int, b []funcRef) {
-						defer batchWG.Done()
-						prompt := buildFunctionDescriptionPrompt(b)
-						batchCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
-						defer cancel()
-						enhanced, err := streamComplete(batchCtx, provider, prompt)
-						if err != nil {
-							report("函数描述", fmt.Sprintf("批次 %d/%d 失败 (%v)", bn, totalBatches, err))
-							return
-						}
-						if enhanced != "" {
-							batchDescs := parseFunctionDescriptions(enhanced, b)
-							fdmMu.Lock()
-							for k, v := range batchDescs {
-								fdm[k] = v
+				for i := 0; i < len(reqs); i += concurrency {
+					end := i + concurrency
+					if end > len(reqs) {
+						end = len(reqs)
+					}
+					batch := reqs[i:end]
+					batchNum := i/concurrency + 1
+
+					var batchWG sync.WaitGroup
+					for _, r := range batch {
+						batchWG.Add(1)
+						go func(fns []funcRef) {
+							defer batchWG.Done()
+							prompt := buildFunctionDescriptionPrompt(fns)
+							reqCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
+							defer cancel()
+							enhanced, err := streamComplete(reqCtx, provider, prompt)
+							if err != nil {
+								report("函数描述", fmt.Sprintf("批次 %d/%d 失败 (%v)", batchNum, totalBatches, err))
+								return
 							}
-							fdmMu.Unlock()
-						}
-					}(batchNum, batch)
+							if enhanced != "" {
+								descs := parseFunctionDescriptions(enhanced, fns)
+								fdmMu.Lock()
+								for k, v := range descs {
+									fdm[k] = v
+								}
+								fdmMu.Unlock()
+							}
+						}(r)
+					}
+					batchWG.Wait()
+					report("函数描述", fmt.Sprintf("第 %d/%d 批完成（累计 %d/%d 个函数）", batchNum, totalBatches, len(fdm), len(topFuncs)))
 				}
 
-				batchWG.Wait()
 				funcDescMap = fdm
 				totalFuncs := 0
 				for _, n := range graph.Nodes {
@@ -4778,8 +4795,19 @@ func selectTopFunctions(graph *grapher.Graph, callEdges []sequencer.CallEdge, ma
 		return nil
 	}
 
-	// Auto-compute target: at least 30% of total functions, with a floor of 10
-	target := int(float64(total) * 0.3)
+	// 覆盖率策略（按函数总规模分段）：
+	//   < 300      ：100% 全覆盖
+	//   300 - 600  ：覆盖 50%
+	//   > 600      ：覆盖 40%
+	var target int
+	switch {
+	case total < 300:
+		target = total
+	case total <= 600:
+		target = int(float64(total) * 0.5)
+	default:
+		target = int(float64(total) * 0.4)
+	}
 	if target < 10 {
 		target = min(10, total)
 	}

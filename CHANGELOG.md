@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-07 — feat(docgen): 优化函数描述覆盖率分段与批次并发生成 (8a70eb6)
+
 - 2026-05-30 — docs(readme): 追加 codewiki --help CLI 帮助信息 (1b78381)
 
 - 2026-05-30 — feat(pdf): Chrome headless PDF 导出 + export pdf 命令 (b0d2547)
