@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-07 — fix(docgen): 修复进度条计数器超总、任务残留、printf 破坏显示 (a5e36cc)
+
 - 2026-06-07 — fix(docgen): 函数描述并发度 20→10 降低流式超时 (859a83d)
 
 - 2026-06-07 — fix(docgen): 进度条活跃任务始终显示任务名而非 detail 文本 (caad119)
