@@ -407,14 +407,65 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			}()
 		}
 
+
+		// Task 6: Project Structure Narrative (LLM-based, replaces static table)
+		if cp.ProjectStructure != "" {
+			projectStructureNarrative = cp.ProjectStructure
+			pr.done("项目结构", "从 checkpoint 恢复")
+		} else {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				pr.update("项目结构", "开始生成叙事...")
+				prompt := buildProjectStructurePrompt(graph, projectName)
+				enhanced, err := streamComplete(ctx, provider, prompt)
+				if err != nil {
+					pr.done("项目结构", fmt.Sprintf("LLM 失败 (%v)，回退静态生成", err))
+				} else if enhanced != "" {
+					projectStructureNarrative = enhanced
+					pr.done("项目结构", "叙事生成完成")
+				} else {
+					pr.done("项目结构", "LLM 返回空，回退静态生成")
+				}
+			}()
+		}
+
+		// Task 7: Module Chinese Names
+		if cp.ModuleChineseNames != nil && len(cp.ModuleChineseNames) > 0 {
+			moduleChineseNames = cp.ModuleChineseNames
+			pr.done("模块中文名", fmt.Sprintf("从 checkpoint 恢复 %d 个", len(moduleChineseNames)))
+		} else if graph != nil && len(graph.Nodes) > 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				pr.update("模块中文名", "开始生成...")
+				names := generateModuleChineseNames(ctx, provider, projectName, graph.Nodes)
+				if len(names) > 0 {
+					moduleChineseNames = names
+				pr.done("模块中文名", fmt.Sprintf("生成完成 → %d 个", len(names)))
+				} else {
+					pr.done("模块中文名", "生成失败，将使用原始英文名")
+				}
+			}()
+		}
+
+		wg.Wait()
+		close(fatalCh)
+
+		// Propagate fatal errors
+		for err := range fatalCh {
+			if err != nil {
+				return nil, err
+			}
+
+			// Task 5: Function Descriptions (after Phase 1 to avoid API quota contention)
+			// Runs inline (not goroutine) since batch processing is already concurrent internally.
 		// Task 5: Function Descriptions (parallel batching)
 		if maxLLMFunctions != 0 && len(cp.FuncDescMap) > 0 {
 			funcDescMap = cp.FuncDescMap
 			pr.done("函数描述", fmt.Sprintf("从 checkpoint 恢复 %d 个函数", len(funcDescMap)))
 		} else if maxLLMFunctions != 0 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			func() {
 				var callEdges []sequencer.CallEdge
 				if sourceDir != "" {
 					files := nodesToFileResults(graph.Nodes)
@@ -499,56 +550,6 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 				pr.remove("函数描述")
 			}()
 		}
-
-		// Task 6: Project Structure Narrative (LLM-based, replaces static table)
-		if cp.ProjectStructure != "" {
-			projectStructureNarrative = cp.ProjectStructure
-			pr.done("项目结构", "从 checkpoint 恢复")
-		} else {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				pr.update("项目结构", "开始生成叙事...")
-				prompt := buildProjectStructurePrompt(graph, projectName)
-				enhanced, err := streamComplete(ctx, provider, prompt)
-				if err != nil {
-					pr.done("项目结构", fmt.Sprintf("LLM 失败 (%v)，回退静态生成", err))
-				} else if enhanced != "" {
-					projectStructureNarrative = enhanced
-					pr.done("项目结构", "叙事生成完成")
-				} else {
-					pr.done("项目结构", "LLM 返回空，回退静态生成")
-				}
-			}()
-		}
-
-		// Task 7: Module Chinese Names
-		if cp.ModuleChineseNames != nil && len(cp.ModuleChineseNames) > 0 {
-			moduleChineseNames = cp.ModuleChineseNames
-			pr.done("模块中文名", fmt.Sprintf("从 checkpoint 恢复 %d 个", len(moduleChineseNames)))
-		} else if graph != nil && len(graph.Nodes) > 0 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				pr.update("模块中文名", "开始生成...")
-				names := generateModuleChineseNames(ctx, provider, projectName, graph.Nodes)
-				if len(names) > 0 {
-					moduleChineseNames = names
-				pr.done("模块中文名", fmt.Sprintf("生成完成 → %d 个", len(names)))
-				} else {
-					pr.done("模块中文名", "生成失败，将使用原始英文名")
-				}
-			}()
-		}
-
-		wg.Wait()
-		close(fatalCh)
-
-		// Propagate fatal errors
-		for err := range fatalCh {
-			if err != nil {
-				return nil, err
-			}
 		}
 
 		pr.log(fmt.Sprintf("[Phase 1] 全部完成（耗时 %v）", time.Since(phase1Start).Round(time.Second)))
