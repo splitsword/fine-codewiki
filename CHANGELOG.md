@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-08 — fix(ci): release 改为矩阵原生构建修复 CGO 交叉编译失败 (e6bc01c)
+
 - 2026-06-08 — fix(install): 修复下载分发三个致命 bug (94164a4)
 
 - 2026-06-08 — feat(docgen): 目录簇增加领域摘要 + 主题数推至 6-8 (8c3688c)

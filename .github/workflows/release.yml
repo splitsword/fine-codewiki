@@ -9,61 +9,89 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - run: go test ./...
+
+  build:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            arch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            arch: arm64
+          - os: macos-latest
+            goos: darwin
+            arch: amd64
+          - os: macos-latest
+            goos: darwin
+            arch: arm64
+          - os: windows-latest
+            goos: windows
+            arch: amd64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
 
-      - name: Run tests
-        run: go test ./...
-
-      - name: Build release binaries
+      - name: Build
         run: |
           VERSION=${GITHUB_REF_NAME}
-          mkdir -p dist
-          for os in linux darwin windows; do
-            for arch in amd64 arm64; do
-              if [ "$os" = "windows" ] && [ "$arch" = "arm64" ]; then
-                continue
-              fi
-              ext=""
-              if [ "$os" = "windows" ]; then
-                ext=".exe"
-              fi
-              output="dist/codewiki-${VERSION}-${os}-${arch}${ext}"
-              echo "Building ${output}..."
-              GOOS=$os GOARCH=$arch go build -ldflags "-s -w -X main.version=${VERSION}" -o "$output" ./cmd/codewiki
-            done
-          done
+          GOOS=${{ matrix.goos }}
+          GOARCH=${{ matrix.arch }}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          output="codewiki-${VERSION}-${GOOS}-${GOARCH}${ext}"
+          echo "Building ${output}..."
+          go build -ldflags "-s -w -X main.version=${VERSION}" -o "$output" ./cmd/codewiki
+          echo "OUTPUT=${output}" >> $GITHUB_ENV
 
-      - name: Package release assets
+      - name: Package
+        shell: bash
         run: |
-          VERSION=${GITHUB_REF_NAME}
-          cd dist
-          for f in codewiki-*; do
-            if [[ "$f" == *.exe ]]; then
-              # Strip version suffix so install scripts find codewiki.exe
-              cp "$f" codewiki.exe
-              zip "${f%.exe}.zip" codewiki.exe
-              rm codewiki.exe
-            else
-              cp "$f" codewiki
-              tar czf "${f}.tar.gz" codewiki
-              rm codewiki
-            fi
-          done
+          mkdir -p artifacts
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            cp "$OUTPUT" codewiki.exe
+            zip "artifacts/${OUTPUT%.exe}.zip" codewiki.exe
+          else
+            cp "$OUTPUT" codewiki
+            tar czf "artifacts/${OUTPUT}.tar.gz" codewiki
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.arch }}
+          path: artifacts/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: '*'
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.{tar.gz,zip}
+          files: dist/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
