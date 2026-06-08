@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-09 — fix(ci): 改用 v3 artifact 避免 v4 兼容问题 (242aadb)
+
 - 2026-06-08 — fix(ci): release 改为矩阵原生构建修复 CGO 交叉编译失败 (e6bc01c)
 
 - 2026-06-08 — fix(install): 修复下载分发三个致命 bug (94164a4)

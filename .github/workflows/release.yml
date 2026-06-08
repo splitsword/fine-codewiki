@@ -48,45 +48,46 @@ jobs:
         with:
           go-version: '1.26'
 
-      - name: Build
+      - name: Build and Package
+        shell: bash
         run: |
           VERSION=${GITHUB_REF_NAME}
           GOOS=${{ matrix.goos }}
           GOARCH=${{ matrix.arch }}
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          output="codewiki-${VERSION}-${GOOS}-${GOARCH}${ext}"
-          echo "Building ${output}..."
-          go build -ldflags "-s -w -X main.version=${VERSION}" -o "$output" ./cmd/codewiki
-          echo "OUTPUT=${output}" >> $GITHUB_ENV
+          bin="codewiki-${VERSION}-${GOOS}-${GOARCH}${ext}"
+          echo "Building ${bin}..."
+          go build -ldflags "-s -w -X main.version=${VERSION}" -o "$bin" ./cmd/codewiki
 
-      - name: Package
-        shell: bash
-        run: |
-          mkdir -p artifacts
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            cp "$OUTPUT" codewiki.exe
-            zip "artifacts/${OUTPUT%.exe}.zip" codewiki.exe
+          mkdir -p dist
+          if [ "$GOOS" = "windows" ]; then
+            cp "$bin" codewiki.exe
+            zip "dist/${bin%.exe}.zip" codewiki.exe
           else
-            cp "$OUTPUT" codewiki
-            tar czf "artifacts/${OUTPUT}.tar.gz" codewiki
+            cp "$bin" codewiki
+            tar czf "dist/${bin}.tar.gz" codewiki
           fi
+          ls -la dist/
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.goos }}-${{ matrix.arch }}
-          path: artifacts/
+          name: dist-${{ matrix.goos }}-${{ matrix.arch }}
+          path: dist/
 
   release:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: '*'
-          merge-multiple: true
+      - uses: actions/download-artifact@v3
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p dist
+          find . -name '*.tar.gz' -o -name '*.zip' | while read f; do
+            cp "$f" dist/
+          done
+          ls -la dist/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
