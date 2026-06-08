@@ -49,9 +49,14 @@ jobs:
           cd dist
           for f in codewiki-*; do
             if [[ "$f" == *.exe ]]; then
-              zip "${f%.exe}.zip" "$f"
+              # Strip version suffix so install scripts find codewiki.exe
+              cp "$f" codewiki.exe
+              zip "${f%.exe}.zip" codewiki.exe
+              rm codewiki.exe
             else
-              tar czf "${f}.tar.gz" "$f"
+              cp "$f" codewiki
+              tar czf "${f}.tar.gz" codewiki
+              rm codewiki
             fi
           done
 

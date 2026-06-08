@@ -22,10 +22,6 @@ case "$ARCH" in
   *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
-if [ "$OS" = "windows" ]; then
-  BINARY="${BINARY}.exe"
-fi
-
 # Determine install directory
 if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
   INSTALL_DIR="/usr/local/bin"
@@ -78,6 +74,11 @@ else
 fi
 
 # Install
+  # Add .exe suffix for Windows (after ASSET_NAME computed)
+  if [ "$OS" = "windows" ]; then
+    BINARY="${BINARY}.exe"
+  fi
+
 mv "$TMP_DIR/${BINARY}" "$INSTALL_DIR/${BINARY}"
 chmod +x "$INSTALL_DIR/${BINARY}"
 

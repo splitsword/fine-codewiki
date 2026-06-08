@@ -18,9 +18,8 @@ $Arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 $OS = "windows"
 
 # Determine install directory
-$InstallDir = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+$InstallDir = "$env:LOCALAPPDATA\Programs\codewiki"
 if (-not (Test-Path $InstallDir)) {
-    $InstallDir = "$env:USERPROFILE\bin"
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 }
 
