@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-09 — fix(ci): Windows 用 pwsh Compress-Archive 替代 zip 命令 (4db2793)
+
 - 2026-06-09 — fix(ci): 升级到 artifact v4 弃用 v3 (82bde0c)
 
 - 2026-06-09 — test(cli): TestExtractZip 仅在 Windows 执行 (95c64dd)

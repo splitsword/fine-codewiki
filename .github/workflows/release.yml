@@ -48,7 +48,7 @@ jobs:
         with:
           go-version: '1.26'
 
-      - name: Build and Package
+      - name: Build
         shell: bash
         run: |
           VERSION=${GITHUB_REF_NAME}
@@ -59,16 +59,26 @@ jobs:
           bin="codewiki-${VERSION}-${GOOS}-${GOARCH}${ext}"
           echo "Building ${bin}..."
           go build -ldflags "-s -w -X main.version=${VERSION}" -o "$bin" ./cmd/codewiki
+          echo "BIN=${bin}" >> $GITHUB_ENV
 
+      - name: Package (unix)
+        if: matrix.goos != 'windows'
+        shell: bash
+        run: |
           mkdir -p dist
-          if [ "$GOOS" = "windows" ]; then
-            cp "$bin" codewiki.exe
-            zip "dist/${bin%.exe}.zip" codewiki.exe
-          else
-            cp "$bin" codewiki
-            tar czf "dist/${bin}.tar.gz" codewiki
-          fi
+          cp "$BIN" codewiki
+          tar czf "dist/${BIN}.tar.gz" codewiki
           ls -la dist/
+
+      - name: Package (windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item $env:BIN codewiki.exe
+          $zipName = $env:BIN -replace '\.exe$',''
+          Compress-Archive -Path codewiki.exe -DestinationPath "dist/${zipName}.zip"
+          Get-ChildItem dist
 
       - uses: actions/upload-artifact@v4
         with:
