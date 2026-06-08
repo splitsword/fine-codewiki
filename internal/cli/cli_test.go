@@ -855,6 +855,9 @@ func TestInferModuleDiffFromName(t *testing.T) {
 }
 
 func TestExtractZip(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("zip creation via powershell only on Windows")
+	}
 	srcDir := t.TempDir()
 	os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("hello"), 0644)
 

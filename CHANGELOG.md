@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-09 — test(cli): TestExtractZip 仅在 Windows 执行 (95c64dd)
+
 - 2026-06-09 — test(docgen): 更新 prompt 快照 golden files (de2f636)
 
 - 2026-06-09 — fix(ci): 改用 v3 artifact 避免 v4 兼容问题 (242aadb)
