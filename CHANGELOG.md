@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-09 — fix(ci): 升级到 artifact v4 弃用 v3 (82bde0c)
+
 - 2026-06-09 — test(cli): TestExtractZip 仅在 Windows 执行 (95c64dd)
 
 - 2026-06-09 — test(docgen): 更新 prompt 快照 golden files (de2f636)
