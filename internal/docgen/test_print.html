@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>TestProj Wiki</title>
+<style>
+
+/* ===== Base ===== */
+:root {
+  --bg: #ffffff; --bg2: #f6f8fa; --bg3: #e9ecef;
+  --text: #1a1a2e; --text2: #4a4a68; --text3: #8b8ba7;
+  --border: #e2e4e9; --border2: rgba(0,0,0,.06);
+  --accent: #6366f1; --accent2: #818cf8; --accent-glow: rgba(99,102,241,.15);
+  --accent-gradient: linear-gradient(135deg, #6366f1, #8b5cf6, #a78bfa);
+  --radius: 10px; --radius-lg: 16px;
+  --pre-bg: #1e1e2e; --pre-text: #cdd6f4;
+  --inline-code-bg: rgba(99,102,241,.08);
+}
+* { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC",sans-serif;
+  line-height: 1.75; color: var(--text); background: var(--bg);
+  font-size: 11pt;
+}
+
+/* ===== Print rules ===== */
+@media print {
+  @page { margin: 18mm 16mm; size: A4; }
+  body { background: #fff; }
+  .chapter-page { page-break-before: always; }
+  h1, h2, h3 { page-break-after: avoid; }
+  pre, blockquote, table, img, svg, .mermaid { page-break-inside: avoid; }
+  a { text-decoration: none; color: var(--text); }
+  a[href]::after { content: none !important; }
+  /* Chrome PDF often drops background-clip:text; fallback to solid colors */
+  .cover-logo, .chapter-title, h1 {
+    -webkit-text-fill-color: #1a1a2e !important;
+    color: #1a1a2e !important;
+    background: none !important;
+  }
+}
+
+/* ===== Cover ===== */
+.cover-page {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; page-break-after: always;
+  text-align: center;
+}
+.cover-inner { max-width: 80%; }
+.cover-logo {
+  font-size: 2.2em; font-weight: 800;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  margin-bottom: 12px;
+}
+.cover-title { font-size: 1.6em; font-weight: 700; color: var(--text2); margin-bottom: 16px; }
+.cover-meta { font-size: 0.95em; color: var(--text3); }
+
+/* ===== TOC ===== */
+.toc-page { padding: 60px 40px; }
+.toc-title {
+  font-size: 1.8em; font-weight: 700; margin-bottom: 32px;
+  border-bottom: 2px solid var(--border); padding-bottom: 12px;
+}
+.toc-list { list-style: none; padding: 0; }
+.toc-list li { padding: 10px 0; border-bottom: 1px solid var(--border2); font-size: 1.05em; }
+.toc-list li a { color: var(--text); text-decoration: none; }
+
+/* ===== Chapter typography ===== */
+.chapter-page { padding: 40px 0; }
+.chapter-title {
+  font-size: 1.9em; font-weight: 700; margin-bottom: 20px;
+  border-bottom: 2px solid var(--border); padding-bottom: 10px;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.chapter-subtitle-print { font-size: 1.15em; color: var(--text2); margin: -8px 0 16px; }
+.chapter-meta-print { display: flex; gap: 12px; margin-bottom: 20px; font-size: 0.9em; color: var(--text3); }
+.chapter-diff-print {
+  display: inline-block; padding: 2px 10px; border-radius: 20px;
+  background: var(--accent-glow); color: var(--accent); font-weight: 600;
+}
+.chapter-goals-print, .chapter-prereqs-print {
+  margin: 16px 0; padding: 12px 18px;
+  background: var(--bg2); border-radius: var(--radius); border: 1px solid var(--border2);
+}
+.chapter-goals-print ul, .chapter-prereqs-print ul { margin: 8px 0 0 18px; padding: 0; }
+.chapter-goals-print li, .chapter-prereqs-print li { font-size: 0.95em; color: var(--text2); line-height: 1.6; }
+.chapter-intro-print {
+  margin: 20px 0 28px; padding: 16px 20px;
+  background: var(--accent-glow); border-radius: var(--radius-lg);
+  border-left: 3px solid var(--accent);
+}
+.chapter-intro-print p { margin: 0; font-size: 0.95em; color: var(--text2); line-height: 1.7; }
+.chapter-narrative-print { line-height: 1.8; }
+
+/* ===== Content elements ===== */
+h1 { font-size: 1.7em; margin-top: 32px; margin-bottom: 14px; font-weight: 700; }
+h2 { font-size: 1.4em; margin-top: 28px; margin-bottom: 12px; font-weight: 700; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+h3 { font-size: 1.2em; margin-top: 24px; margin-bottom: 10px; font-weight: 700; }
+h4 { font-size: 1.05em; margin-top: 20px; margin-bottom: 8px; font-weight: 700; }
+p { margin: 10px 0; }
+a { color: var(--accent); text-decoration: none; }
+ul, ol { padding-left: 1.8em; margin: 10px 0; }
+li+li { margin-top: .25em; }
+
+/* ===== Code ===== */
+:not(pre) > code {
+  font-family: "Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
+  background: var(--inline-code-bg); padding: .15em .4em; border-radius: 4px;
+  font-size: 85%; color: var(--accent); font-weight: 500;
+}
+pre {
+  background: var(--pre-bg); color: var(--pre-text);
+  padding: 14px 16px; overflow: auto; border-radius: var(--radius);
+  margin: 14px 0; font-size: 9.5pt; line-height: 1.55;
+}
+pre code { background: none; padding: 0; font-size: inherit; line-height: inherit; }
+.code-block { border-radius: var(--radius); overflow: hidden; margin: 14px 0; border: 1px solid var(--border2); }
+.code-header { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; background: var(--bg3); border-bottom: 1px solid var(--border2); }
+.code-lang { font-size: 10px; font-weight: 700; color: var(--text3); text-transform: uppercase; }
+.code-copy { display: none; } /* hide in print */
+
+/* ===== Blockquote ===== */
+blockquote {
+  margin: 16px 0; padding: 12px 18px; color: var(--text2);
+  border-left: 3px solid; border-image: var(--accent-gradient) 1;
+  background: var(--accent-glow); border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+/* ===== Table ===== */
+table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 0.95em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+tr:nth-child(even) { background: var(--bg2); }
+th { background: var(--bg3); font-weight: 700; }
+
+/* ===== Mermaid ===== */
+.mermaid-wrap { position: relative; margin: 14px 0; }
+.mermaid { background: var(--bg2); padding: 20px; border-radius: var(--radius); overflow: auto; border: 1px solid var(--border2); }
+.diagram-expand { display: none !important; }
+
+/* ===== Source ref ===== */
+.source-ref {
+  display: inline-block; font-weight: 700; color: var(--accent);
+  background: var(--inline-code-bg); padding: 0 4px; border-radius: 4px;
+  font-family: "Cascadia Code","Fira Code","JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
+  font-size: 85%;
+}
+
+/* ===== Utility ===== */
+hr { height: 1px; padding: 0; margin: 28px 0; background: var(--border); border: 0; }
+img { max-width: 100%; height: auto; }
+
+</style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad:true, securityLevel:'loose', theme:'neutral' });
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof hljs !== 'undefined') { hljs.highlightAll(); }
+  // Give mermaid a moment to render before Chrome captures the page
+  setTimeout(function() { document.body.classList.add('ready'); }, 2500);
+});
+</script>
+</head>
+<body>
+<div class="cover-page">
+<div class="cover-inner">
+<div class="cover-logo">TestProj</div>
+<h1 class="cover-title">项目文档</h1>
+<p class="cover-meta">CodeWiki 自动生成 · 2026-06-09</p>
+</div>
+</div>
+<div class="toc-page chapter-page">
+<h2 class="toc-title">目录</h2>
+<ul class="toc-list">
+<li><a href="#overview">项目概述</a></li>
+<li><a href="#what-it-does">项目能做什么</a></li>
+<li><a href="#architecture">架构说明</a></li>
+<li><a href="#project-structure">项目结构</a></li>
+<li><a href="#learning-path">学习路径</a></li>
+<li><a href="#theme-core">核心模块</a></li>
+</ul>
+</div>
+<section id="overview" class="chapter-page">
+<h1 class="chapter-title">项目概述</h1>
+<h1 id="项目概述">项目概述</h1>
+<p>这是一个测试项目。</p>
+<h2 id="背景">背景</h2>
+<p>项目起源于测试需求。</p>
+</section>
+<section id="what-it-does" class="chapter-page">
+<h1 class="chapter-title">项目能做什么</h1>
+<h2 id="能做什么">能做什么</h2>
+<ul>
+<li>打印 Hello</li>
+<li>退出程序</li>
+</ul>
+</section>
+<section id="architecture" class="chapter-page">
+<h1 class="chapter-title">架构说明</h1>
+<h2 id="架构">架构</h2>
+<p>单文件架构。</p>
+</section>
+<section id="project-structure" class="chapter-page">
+<h1 class="chapter-title">项目结构</h1>
+<h2 id="结构">结构</h2>
+<ul>
+<li>main.go</li>
+</ul>
+</section>
+<section id="learning-path" class="chapter-page">
+<h1 class="chapter-title">学习路径</h1>
+<h2 id="学习路径">学习路径</h2>
+<ol>
+<li>阅读 main.go</li>
+<li>运行程序</li>
+</ol>
+</section>
+<section id="theme-core" class="chapter-page">
+<h1 class="chapter-title">核心模块</h1>
+<p class="chapter-subtitle-print">程序入口与主逻辑</p>
+<div class="chapter-meta-print"><span class="chapter-diff-print">⭐ 入门</span><span>1 个模块</span></div>
+<div class="chapter-narrative-print"><h1 id="核心模块">核心模块</h1>
+<p><code>main</code> 包是整个程序的入口。</p>
+</div>
+<h2>模块详情</h2>
+<h3 id="module-main">main</h3>
+<h1 id="main">main</h1>
+<p>程序入口。</p>
+</section>
+</body>
+</html>

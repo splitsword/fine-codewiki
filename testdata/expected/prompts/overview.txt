@@ -9,13 +9,14 @@
    本项目采用分层架构，将业务逻辑与数据访问解耦。
    *来源：`services/user_service.py`、`repositories/user_repository.py`*
 6. 使用简体中文
+7. 重要：项目名仅为生成时指定的展示标题，可能与真实业务无关，严禁据此推断项目的业务领域或用途；必须依据下方的项目文档与代码结构（模块名、类名、函数名）来判断项目实际做什么。若信息不足以确定业务领域，宁可如实概括代码结构，也不要臆造行业背景。
 
 项目：demo-app
 模块数：4
 依赖数：3
 
 核心模块列表（按重要性排序，供参考，不要原样复述）：
-- main（1 个函数）
-- services/api（1 个类）
-- models/user（1 个类）
-- utils/logger（1 个函数）
+- main.py（1 个函数）：main
+- services/api.py（1 个类）：Api
+- models/user.py（1 个类）：User
+- utils/logger.py（1 个函数）：get_logger
