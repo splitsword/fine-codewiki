@@ -1,6 +1,9 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
+# Enable TLS 1.2 for GitHub API calls on older Windows versions
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
 $Repo = "splitsword/fine-codewiki"
 $Binary = "codewiki.exe"
 

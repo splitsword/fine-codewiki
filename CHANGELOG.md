@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-09 — fix(install): install.ps1 开头强制 TLS 1.2 避免 GitHub API 调用失败 (af14cb2)
+
 - 2026-06-09 — feat(cli): 首次运行自动引导交互式配置 (7089701)
 
 - 2026-06-09 — fix(cli): update 版本号对比去 v 前缀解决永远不匹配 (529c858)
