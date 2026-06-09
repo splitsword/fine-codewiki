@@ -1865,7 +1865,7 @@ func maskKey(key string) string {
 
 // RunUpdate checks GitHub Releases for a newer version and self-updates.
 func RunUpdate(cfg *Config) error {
-	current := cfg.Version
+	current := strings.TrimPrefix(cfg.Version, "v")
 	if current == "" || current == "dev" {
 		fmt.Println("当前为开发版本（dev），无法自动更新。请通过 go install 或手动下载更新。")
 		return nil
