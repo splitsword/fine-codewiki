@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-09 — feat(install): install.ps1 自动将安装目录加入用户 PATH (bb1c9d2)
+
 - 2026-06-09 — fix(ci): Windows 用 pwsh Compress-Archive 替代 zip 命令 (4db2793)
 
 - 2026-06-09 — fix(ci): 升级到 artifact v4 弃用 v3 (82bde0c)

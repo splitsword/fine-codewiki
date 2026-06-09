@@ -67,10 +67,12 @@ try {
 
     Write-Host "Installed codewiki.exe to ${InstallDir}\codewiki.exe"
 
-    # Check if in PATH
-    $PathDirs = $env:PATH -split ";"
-    if ($InstallDir -notin $PathDirs) {
-        Write-Warning "${InstallDir} is not in your PATH. Add it to your environment variables."
+    # Auto-add to user PATH if not already present
+    $currentUserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($InstallDir -notin ($currentUserPath -split ";")) {
+        [Environment]::SetEnvironmentVariable("PATH", "$currentUserPath;$InstallDir", "User")
+        Write-Host "已将 $InstallDir 添加到用户 PATH"
+        $env:PATH = "$env:PATH;$InstallDir"
     }
 } finally {
     Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
