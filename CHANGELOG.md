@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-09 — test(cli): TestRunServeStarts 跳过 macOS（goroutine 泄漏超时） (0c68729)
+
 - 2026-06-09 — docs(readme): 新增 GitHub 下载量徽章 (1e5deba)
 
 - 2026-06-09 — fix(ci): benchmark grep 加 ^ 锚点避免误匹配临时目录路径 (9b63b0c)
