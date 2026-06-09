@@ -5,6 +5,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.26%2B-blue)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A585%25-brightgreen)](.coverage)
+[![Downloads](https://img.shields.io/github/downloads/splitsword/fine-codewiki/total?color=orange)](https://github.com/splitsword/fine-codewiki/releases)
 
 ---
 
