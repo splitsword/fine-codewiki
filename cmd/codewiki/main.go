@@ -66,14 +66,15 @@ func printWelcome() {
 
 	fmt.Println("快速开始：")
 	fmt.Println()
-	if !hasConfig {
+	if hasConfig {
+		fmt.Printf("  1. 配置 LLM      \x1b[32m✓ 已完成\x1b[0m\n")
+	} else {
 		fmt.Printf("  1. 配置 LLM      %s config\n", exe)
 		fmt.Printf("     （支持 OpenAI / Ollama，也可跳过此步骤使用静态生成）\n")
-		fmt.Println()
 	}
-	fmt.Printf("  %s. 生成文档      %s generate\n", stepNum(2, !hasConfig), exe)
-	fmt.Printf("  %s. 本地预览      %s serve\n", stepNum(3, !hasConfig), exe)
-	fmt.Printf("  %s. 智能问答      %s ask \"这个项目是做什么的？\"\n", stepNum(4, !hasConfig), exe)
+	fmt.Printf("  2. 生成文档      %s generate\n", exe)
+	fmt.Printf("  3. 本地预览      %s serve\n", exe)
+	fmt.Printf("  4. 智能问答      %s ask \"这个项目是做什么的？\"\n", exe)
 	fmt.Println()
 
 	if hasWiki {
@@ -84,10 +85,8 @@ func printWelcome() {
 	fmt.Printf("查看完整帮助：%s help\n", exe)
 }
 
+// stepNum is kept for API compatibility with help text generation.
 func stepNum(n int, configSkipped bool) string {
-	if configSkipped {
-		return fmt.Sprintf("%d", n-1)
-	}
 	return fmt.Sprintf("%d", n)
 }
 

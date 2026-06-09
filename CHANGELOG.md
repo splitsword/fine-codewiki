@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-09 — fix(cli): 步骤 1 始终显示，已配置时显示绿色 ✓ 已完成 (8a796ce)
+
 - 2026-06-09 — feat(install): install.ps1 自动将安装目录加入用户 PATH (bb1c9d2)
 
 - 2026-06-09 — fix(ci): Windows 用 pwsh Compress-Archive 替代 zip 命令 (4db2793)
