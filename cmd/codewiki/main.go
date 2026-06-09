@@ -58,10 +58,25 @@ func printWelcome() {
 		hasWiki = true
 	}
 
-	// Detect config
+	// Detect config — run interactive setup on first launch
 	hasConfig := false
 	if _, err := os.Stat(llm.DefaultConfigPath()); err == nil {
 		hasConfig = true
+	}
+	if !hasConfig {
+		fmt.Println("检测到首次运行，开始交互式配置引导...")
+		fmt.Println()
+		cfg := cli.Config{}
+		if err := cli.RunConfig(&cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "配置引导出错: %v\n", err)
+		}
+		// Re-check after config
+		if _, err := os.Stat(llm.DefaultConfigPath()); err == nil {
+			hasConfig = true
+		}
+		fmt.Println()
+		fmt.Println("配置已保存，以下是快速入门：")
+		fmt.Println()
 	}
 
 	fmt.Println("快速开始：")
