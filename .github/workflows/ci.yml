@@ -102,7 +102,7 @@ jobs:
           output=$(go test -bench=BenchmarkEndToEnd100K -benchtime=1x -run='^$' ./benchmark)
           echo "$output"
 
-          ns=$(echo "$output" | grep 'BenchmarkEndToEnd100K' | awk '{print $3}')
+          ns=$(echo "$output" | grep '^BenchmarkEndToEnd100K' | awk '{print $3}')
           if [ -z "$ns" ]; then
             echo "❌ Failed to extract benchmark timing"
             exit 1

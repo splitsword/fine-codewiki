@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-06-09 — fix(ci): benchmark grep 加 ^ 锚点避免误匹配临时目录路径 (9b63b0c)
+
 - 2026-06-09 — fix(install): install.ps1 开头强制 TLS 1.2 避免 GitHub API 调用失败 (af14cb2)
 
 - 2026-06-09 — feat(cli): 首次运行自动引导交互式配置 (7089701)
