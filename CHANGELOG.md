@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-01 — feat(docgen): A2 checkpoint 函数级精细化续传 (9ff1590)
+
 - 2026-07-01 — docs(prd): 新增 M3.5 规模化可靠性加固里程碑（v1.0 RC） (fdccc99)
 
 ### 规划：M3.5 规模化可靠性加固（v1.0 RC）

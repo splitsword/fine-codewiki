@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -331,6 +332,163 @@ func TestGenerateWikiEnhancedWithMaxFunctions(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, wiki2)
 	assert.Contains(t, wiki2.Overview, "AI-enhanced project overview")
+}
+
+// recordingProvider captures every prompt sent to the LLM and delegates
+// response generation to a configurable function. Used to verify which
+// functions the description stage actually requests.
+type recordingProvider struct {
+	mu      sync.Mutex
+	prompts []string
+	respFn  func(prompt string) string
+}
+
+func (r *recordingProvider) Complete(_ context.Context, prompt string) (string, error) {
+	r.mu.Lock()
+	r.prompts = append(r.prompts, prompt)
+	r.mu.Unlock()
+	if r.respFn != nil {
+		return r.respFn(prompt), nil
+	}
+	return "", nil
+}
+
+func (r *recordingProvider) CompleteStream(_ context.Context, prompt string) (<-chan string, error) {
+	r.mu.Lock()
+	r.prompts = append(r.prompts, prompt)
+	r.mu.Unlock()
+	ch := make(chan string, 1)
+	go func() {
+		defer close(ch)
+		if r.respFn != nil {
+			if s := r.respFn(prompt); s != "" {
+				ch <- s
+			}
+		}
+	}()
+	return ch, nil
+}
+
+func (r *recordingProvider) Embed(_ context.Context, _ []string) ([][]float32, error) {
+	return nil, nil
+}
+
+// funcDescPrompts returns only the prompts that target function descriptions.
+func (r *recordingProvider) funcDescPrompts() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, p := range r.prompts {
+		if strings.Contains(p, "撰写深度语义分析") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func TestPendingFuncs(t *testing.T) {
+	top := []funcRef{
+		{Module: "mod1", Name: "fnA"},
+		{Module: "mod1", Name: "fnB"},
+		{Module: "mod2", Name: "fnC"},
+		{Module: "mod2", Name: "fnD"},
+	}
+
+	tests := []struct {
+		name        string
+		checkpoint  map[string]string
+		wantPending []string // expected module#name keys in pending
+	}{
+		{
+			name:        "empty checkpoint returns all",
+			checkpoint:  nil,
+			wantPending: []string{"mod1#fnA", "mod1#fnB", "mod2#fnC", "mod2#fnD"},
+		},
+		{
+			name:        "fully covered returns none",
+			checkpoint:  map[string]string{"mod1#fnA": "x", "mod1#fnB": "x", "mod2#fnC": "x", "mod2#fnD": "x"},
+			wantPending: nil,
+		},
+		{
+			name:        "partial checkpoint returns only missing",
+			checkpoint:  map[string]string{"mod1#fnA": "cached", "mod2#fnC": "cached"},
+			wantPending: []string{"mod1#fnB", "mod2#fnD"},
+		},
+		{
+			name:        "stale checkpoint entries (not in topFuncs) are ignored",
+			checkpoint:  map[string]string{"mod1#fnA": "x", "mod9#ghost": "stale", "mod1#renamed": "stale"},
+			wantPending: []string{"mod1#fnB", "mod2#fnC", "mod2#fnD"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := pendingFuncs(top, tc.checkpoint)
+			var gotKeys []string
+			for _, f := range got {
+				gotKeys = append(gotKeys, funcDescKey(f))
+			}
+			assert.ElementsMatch(t, tc.wantPending, gotKeys)
+		})
+	}
+}
+
+// TestFunctionDescCheckpointPartialResume verifies A2: when a checkpoint
+// already holds descriptions for some functions, only the remaining (pending)
+// functions are sent to the LLM, and cached descriptions are preserved.
+func TestFunctionDescCheckpointPartialResume(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	files := []*analyzer.FileResult{
+		{Filename: "mod1.go", Functions: []analyzer.FunctionInfo{
+			{Name: "ckptFuncA"},
+			{Name: "ckptFuncB"},
+			{Name: "newFuncC"},
+			{Name: "newFuncD"},
+		}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// Pre-seed checkpoint: ckptFuncA/ckptFuncB already have descriptions.
+	cpDir := filepath.Join(tmpDir, ".codewiki", "checkpoint")
+	require.NoError(t, os.MkdirAll(cpDir, 0755))
+	cpJSON := `{
+		"func_desc_map": {
+			"mod1#ckptFuncA": "CACHED_DESC_A",
+			"mod1#ckptFuncB": "CACHED_DESC_B"
+		}
+	}`
+	require.NoError(t, os.WriteFile(filepath.Join(cpDir, "wiki.json"), []byte(cpJSON), 0644))
+
+	rec := &recordingProvider{
+		respFn: func(prompt string) string {
+			if strings.Contains(prompt, "撰写深度语义分析") {
+				// Respond for whichever pending functions are in this batch.
+				return "newFuncC: NEW_DESC_C\nnewFuncD: NEW_DESC_D"
+			}
+			return "" // other prompts (overview etc.) → static fallback
+		},
+	}
+
+	wiki, err := GenerateWikiEnhancedWithMaxFunctions(context.Background(), rec, graph, tmpDir, "test-ckpt", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "", -1)
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+
+	// Only pending functions should appear in function-description prompts.
+	fdPrompts := rec.funcDescPrompts()
+	require.NotEmpty(t, fdPrompts, "function-description stage should still run for pending funcs")
+	combined := strings.Join(fdPrompts, "\n")
+	assert.Contains(t, combined, "newFuncC")
+	assert.Contains(t, combined, "newFuncD")
+	assert.NotContains(t, combined, "ckptFuncA", "checkpointed func must not be re-requested")
+	assert.NotContains(t, combined, "ckptFuncB", "checkpointed func must not be re-requested")
+
+	// Final API reference must contain BOTH cached and freshly-generated descriptions.
+	apiRef := wiki.APIReference
+	assert.Contains(t, apiRef, "CACHED_DESC_A", "cached description must be preserved")
+	assert.Contains(t, apiRef, "CACHED_DESC_B")
+	assert.Contains(t, apiRef, "NEW_DESC_C", "newly generated description must appear")
+	assert.Contains(t, apiRef, "NEW_DESC_D")
 }
 
 func TestGenerateKeyConceptsFallback(t *testing.T) {

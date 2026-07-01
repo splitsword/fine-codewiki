@@ -459,10 +459,9 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			}
 		}
 			// Task 5: Function Descriptions — after Phase 1 to avoid API quota contention.
-			if maxLLMFunctions != 0 && len(cp.FuncDescMap) > 0 {
-				funcDescMap = cp.FuncDescMap
-				pr.done("函数描述", fmt.Sprintf("从 checkpoint 恢复 %d 个函数", len(funcDescMap)))
-			} else if maxLLMFunctions != 0 {
+			// A2: incremental resume. Always re-select the target set, restore cached
+			// descriptions from checkpoint, and request only the pending subset.
+			if maxLLMFunctions != 0 {
 				func() {
 					var callEdges []sequencer.CallEdge
 					if sourceDir != "" {
@@ -474,24 +473,45 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 					}
 					topFuncs := selectTopFunctions(graph, callEdges, maxLLMFunctions)
 					if len(topFuncs) == 0 {
+						if len(cp.FuncDescMap) > 0 {
+							funcDescMap = cp.FuncDescMap
+						}
 						pr.done("函数描述", "无需描述的函数")
 						return
 					}
+
+					// Restore cached descriptions, then compute the pending subset.
 					fdm := make(map[string]string)
+					for k, v := range cp.FuncDescMap {
+						fdm[k] = v
+					}
+					restored := len(fdm)
+					pending := pendingFuncs(topFuncs, cp.FuncDescMap)
+
+					if len(pending) == 0 {
+						funcDescMap = fdm
+						pr.done("函数描述", fmt.Sprintf("从 checkpoint 恢复 %d 个函数，无新增", len(fdm)))
+						return
+					}
+
 					var fdmMu sync.Mutex
 					funcsPerReq := 5
 					concurrency := 10
 
 					var reqs [][]funcRef
-					for i := 0; i < len(topFuncs); i += funcsPerReq {
+					for i := 0; i < len(pending); i += funcsPerReq {
 						end := i + funcsPerReq
-						if end > len(topFuncs) {
-							end = len(topFuncs)
+						if end > len(pending) {
+							end = len(pending)
 						}
-						reqs = append(reqs, topFuncs[i:end])
+						reqs = append(reqs, pending[i:end])
 					}
 					totalBatches := (len(reqs) + concurrency - 1) / concurrency
-					pr.update("函数描述", fmt.Sprintf("开始生成 %d 个函数（每请求 %d 个，每批并发 %d，共 %d 批）...", len(topFuncs), funcsPerReq, concurrency, totalBatches))
+					if restored > 0 {
+						pr.update("函数描述", fmt.Sprintf("从 checkpoint 恢复 %d 个，新增生成 %d 个（每请求 %d 个，每批并发 %d 个，共 %d 批）...", restored, len(pending), funcsPerReq, concurrency, totalBatches))
+					} else {
+						pr.update("函数描述", fmt.Sprintf("开始生成 %d 个函数（每请求 %d 个，每批并发 %d 个，共 %d 批）...", len(pending), funcsPerReq, concurrency, totalBatches))
+					}
 					if totalBatches > 1 {
 						pr.bump(totalBatches - 1)
 					}
@@ -532,13 +552,6 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 					}
 
 					funcDescMap = fdm
-					totalFuncs := 0
-					for _, n := range graph.Nodes {
-						totalFuncs += len(n.Functions)
-						for _, c := range n.Classes {
-							totalFuncs += len(c.Methods)
-						}
-					}
 					pr.log(fmt.Sprintf("[函数描述] 完成：%d/%d（%.0f%%）", len(fdm), len(topFuncs), float64(len(fdm))*100/float64(len(topFuncs))))
 					pr.remove("函数描述")
 				}()
@@ -5079,6 +5092,31 @@ type funcRef struct {
 	IsMethod   bool
 	Callers    []string // functions that call this one
 	Callees    []string // functions this one calls
+}
+
+// funcDescKey returns the stable key used in funcDescMap / checkpoint, matching
+// the format produced by parseFunctionDescriptions: "module#name".
+func funcDescKey(f funcRef) string {
+	return f.Module + "#" + f.Name
+}
+
+// pendingFuncs returns the subset of topFuncs whose key is NOT already present
+// in checkpoint. Used by the function-description stage to support incremental
+// resume: only functions without a cached description are re-requested.
+//
+// Entries in checkpoint that no longer appear in topFuncs (stale — e.g. the
+// function was renamed or removed) are simply ignored, never copied forward.
+func pendingFuncs(topFuncs []funcRef, checkpoint map[string]string) []funcRef {
+	if len(checkpoint) == 0 {
+		return topFuncs
+	}
+	pending := make([]funcRef, 0, len(topFuncs))
+	for _, f := range topFuncs {
+		if _, ok := checkpoint[funcDescKey(f)]; !ok {
+			pending = append(pending, f)
+		}
+	}
+	return pending
 }
 
 // nodesToFileResults converts grapher nodes to analyzer file results for call graph extraction.
