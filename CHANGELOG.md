@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-01 — fix(docgen): A4 降级非流式加独立 5min 超时 (b0295c7)
+
 - 2026-07-01 — feat(docgen): A1 失败函数描述批次重试队列 (c1d9ca6)
 
 - 2026-07-01 — feat(docgen): A3 单文件改动不再清空整盘 checkpoint (5d9b884)

@@ -378,6 +378,54 @@ func (r *retryableProvider) Embed(_ context.Context, _ []string) ([][]float32, e
 	return nil, nil
 }
 
+// ctxCapturingProvider records the context passed to Complete/CompleteStream
+// so tests can assert timeout behaviour on the degrade path.
+type ctxCapturingProvider struct {
+	streamErr        error
+	capturedComplete context.Context
+	resp             string
+	err              error
+}
+
+func (p *ctxCapturingProvider) CompleteStream(ctx context.Context, _ string) (<-chan string, error) {
+	return nil, p.streamErr
+}
+
+func (p *ctxCapturingProvider) Complete(ctx context.Context, _ string) (string, error) {
+	p.capturedComplete = ctx
+	return p.resp, p.err
+}
+
+func (p *ctxCapturingProvider) Embed(_ context.Context, _ []string) ([][]float32, error) {
+	return nil, nil
+}
+
+// TestStreamDegradeUsesIndependentTimeout verifies A4: when streamComplete
+// falls back to non-stream Complete, the degraded call gets its own bounded
+// timeout rather than inheriting the (possibly already-exhausted) parent ctx.
+func TestStreamDegradeUsesIndependentTimeout(t *testing.T) {
+	prov := &ctxCapturingProvider{
+		streamErr: errors.New("stream unavailable"), // force the degrade path
+		resp:      "ok",
+	}
+
+	// Parent ctx with a long (60 min) deadline.
+	parent, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	defer cancel()
+	parentDeadline, _ := parent.Deadline()
+
+	_, err := streamComplete(parent, prov, "prompt")
+	require.NoError(t, err)
+
+	require.NotNil(t, prov.capturedComplete, "degraded Complete must be called")
+	degDeadline, ok := prov.capturedComplete.Deadline()
+	require.True(t, ok, "degraded ctx must have a deadline")
+	assert.True(t, degDeadline.Before(parentDeadline), "degraded ctx must not inherit the parent's 60min deadline")
+	remaining := time.Until(degDeadline)
+	assert.Less(t, remaining, 5*time.Minute+30*time.Second, "degraded timeout should be bounded to ~5min")
+	assert.Greater(t, remaining, 4*time.Minute, "degraded timeout should be close to 5min")
+}
+
 func (r *recordingProvider) Complete(_ context.Context, prompt string) (string, error) {
 	r.mu.Lock()
 	r.prompts = append(r.prompts, prompt)

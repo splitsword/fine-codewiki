@@ -2286,7 +2286,7 @@ func streamCollectWithLiveness(ctx context.Context, ch <-chan string, idleTimeou
 func streamComplete(ctx context.Context, provider llm.Provider, prompt string) (string, error) {
 	ch, err := provider.CompleteStream(ctx, prompt)
 	if err != nil {
-		return provider.Complete(ctx, prompt)
+		return completeWithIndependentTimeout(ctx, provider, prompt)
 	}
 
 	// 3-minute idle timeout: some API gateways buffer the entire response before
@@ -2295,11 +2295,25 @@ func streamComplete(ctx context.Context, provider llm.Provider, prompt string) (
 	if response == "" {
 		if !completed {
 			warnf("流式超时，降级到非流式")
-			return provider.Complete(ctx, prompt)
+			return completeWithIndependentTimeout(ctx, provider, prompt)
 		}
 		return "", fmt.Errorf("LLM 返回空响应")
 	}
 	return response, nil
+}
+
+// completeWithIndependentTimeout runs a non-stream Complete with its own
+// bounded timeout derived from ctx (A4). The stream attempt may have consumed
+// most of the parent ctx's budget (3-min idle timeout already burned), leaving
+// the degraded call almost no time — or, for top-level narrative tasks that
+// pass the 60-min global ctx, no per-call bound at all. Deriving a fresh
+// ~5min deadline caps each degraded call so a single failure cannot hang the
+// pipeline for up to an hour. If the parent ctx already has a shorter
+// deadline, that still wins (WithTimeout takes the min).
+func completeWithIndependentTimeout(ctx context.Context, provider llm.Provider, prompt string) (string, error) {
+	dctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	return provider.Complete(dctx, prompt)
 }
 
 // cleanNarrativeResponse strips code fences from an LLM response.
