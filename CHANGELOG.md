@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-01 — docs(prd): M3.5 规模化可靠性加固全部完成 (5dd33cd)
+
 - 2026-07-01 — feat(llm,cli): A6 并发可配 + 流式 429 退避 (e2d3374)
 
 - 2026-07-01 — fix(docgen): A5 流式 idle 超时自适应（reasoning 友好） (3dc123c)
@@ -20,7 +22,18 @@
 
 - 2026-07-01 — docs(prd): 新增 M3.5 规模化可靠性加固里程碑（v1.0 RC） (fdccc99)
 
-### 规划：M3.5 规模化可靠性加固（v1.0 RC）
+### M3.5 规模化可靠性加固（v1.0 RC）— 已完成
+
+基于 project-ss（465 文件）大仓实测与第三方评估报告的代码级验证，落地 6 项可靠性任务，全部通过 TDD + 全量回归：
+
+- **A2 checkpoint 函数级续传**：`pendingFuncs()` 求差集，只对未缓存函数发请求；stale 条目自动淘汰
+- **A3 增量不清盘**：单文件改动不再 `ClearWikiCheckpoint`，仅 `--force` 清盘；成功后保留 checkpoint 作增量状态
+- **A1 失败重试队列**：失败批次最多 2 轮重试（非流式），仍失败记入 `FailedFuncs`，下次自动补做
+- **A4 降级独立超时**：`completeWithIndependentTimeout` 派生 5min ctx，单次降级不再挂近 1 小时
+- **A5 idle 超时自适应**：首 token 8min（thinking 友好）+ token 间 3min 双预算，不误杀长思考
+- **A6 并发可配 + 流式 429 退避**：`-concurrency` flag；`CompleteStream` 建连阶段 429+Retry-After 退避重试
+
+详见 `prd.md` § M3.5 与 `PRD_COVERAGE.md`。规划原条目：
 
 - 2026-06-12 — docs(prd): 新增 M3.5 里程碑——规模化可靠性加固（v1.0 RC）。基于 project-ss（465 文件）大仓实测与第三方评估报告的代码级验证，规划 6 项任务：A1 失败重试队列、A2 checkpoint 函数级续传、A3 增量不清盘、A4 降级独立超时、A5 idle 自适应、A6 并发可配+流式429退避。实现顺序 A2→A3→A1→A4→A5→A6，详见 `prd.md` § M3.5 与 `PRD_COVERAGE.md`。
 
