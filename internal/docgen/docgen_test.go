@@ -426,6 +426,55 @@ func TestStreamDegradeUsesIndependentTimeout(t *testing.T) {
 	assert.Greater(t, remaining, 4*time.Minute, "degraded timeout should be close to 5min")
 }
 
+// TestStreamIdleTimeoutReasoningAware verifies A5: a first token that arrives
+// within firstTokenTimeout does not trip the idle timer, even though it may be
+// far slower than the inter-token idle budget (thinking/reasoning models have
+// a long pre-first-token pondering phase).
+func TestStreamIdleTimeoutReasoningAware(t *testing.T) {
+	ch := make(chan string, 2)
+	go func() {
+		time.Sleep(100 * time.Millisecond) // first token after 100ms
+		ch <- "reasoning"
+		time.Sleep(50 * time.Millisecond)
+		ch <- "content"
+		close(ch)
+	}()
+	// firstTokenTimeout=200ms tolerates the slow first token; idleTimeout=80ms
+	// would have aborted it under the old single-timeout design.
+	resp, completed := streamCollectWithLiveness(context.Background(), ch, 200*time.Millisecond, 80*time.Millisecond)
+	assert.True(t, completed, "slow first token within firstTokenTimeout must not abort")
+	assert.Contains(t, resp, "content")
+}
+
+// TestStreamIdleTimeoutFirstTokenExceeded verifies that a first token later
+// than firstTokenTimeout still aborts (so the generous budget is not unbounded).
+func TestStreamIdleTimeoutFirstTokenExceeded(t *testing.T) {
+	ch := make(chan string, 1)
+	go func() {
+		time.Sleep(300 * time.Millisecond) // > firstTokenTimeout 200ms
+		ch <- "late"
+		close(ch)
+	}()
+	resp, completed := streamCollectWithLiveness(context.Background(), ch, 200*time.Millisecond, 80*time.Millisecond)
+	assert.False(t, completed, "first token beyond firstTokenTimeout must abort")
+	assert.Empty(t, resp)
+}
+
+// TestStreamIdleTimeoutMidStreamIdle verifies the inter-token idle budget
+// still applies once streaming has started.
+func TestStreamIdleTimeoutMidStreamIdle(t *testing.T) {
+	ch := make(chan string, 2)
+	go func() {
+		ch <- "first"
+		time.Sleep(150 * time.Millisecond) // > idleTimeout 80ms, < firstTokenTimeout 200ms
+		ch <- "second"
+		close(ch)
+	}()
+	resp, completed := streamCollectWithLiveness(context.Background(), ch, 200*time.Millisecond, 80*time.Millisecond)
+	assert.False(t, completed, "inter-token idle beyond idleTimeout must abort")
+	assert.Equal(t, "first", resp)
+}
+
 func (r *recordingProvider) Complete(_ context.Context, prompt string) (string, error) {
 	r.mu.Lock()
 	r.prompts = append(r.prompts, prompt)
@@ -2325,7 +2374,7 @@ func TestStreamCollectWithLiveness(t *testing.T) {
 	ch <- "world"
 	close(ch)
 
-	result, completed := streamCollectWithLiveness(context.Background(), ch, 5*time.Second)
+	result, completed := streamCollectWithLiveness(context.Background(), ch, 5*time.Second, 5*time.Second)
 	assert.True(t, completed)
 	assert.Equal(t, "hello world", result)
 }

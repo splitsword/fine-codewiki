@@ -2250,11 +2250,16 @@ func filterInTheme(names []string, themeModules []string) []string {
 
 // streamCollectWithLiveness reads tokens from ch until it closes or ctx is cancelled.
 // If no token arrives within idleTimeout, it cancels and returns what it has.
-func streamCollectWithLiveness(ctx context.Context, ch <-chan string, idleTimeout time.Duration) (string, bool) {
+// streamCollectWithLiveness drains a streaming channel with two liveness
+// budgets: firstTokenTimeout bounds the wait for the very first token (must be
+// generous — thinking/reasoning models ponder before emitting anything);
+// idleTimeout bounds the gap between consecutive tokens once streaming has
+// started. Either budget expiring aborts the read. (A5)
+func streamCollectWithLiveness(ctx context.Context, ch <-chan string, firstTokenTimeout, idleTimeout time.Duration) (string, bool) {
 	var raw strings.Builder
-	timer := time.NewTimer(idleTimeout)
+	timer := time.NewTimer(firstTokenTimeout)
 	defer timer.Stop()
-	charCount := 0
+	firstReceived := false
 	for {
 		select {
 		case token, ok := <-ch:
@@ -2262,16 +2267,24 @@ func streamCollectWithLiveness(ctx context.Context, ch <-chan string, idleTimeou
 				return raw.String(), true
 			}
 			raw.WriteString(token)
-			charCount += len([]rune(token))
+			budget := idleTimeout
+			if !firstReceived {
+				firstReceived = true
+				budget = idleTimeout // switch to inter-token budget after first token
+			}
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
 				default:
 				}
 			}
-			timer.Reset(idleTimeout)
+			timer.Reset(budget)
 		case <-timer.C:
-			warnf("流式接收超过 %v 无新 token，中止", idleTimeout)
+			if !firstReceived {
+				warnf("流式首 token 等待超过 %v，中止（thinking 模式可放宽 firstTokenTimeout）", firstTokenTimeout)
+			} else {
+				warnf("流式接收超过 %v 无新 token，中止", idleTimeout)
+			}
 			return raw.String(), false
 		case <-ctx.Done():
 			return raw.String(), false
@@ -2289,9 +2302,12 @@ func streamComplete(ctx context.Context, provider llm.Provider, prompt string) (
 		return completeWithIndependentTimeout(ctx, provider, prompt)
 	}
 
-	// 3-minute idle timeout: some API gateways buffer the entire response before
-	// forwarding the first token, so we need a generous window.
-	response, completed := streamCollectWithLiveness(ctx, ch, 3*time.Minute)
+	// A5: two budgets. firstTokenTimeout=8min tolerates thinking/reasoning
+	// models that ponder before the first token; idleTimeout=3min catches a
+	// stream that has gone silent mid-response. Some API gateways buffer the
+	// entire response before forwarding the first token, hence the generous
+	// first-token window.
+	response, completed := streamCollectWithLiveness(ctx, ch, 8*time.Minute, 3*time.Minute)
 	if response == "" {
 		if !completed {
 			warnf("流式超时，降级到非流式")
@@ -2341,7 +2357,7 @@ func tryStreamNarrative(ctx context.Context, provider llm.Provider, prompt strin
 		return "", fmt.Errorf("流建立失败: %w", err)
 	}
 
-	response, completed := streamCollectWithLiveness(sCtx, ch, 3*time.Minute)
+	response, completed := streamCollectWithLiveness(sCtx, ch, 8*time.Minute, 3*time.Minute)
 	response = cleanNarrativeResponse(response)
 	if response == "" {
 		if !completed {
