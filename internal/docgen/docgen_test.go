@@ -343,6 +343,41 @@ type recordingProvider struct {
 	respFn  func(prompt string) string
 }
 
+// retryableProvider always fails CompleteStream (forcing the non-stream path)
+// and fails the first failFirst function-description Complete calls, then
+// succeeds. Used to verify A1 retry behaviour.
+type retryableProvider struct {
+	mu         sync.Mutex
+	funcDescN  int
+	failFirst  int
+	respFn     func(prompt string) string
+	streamErr  error
+}
+
+func (r *retryableProvider) CompleteStream(_ context.Context, _ string) (<-chan string, error) {
+	return nil, r.streamErr
+}
+
+func (r *retryableProvider) Complete(_ context.Context, prompt string) (string, error) {
+	if strings.Contains(prompt, "撰写深度语义分析") {
+		r.mu.Lock()
+		r.funcDescN++
+		n := r.funcDescN
+		r.mu.Unlock()
+		if n <= r.failFirst {
+			return "", errors.New("transient funcdesc failure")
+		}
+	}
+	if r.respFn != nil {
+		return r.respFn(prompt), nil
+	}
+	return "", nil
+}
+
+func (r *retryableProvider) Embed(_ context.Context, _ []string) ([][]float32, error) {
+	return nil, nil
+}
+
 func (r *recordingProvider) Complete(_ context.Context, prompt string) (string, error) {
 	r.mu.Lock()
 	r.prompts = append(r.prompts, prompt)
@@ -489,6 +524,78 @@ func TestFunctionDescCheckpointPartialResume(t *testing.T) {
 	assert.Contains(t, apiRef, "CACHED_DESC_B")
 	assert.Contains(t, apiRef, "NEW_DESC_C", "newly generated description must appear")
 	assert.Contains(t, apiRef, "NEW_DESC_D")
+}
+
+// TestFunctionDescRetryThenSucceed verifies A1: a function-description
+// request that fails transiently is retried and ultimately succeeds.
+func TestFunctionDescRetryThenSucceed(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := []*analyzer.FileResult{
+		{Filename: "mod1.go", Functions: []analyzer.FunctionInfo{
+			{Name: "fnRetryA"},
+			{Name: "fnRetryB"},
+		}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// Fail the first function-description Complete call, succeed thereafter.
+	prov := &retryableProvider{
+		streamErr: errors.New("stream unavailable"),
+		failFirst: 1,
+		respFn: func(prompt string) string {
+			if strings.Contains(prompt, "撰写深度语义分析") {
+				return "fnRetryA: RETRIED_DESC_A\nfnRetryB: RETRIED_DESC_B"
+			}
+			return ""
+		},
+	}
+
+	wiki, err := GenerateWikiEnhancedWithMaxFunctions(context.Background(), prov, graph, tmpDir, "retry-test", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "", -1)
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+
+	// Retry must have happened (>= 2 function-description Complete calls).
+	prov.mu.Lock()
+	n := prov.funcDescN
+	prov.mu.Unlock()
+	assert.GreaterOrEqual(t, n, 2, "failed batch should be retried")
+
+	// And ultimately produced descriptions despite the initial failure.
+	assert.Contains(t, wiki.APIReference, "RETRIED_DESC_A")
+	assert.Contains(t, wiki.APIReference, "RETRIED_DESC_B")
+}
+
+// TestFunctionDescRetryExhausted verifies A1: when retries are exhausted the
+// flow does not abort, and the still-missing functions are recorded in the
+// checkpoint so the next run can attempt them again.
+func TestFunctionDescRetryExhausted(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := []*analyzer.FileResult{
+		{Filename: "mod1.go", Functions: []analyzer.FunctionInfo{
+			{Name: "fnFailA"},
+			{Name: "fnFailB"},
+		}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// Always fail function-description requests.
+	prov := &retryableProvider{
+		streamErr: errors.New("stream unavailable"),
+		failFirst: 999,
+		respFn:    func(string) string { return "" },
+	}
+
+	wiki, err := GenerateWikiEnhancedWithMaxFunctions(context.Background(), prov, graph, tmpDir, "fail-test", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "", -1)
+	require.NoError(t, err, "exhausted retries must not abort generation")
+	require.NotNil(t, wiki)
+
+	// The checkpoint must record the functions that remain undescribed.
+	cpPath := filepath.Join(tmpDir, ".codewiki", "checkpoint", "wiki.json")
+	cpData, readErr := os.ReadFile(cpPath)
+	require.NoError(t, readErr, "checkpoint should be persisted with failed funcs")
+	cpStr := string(cpData)
+	assert.Contains(t, cpStr, "mod1#fnFailA", "failed func should be recorded in checkpoint")
+	assert.Contains(t, cpStr, "mod1#fnFailB")
 }
 
 func TestGenerateKeyConceptsFallback(t *testing.T) {

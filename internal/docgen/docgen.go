@@ -70,6 +70,11 @@ type wikiCheckpoint struct {
 	ThemeIntros          map[string]string         `json:"theme_intros,omitempty"`
 	ChapterNarratives  map[string]string         `json:"chapter_narratives,omitempty"`
 	ProjectStructure   string                   `json:"project_structure,omitempty"`
+	// FailedFuncs records function description keys (module#name) that could not
+	// be generated after all retries. They are not in FuncDescMap, so the next
+	// run's pendingFuncs will naturally re-request them; this field exists for
+	// diagnostics and explicit tracking. (A1)
+	FailedFuncs []string `json:"failed_funcs,omitempty"`
 }
 
 func loadWikiCheckpoint(path string) *wikiCheckpoint {
@@ -461,7 +466,9 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			// Task 5: Function Descriptions — after Phase 1 to avoid API quota contention.
 			// A2: incremental resume. Always re-select the target set, restore cached
 			// descriptions from checkpoint, and request only the pending subset.
-			if maxLLMFunctions != 0 {
+			// Guard provider!=nil: if LLM config failed, skip this stage rather than
+			// panic inside streamComplete.
+			if maxLLMFunctions != 0 && provider != nil {
 				func() {
 					var callEdges []sequencer.CallEdge
 					if sourceDir != "" {
@@ -507,14 +514,70 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 					funcsPerReq := 5
 					concurrency := 10
 
-					var reqs [][]funcRef
-					for i := 0; i < len(pending); i += funcsPerReq {
-						end := i + funcsPerReq
-						if end > len(pending) {
-							end = len(pending)
+					// chunkReqs splits a flat list of funcRefs into per-request groups.
+					chunkReqs := func(funcs []funcRef) [][]funcRef {
+						if len(funcs) == 0 {
+							return nil
 						}
-						reqs = append(reqs, pending[i:end])
+						var rs [][]funcRef
+						for i := 0; i < len(funcs); i += funcsPerReq {
+							end := i + funcsPerReq
+							if end > len(funcs) {
+								end = len(funcs)
+							}
+							rs = append(rs, funcs[i:end])
+						}
+						return rs
 					}
+
+					// runRound executes a set of requests concurrently (batched by
+					// concurrency), returning the funcRefs whose description still
+					// could not be obtained. completeFn decides stream vs non-stream.
+					runRound := func(label string, reqs [][]funcRef, completeFn func(context.Context, string) (string, error)) []funcRef {
+						totalBatches := (len(reqs) + concurrency - 1) / concurrency
+						var failedMu sync.Mutex
+						var failed []funcRef
+						for i := 0; i < len(reqs); i += concurrency {
+							end := i + concurrency
+							if end > len(reqs) {
+								end = len(reqs)
+							}
+							batch := reqs[i:end]
+							batchNum := i/concurrency + 1
+
+							var batchWG sync.WaitGroup
+							for _, r := range batch {
+								batchWG.Add(1)
+								go func(fns []funcRef) {
+									defer batchWG.Done()
+									prompt := buildFunctionDescriptionPrompt(fns)
+									reqCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
+									defer cancel()
+									enhanced, err := completeFn(reqCtx, prompt)
+									if err != nil || enhanced == "" {
+										failedMu.Lock()
+										failed = append(failed, fns...)
+										failedMu.Unlock()
+										if err != nil {
+											pr.tick("函数描述", fmt.Sprintf("%s批次 %d/%d 失败 (%v)", label, batchNum, totalBatches, err))
+										}
+										return
+									}
+									descs := parseFunctionDescriptions(enhanced, fns)
+									fdmMu.Lock()
+									for k, v := range descs {
+										fdm[k] = v
+									}
+									fdmMu.Unlock()
+								}(r)
+							}
+							batchWG.Wait()
+							pr.tick("函数描述", fmt.Sprintf("%s第 %d/%d 批完成（累计 %d/%d 个函数）", label, batchNum, totalBatches, len(fdm), len(topFuncs)))
+						}
+						return failed
+					}
+
+					reqs := chunkReqs(pending)
 					totalBatches := (len(reqs) + concurrency - 1) / concurrency
 					if restored > 0 {
 						pr.update("函数描述", fmt.Sprintf("从 checkpoint 恢复 %d 个，新增生成 %d 个（每请求 %d 个，每批并发 %d 个，共 %d 批）...", restored, len(pending), funcsPerReq, concurrency, totalBatches))
@@ -525,39 +588,35 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 						pr.bump(totalBatches - 1)
 					}
 
-					for i := 0; i < len(reqs); i += concurrency {
-						end := i + concurrency
-						if end > len(reqs) {
-							end = len(reqs)
-						}
-						batch := reqs[i:end]
-						batchNum := i/concurrency + 1
+					// A1: Round 0 uses stream-first; rounds 1..maxRetries retry the
+					// failures via plain non-stream Complete (more robust, skips the
+					// stream setup that may have been the failure cause).
+					maxRetries := 2
+					streamFn := func(c context.Context, p string) (string, error) { return streamComplete(c, provider, p) }
+					nonStreamFn := func(c context.Context, p string) (string, error) { return provider.Complete(c, p) }
 
-						var batchWG sync.WaitGroup
-						for _, r := range batch {
-							batchWG.Add(1)
-							go func(fns []funcRef) {
-								defer batchWG.Done()
-								prompt := buildFunctionDescriptionPrompt(fns)
-								reqCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
-								defer cancel()
-								enhanced, err := streamComplete(reqCtx, provider, prompt)
-								if err != nil {
-									pr.tick("函数描述", fmt.Sprintf("批次 %d/%d 失败 (%v)", batchNum, totalBatches, err))
-									return
-								}
-								if enhanced != "" {
-									descs := parseFunctionDescriptions(enhanced, fns)
-									fdmMu.Lock()
-									for k, v := range descs {
-										fdm[k] = v
-									}
-									fdmMu.Unlock()
-								}
-							}(r)
+					failed := runRound("", reqs, streamFn)
+					for round := 1; round <= maxRetries && len(failed) > 0; round++ {
+						pr.tick("函数描述", fmt.Sprintf("第 %d 轮重试 %d 个失败函数（非流式）...", round, len(failed)))
+						failed = runRound(fmt.Sprintf("R%d-", round), chunkReqs(failed), nonStreamFn)
+					}
+
+					// Record functions still failing after all retries. These keys
+					// are absent from FuncDescMap, so the next run's pendingFuncs
+					// re-requests them automatically; FailedFuncs is for diagnostics.
+					cp.FailedFuncs = nil
+					if len(failed) > 0 {
+						seen := make(map[string]bool)
+						for _, f := range failed {
+							k := funcDescKey(f)
+							if topKeys[k] && !seen[k] && fdm[k] == "" {
+								seen[k] = true
+								cp.FailedFuncs = append(cp.FailedFuncs, k)
+							}
 						}
-						batchWG.Wait()
-						pr.tick("函数描述", fmt.Sprintf("第 %d/%d 批完成（累计 %d/%d 个函数）", batchNum, totalBatches, len(fdm), len(topFuncs)))
+						if len(cp.FailedFuncs) > 0 {
+							pr.log(fmt.Sprintf("[函数描述] %d 个函数经 %d 轮重试仍失败，已记入 checkpoint，下次重跑可恢复", len(cp.FailedFuncs), maxRetries))
+						}
 					}
 
 					funcDescMap = fdm
