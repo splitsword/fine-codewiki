@@ -1104,6 +1104,176 @@ func extractArchitectureHints(readme string) string {
 }
 ```
 
+### M3.5 — 规模化可靠性加固 (v1.0 RC)
+
+> **定位**：M3 已发布 v1.0 Beta。本里程碑是 v1.0 正式版（RC）发布前的**必修可靠性加固**，不属于 V2 功能扩展。
+>
+> **触发背景**：在 465 文件的大型仓库（project-ss）上执行 `generate` 时暴露三类问题：流式 idle 超时误杀长思考请求、函数描述批次部分失败后永久丢失、单文件改动清空整个 checkpoint 导致大仓被迫全量重算。这些问题使大仓场景下的产物质量不可控、可恢复性差。
+
+#### 目标
+
+让 CodeWiki 在 **200–1000 文件级**中大型仓库上具备：失败可重试、断点可续传、改动可增量、超时不卡死四项可靠性能力。
+
+#### 任务总览
+
+| # | 任务 | 根因（file:line） | 优先级 |
+|---|------|-------------------|--------|
+| A1 | 失败函数描述批次重试队列 | `docgen.go:510-519` 单批失败仅 return 不重试 | 🔴 P0 |
+| A2 | checkpoint 函数级精细化续传 | `docgen.go:462` len>0 即跳过整阶段 | 🔴 P0 |
+| A3 | 单文件改动不再清空整盘 checkpoint | `cli.go:99-101` astChanged→ClearWikiCheckpoint | 🔴 P0 |
+| A4 | 降级非流式加独立超时 | `docgen.go:2210` 复用原 ctx 无新超时 | 🟠 P1 |
+| A5 | 流式 idle 超时自适应 | `docgen.go:2206` 固定 3min 误杀 thinking | 🟠 P1 |
+| A6 | 并发可配 + 流式 429 退避 | `docgen.go:482-483` 硬编码 / `llm.go:290-353` 流式无 429 | 🟡 P2 |
+
+> **实现顺序**（依依赖关系）：A2 → A3 → A1 → A4 → A5 → A6。A2 是 A1/A3 的基础——只有 checkpoint 精细化后，重试与增量才有意义。
+
+---
+
+#### A2 — checkpoint 函数级精细化续传（基础项，最先做）
+
+**问题根因**：`docgen.go:462` 中 `if len(cp.FuncDescMap) > 0` 即跳过整个函数描述阶段。这导致部分成功的 checkpoint 被当作"全部完成"，剩余函数永远不会被重选。
+
+**实现方案**：
+1. 重选目标函数集合 `topFuncs`（已有逻辑，`selectTopFunctions`）。
+2. 与 `cp.FuncDescMap` 求差集：`pending = topFuncs - cp.FuncDescMap.keys()`。
+3. 若 `len(pending) == 0`，跳过；否则只对 `pending` 发 LLM 请求，结果 `merge` 进 `fdm`。
+4. checkpoint 落盘时合并旧值 + 新值（而非替换）。
+
+**改动点**：`internal/docgen/docgen.go` 函数描述块（约 461–545 行）；`wikiCheckpoint` 结构无需改字段，复用 `FuncDescMap`。
+
+**测试方案**：
+- `TestFunctionDescCheckpointPartialResume`：构造 `cp.FuncDescMap` 含 100 个函数描述，重选集合 120 个，断言只对 20 个 `pending` 发起请求、最终 `fdm` 含 120 个。
+- `TestFunctionDescCheckpointStaleEntry`：checkpoint 中某函数签名已变（重选集合里 key 不同），断言过期条目不被复用。
+
+**验收标准**：第二次 `generate` 时函数描述阶段只处理增量；日志输出"从 checkpoint 恢复 N 个，新增请求 M 个"。
+
+---
+
+#### A3 — 单文件改动不再清空整盘 checkpoint
+
+**问题根因**：`cli.go:99-101` 中只要 `astChanged`（任意一个源文件改动）为真，即调用 `ClearWikiCheckpoint(sourceDir)`。大仓改一个文件，几百个已完成的函数描述被一并清空。
+
+**实现方案**：
+1. 移除"AST 变更 → 清 Wiki checkpoint"的强耦合。AST 缓存照常按文件级失效重解析（`cache.go` 已正确实现）。
+2. Wiki checkpoint 保留。其过期条目由 A2 的"重选集合求差集 + 签名比对"自然淘汰——无需整盘清空。
+3. 仅在 `--force` 或 `cacheVersion` 变更时才整盘清 checkpoint。
+
+**改动点**：`internal/cli/cli.go` 的 `RunGenerate`（约 97–101 行）。
+
+**测试方案**：
+- `TestGenerateIncrementalPreservesCheckpoint`：完整 generate 一次 → 修改一个源文件 → 再次 generate，断言 checkpoint 文件未被删除、函数描述阶段为增量。
+- `TestGenerateForceClearsCheckpoint`：`--force` 时 checkpoint 被清空。
+
+**验收标准**：project-ss 改单文件后重跑，函数描述阶段耗时与改动规模成正比，而非与仓库规模成正比。
+
+---
+
+#### A1 — 失败函数描述批次重试队列
+
+**问题根因**：`docgen.go:510-519` 单批请求失败仅 `pr.tick(...失败...)` 后 `return`，该批 5 个函数既不进 `fdm`，也不会在本次或下次被重选（叠加 A2 缺陷）。
+
+**实现方案**：
+1. 失败的批次（函数列表）写入一个 `retryQueue []funcRef`。
+2. 主循环结束后，对 `retryQueue` 再跑最多 2 轮，每轮可降级为非流式（更稳）。
+3. 仍失败的函数记录到 checkpoint 的 `FailedFuncs []string` 字段（新增），下次重跑时优先补做。
+4. 任意一轮成功即从 `FailedFuncs` 移除。
+
+**改动点**：`internal/docgen/docgen.go` 批次循环（约 499–545 行）；`wikiCheckpoint` 新增 `FailedFuncs` 字段。
+
+**测试方案**：
+- `TestFunctionDescRetryThenSucceed`：mock provider 前 2 次对某批返回 error、第 3 次成功，断言最终 `fdm` 含该批函数。
+- `TestFunctionDescRetryExhausted`：连续失败超上限，断言函数进入 `FailedFuncs`、流程不中断、下次重跑优先补做。
+
+**验收标准**：project-ss 那 14 个原本丢失的函数描述，在本轮或下次重跑中能补回。
+
+---
+
+#### A4 — 降级非流式加独立超时
+
+**问题根因**：`docgen.go:2210`（`streamComplete` 降级路径）调用 `provider.Complete(ctx, prompt)` 直接复用传入的 `ctx`。流式已消耗 3 分钟后，非流式只剩约 5 分钟（函数描述批）或一直挂到 60 分钟总预算（其他任务）。
+
+**实现方案**：降级时派生独立 ctx：`nctx, cancel := context.WithTimeout(ctx, 5*time.Minute)`，调 `provider.Complete(nctx, prompt)`。与已有正确实现 `tryCompleteNarrative`（`docgen.go:2254-2256`）对齐。
+
+**改动点**：`internal/docgen/docgen.go` `streamComplete`（约 2198–2215 行）。
+
+**测试方案**：
+- `TestStreamDegradeUsesIndependentTimeout`：mock 流式挂起触发降级，捕获传入 `Complete` 的 ctx，断言其 `Deadline` 晚于"现在 + 5min"而非继承原 ctx 的剩余时间。
+
+**验收标准**：单次降级调用最多 5 分钟返回（成功或失败），不再出现单批卡近一小时。
+
+---
+
+#### A5 — 流式 idle 超时自适应
+
+**问题根因**：`docgen.go:2206` 固定 `3*time.Minute` 作为"两次 token 间空闲超时"。但 thinking/reasoning 模式（`llm.go:469-477` 注入 `reasoning_effort:"high"`）首 token 前的思考期可能 >3 分钟，导致正常请求被误杀。
+
+**实现方案**（二选一，推荐两者结合）：
+1. **reasoning token 计入活跃**：在 `streamCollectWithLiveness` 中，收到 reasoning/thinking 增量时也 `timer.Reset(idleTimeout)`（当前可能只对 content token 重置）。
+2. **按模式调阈值**：provider 启用 thinking 时 idle timeout 取 6–8 分钟，否则 3 分钟。
+
+**改动点**：`internal/docgen/docgen.go` `streamCollectWithLiveness`（约 2163–2192 行）及调用点。
+
+**测试方案**：
+- `TestStreamIdleTimeoutReasoningAware`：mock 流式先发 reasoning token（间隔 4 分钟）、再发 content token，断言不触发超时、最终完整接收。
+- `TestStreamIdleTimeoutNormal`：普通模式 3.5 分钟无任何 token，断言触发超时降级。
+
+**验收标准**：开启 thinking 的大仓不再因思考期 >3 分钟而批量降级。
+
+---
+
+#### A6 — 并发可配 + 流式 429 退避
+
+**问题根因**：
+- `docgen.go:482-483` `concurrency := 10` / `funcsPerReq := 5` 为局部硬编码常量，无 flag 可调。
+- `llm.go:290-353` `CompleteStream` 建连/流式阶段无 429 处理；而非流式 `post`（`llm.go:386-437`）已有完整的 `Retry-After` 退避。限流时流式整批直接降级。
+
+**实现方案**：
+1. `cmd/codewiki/main.go` generate 子命令新增 `-concurrency` flag（默认 10），经 `cli.Config` → `docgen` 调度。
+2. `internal/llm/llm.go` `CompleteStream` 在建连失败/读响应时识别 429，读 `Retry-After` 头指数退避重试（抽公用 `backoff` 逻辑与 `post` 复用）。Ollama provider 同步补齐重试（当前 `llm.go:594-627` 无重试）。
+
+**改动点**：`cmd/codewiki/main.go`、`internal/cli/cli.go`（Config 透传）、`internal/docgen/docgen.go`（读配置）、`internal/llm/llm.go`（流式 429）。
+
+**测试方案**：
+- `TestCompleteStream429Retry`：mock 返回 429 + `Retry-After: 1`，断言流式退避后重试成功。
+- `TestConcurrencyFlag`：`-concurrency 3` 时验证同时 in-flight 的请求数 ≤ 3。
+
+**验收标准**：限流场景不再整批降级丢失；大仓可通过 `-concurrency` 调优吞吐。
+
+---
+
+#### M3.5 测试计划
+
+```
+单元测试（internal/docgen, internal/llm）
+├── A2 checkpoint 精细化：部分恢复 / 过期条目淘汰
+├── A3 增量不清盘：改单文件 / --force 清盘
+├── A1 重试队列：失败重试成功 / 重试耗尽进 FailedFuncs
+├── A4 降级独立超时：ctx deadline 隔离
+├── A5 idle 自适应：reasoning 计入活跃 / 普通模式仍 3min
+└── A6 并发可配 + 流式 429 退避
+
+集成测试（internal/cli）
+├── 大仓增量：generate → 改单文件 → 再 generate，断言函数描述增量、checkpoint 保留
+└── 大仓断点：generate 中途 mock 超时 → 再 generate，断言从 checkpoint 续传 + 补做失败函数
+
+E2E 验证（人工 + testdata）
+├── project-ss（465 文件）全量 generate 成功，函数描述覆盖率 ≥ 95%
+├── project-ss 改单文件后重跑，耗时下降一个数量级
+└── 限流模拟（mock 429）：不再出现"流式超时降级→丢失"连锁
+```
+
+#### M3.5 发布门禁（v1.0 RC 准出条件）
+
+| 门禁 | 标准 |
+|------|------|
+| 函数描述可恢复性 | 大仓中途失败后重跑，缺失函数描述 100% 可补回 |
+| 增量正确性 | 改单文件，未受影响模块的函数描述零重算 |
+| 超时不卡死 | 单批任意失败路径 ≤ 5 分钟返回 |
+| 大仓覆盖率 | project-ss 函数描述覆盖率 ≥ 95%（当前 ~98% of selected） |
+| 回归 | 现有 `go test ./...` 全绿，无新增数据竞争 |
+
+---
+
 ### M4 — 生态扩展 (V2)
 
 > **M4 整体延后至 V2，不在 v1.0 Beta 范围内。**

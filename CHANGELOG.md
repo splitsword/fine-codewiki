@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+- 2026-07-01 — docs(prd): 新增 M3.5 规模化可靠性加固里程碑（v1.0 RC） (fdccc99)
+
+### 规划：M3.5 规模化可靠性加固（v1.0 RC）
+
+- 2026-06-12 — docs(prd): 新增 M3.5 里程碑——规模化可靠性加固（v1.0 RC）。基于 project-ss（465 文件）大仓实测与第三方评估报告的代码级验证，规划 6 项任务：A1 失败重试队列、A2 checkpoint 函数级续传、A3 增量不清盘、A4 降级独立超时、A5 idle 自适应、A6 并发可配+流式429退避。实现顺序 A2→A3→A1→A4→A5→A6，详见 `prd.md` § M3.5 与 `PRD_COVERAGE.md`。
+
+---
+
 - 2026-06-09 — test(cli): TestRunServeStarts 跳过 macOS（goroutine 泄漏超时） (0c68729)
 
 - 2026-06-09 — docs(readme): 新增 GitHub 下载量徽章 (1e5deba)

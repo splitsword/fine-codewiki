@@ -12,6 +12,7 @@
 | M1 — 核心可行原型 | ✅ 已完成 | AST/文档/图表/CLI/Web | 无 |
 | M2 — 问答与图表增强 | ✅ 已完成 | RAG/时序图/本地LLM/配置/中文 | 无 |
 | M3 — 产品化打磨 | ✅ 已完成 | 主题导向叙事文档、多图叙事化架构说明、静态 HTML/PDF 导出、流式 AI 问答、Web UI 14项特性、4 阶段并发管线、流式优先 LLM、update 自更新、GitHub Releases 自动发布 | 无 |
+| M3.5 — 规模化可靠性加固 | 🔜 计划中（v1.0 RC） | 失败重试队列、checkpoint 函数级续传、增量不清盘、降级独立超时、idle 自适应、并发可配+流式429退避 | 待 A2→A3→A1→A4→A5→A6 排期 |
 | M4 — 生态扩展 | ⏳ 延后至 V2 | Rust/C++ 支持、VS Code 扩展、CI 集成（GitHub Action）、图结构自然语言查询 | 无 |
 
 ---
@@ -192,6 +193,42 @@
 | **代码块样式一致性** | ✅ | `:not(pre) > code` 选择器隔离内联代码样式；移除 `pre code { color: inherit }` 让 highlight.js 语法高亮生效 |
 | **入口点导航移除** | ✅ | 删除 EntryPoints 侧栏入口渲染（`graph.EntryPoints()` 返回零入度模块无意义）；项目结构区已覆盖所有模块 |
 | **JS 语法错误修复** | ✅ | 删除 `wikiPageJS` 中多余的 `}` 和 `});` 闭合括号，恢复主题切换、代码复制、图表全屏、搜索、导航折叠、滚动监听所有 JS 功能 |
+
+---
+
+## M3.5 交付物细拆（计划中：v1.0 RC）
+
+> 详见 `prd.md` § M3.5。每个任务含问题根因（file:line）、实现方案、测试方案、验收标准。
+
+| # | 任务 | 实现文件 | 测试文件（计划） | 状态 | 优先级 |
+|---|------|----------|------------------|------|--------|
+| A1 | 失败函数描述批次重试队列 | `internal/docgen/docgen.go`（批次循环 499-545） | `docgen_test.go::TestFunctionDescRetry*` | 🔜 未开始 | 🔴 P0 |
+| A2 | checkpoint 函数级精细化续传 | `internal/docgen/docgen.go`（459-465） | `docgen_test.go::TestFunctionDescCheckpoint*` | 🔜 未开始 | 🔴 P0 |
+| A3 | 单文件改动不再清空整盘 checkpoint | `internal/cli/cli.go`（97-101） | `cli_test.go::TestGenerateIncremental*` | 🔜 未开始 | 🔴 P0 |
+| A4 | 降级非流式加独立超时 | `internal/docgen/docgen.go` `streamComplete`（2198-2215） | `docgen_test.go::TestStreamDegradeUsesIndependentTimeout` | 🔜 未开始 | 🟠 P1 |
+| A5 | 流式 idle 超时自适应（reasoning 感知） | `internal/docgen/docgen.go` `streamCollectWithLiveness`（2163-2192） | `docgen_test.go::TestStreamIdleTimeout*` | 🔜 未开始 | 🟠 P1 |
+| A6 | 并发可配 + 流式 429 退避 | `cmd/codewiki/main.go` / `internal/llm/llm.go`（290-353） | `llm_test.go::TestCompleteStream429Retry` | 🔜 未开始 | 🟡 P2 |
+
+### M3.5 成功标准核对
+
+| 标准 | 验证方式 |
+|------|----------|
+| 函数描述可恢复性：大仓中途失败后重跑，缺失函数描述 100% 可补回 | 集成测试：mock 中途超时 → 再 generate，断言 FailedFuncs 清零 |
+| 增量正确性：改单文件，未受影响模块零重算 | 集成测试：改单文件 → 再 generate，断言函数描述阶段仅处理增量 |
+| 超时不卡死：单批任意失败路径 ≤ 5 分钟返回 | 单元测试：mock 挂起，断言 5min 内返回 |
+| 大仓覆盖率：函数描述覆盖率 ≥ 95% | E2E：project-ss（465 文件）全量 generate |
+| 无回归 | `go test -race ./...` 全绿 |
+
+### M3.5 测试计划核对
+
+| 测试项 | 状态 | 实现方式（计划） |
+|--------|------|------------------|
+| A2 checkpoint 部分恢复 / 过期淘汰 | 🔜 | mock FuncDescMap，断言只对 pending 发请求 |
+| A3 增量不清盘 / --force 清盘 | 🔜 | 改单文件后断言 checkpoint 保留 |
+| A1 重试成功 / 重试耗尽进 FailedFuncs | 🔜 | mock 前 N 次失败、第 N+1 次成功 |
+| A4 降级 ctx deadline 隔离 | 🔜 | 捕获 Complete 的 ctx，断言独立 deadline |
+| A5 reasoning 计入活跃 / 普通仍 3min | 🔜 | mock reasoning token 间隔 4min 不超时 |
+| A6 流式 429 退避 / -concurrency 生效 | 🔜 | mock 429+Retry-After；并发计数 |
 
 ---
 
