@@ -400,6 +400,69 @@ func (p *ctxCapturingProvider) Embed(_ context.Context, _ []string) ([][]float32
 	return nil, nil
 }
 
+// funcDescConcurrencyProvider tracks the peak in-flight count of
+// function-description requests, so we can assert the concurrency bound (A6).
+func funcDescConcurrencyProvider() *fdTracker { return &fdTracker{} }
+
+type fdTracker struct {
+	mu          sync.Mutex
+	inflight    int
+	maxInflight int
+}
+
+func (p *fdTracker) CompleteStream(_ context.Context, prompt string) (<-chan string, error) {
+	isFD := strings.Contains(prompt, "撰写深度语义分析")
+	if isFD {
+		p.mu.Lock()
+		p.inflight++
+		if p.inflight > p.maxInflight {
+			p.maxInflight = p.inflight
+		}
+		p.mu.Unlock()
+	}
+	ch := make(chan string, 1)
+	go func() {
+		defer close(ch)
+		time.Sleep(20 * time.Millisecond)
+		if isFD {
+			p.mu.Lock()
+			p.inflight--
+			p.mu.Unlock()
+		}
+	}()
+	return ch, nil
+}
+
+func (p *fdTracker) Complete(_ context.Context, _ string) (string, error) { return "", nil }
+func (p *fdTracker) Embed(_ context.Context, _ []string) ([][]float32, error) { return nil, nil }
+
+// TestFunctionDescConcurrencyBound verifies A6: the function-description
+// stage respects FuncDescConcurrency rather than the hard-coded 10.
+func TestFunctionDescConcurrencyBound(t *testing.T) {
+	old := FuncDescConcurrency
+	FuncDescConcurrency = 2
+	defer func() { FuncDescConcurrency = old }()
+
+	files := []*analyzer.FileResult{
+		{Filename: "mod1.go", Functions: []analyzer.FunctionInfo{
+			{Name: "f1"}, {Name: "f2"}, {Name: "f3"}, {Name: "f4"}, {Name: "f5"},
+			{Name: "f6"}, {Name: "f7"}, {Name: "f8"}, {Name: "f9"}, {Name: "f10"},
+			{Name: "f11"}, {Name: "f12"},
+		}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	prov := funcDescConcurrencyProvider()
+	_, err := GenerateWikiEnhancedWithMaxFunctions(context.Background(), prov, graph, "", "conc-test", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "", -1)
+	require.NoError(t, err)
+
+	prov.mu.Lock()
+	peak := prov.maxInflight
+	prov.mu.Unlock()
+	assert.Greater(t, peak, 1, "should actually run multiple concurrent requests")
+	assert.LessOrEqual(t, peak, 2, "concurrency must be bounded by FuncDescConcurrency")
+}
+
 // TestStreamDegradeUsesIndependentTimeout verifies A4: when streamComplete
 // falls back to non-stream Complete, the degraded call gets its own bounded
 // timeout rather than inheriting the (possibly already-exhausted) parent ctx.

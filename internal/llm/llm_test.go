@@ -644,6 +644,42 @@ func TestOpenAIProviderCompleteStream(t *testing.T) {
 	assert.Equal(t, []string{"Hello", " world"}, tokens)
 }
 
+// TestOpenAIProviderCompleteStream429Retry verifies A6: the streaming path
+// retries on 429 with Retry-After backoff instead of failing the whole batch.
+func TestOpenAIProviderCompleteStream429Retry(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":{"message":"rate limited"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}")
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer server.Close()
+
+	p := &OpenAIProvider{
+		BaseURL:    server.URL + "/v1",
+		APIKey:     "test-key",
+		Model:      "gpt-4o",
+		MaxRetries: 3,
+		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	ch, err := p.CompleteStream(context.Background(), "test")
+	require.NoError(t, err)
+	var tokens []string
+	for tok := range ch {
+		tokens = append(tokens, tok)
+	}
+	assert.Equal(t, []string{"OK"}, tokens)
+	assert.Equal(t, 3, attempts, "should retry until success")
+}
+
 func TestOllamaProviderCompleteStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)

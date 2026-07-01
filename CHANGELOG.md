@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-01 — feat(llm,cli): A6 并发可配 + 流式 429 退避 (e2d3374)
+
 - 2026-07-01 — fix(docgen): A5 流式 idle 超时自适应（reasoning 友好） (3dc123c)
 
 - 2026-07-01 — fix(docgen): A4 降级非流式加独立 5min 超时 (b0295c7)

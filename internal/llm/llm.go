@@ -303,20 +303,66 @@ func (p *OpenAIProvider) CompleteStream(ctx context.Context, prompt string) (<-c
 	}
 
 	url := strings.TrimSuffix(p.BaseURL, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 
 	client := p.StreamClient
 	if client == nil {
 		client = p.HTTPClient
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
+
+	// A6: retry the connection setup on 429 / transient errors, mirroring post().
+	// Once the stream is established (status < 400) we do not retry — a mid-stream
+	// break can only be handled by restarting the whole request, which the caller
+	// (streamComplete) already does via non-stream degrade.
+	var resp *http.Response
+	var lastErr error
+	maxRetries := p.MaxRetries
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt*3) * time.Second
+			if isTimeout(lastErr) {
+				backoff = time.Duration(attempt*5) * time.Second
+			}
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+
+		resp, err = client.Do(req)
+		if err != nil {
+			lastErr = err
+			if isTimeout(err) {
+				continue
+			}
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			data, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
+			if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
+				if sec, _ := strconv.Atoi(retryAfter); sec > 0 {
+					select {
+					case <-time.After(time.Duration(sec) * time.Second):
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				}
+			}
+			resp = nil
+			continue
+		}
+		break // established, or a non-429 error handled below
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("stream 429 after %d retries: %w", maxRetries, lastErr)
 	}
 
 	if resp.StatusCode >= 400 {

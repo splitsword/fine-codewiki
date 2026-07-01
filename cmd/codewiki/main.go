@@ -113,6 +113,7 @@ func runGenerate(args []string) {
 	name := fs.String("name", "", "Project name (default: directory name)")
 	maxFunctions := fs.Int("max-functions", -1, "Max functions for LLM semantic description: -1=auto (30%%), 0=skip, N=cap")
 	force := fs.Bool("force", false, "Force full regeneration, ignore checkpoints")
+	concurrency := fs.Int("concurrency", 0, "Max concurrent LLM requests for function-description stage (0 = default 10). Lower for rate-limited endpoints, raise for throughput on large repos.")
 	fs.Parse(args)
 
 	cfg := &cli.Config{
@@ -122,6 +123,7 @@ func runGenerate(args []string) {
 		ProjectName:     *name,
 		MaxLLMFunctions: *maxFunctions,
 		Force:           *force,
+		Concurrency:     *concurrency,
 	}
 
 	if err := cli.RunGenerate(cfg); err != nil {
@@ -274,6 +276,7 @@ Generate flags:
   -lang string     Language filter: python, javascript, typescript, go, java, rust, c, cpp
   -name string     Project name
   -max-functions   Max functions for LLM semantic description: -1=auto, 0=skip, N=cap
+  -concurrency     Max concurrent LLM requests for function-description stage (0 = default 10)
   -force           Force full regeneration, ignore checkpoints
 
 Browse flags:

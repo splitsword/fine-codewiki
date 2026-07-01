@@ -512,7 +512,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 					var fdmMu sync.Mutex
 					funcsPerReq := 5
-					concurrency := 10
+					concurrency := FuncDescConcurrency
 
 					// chunkReqs splits a flat list of funcRefs into per-request groups.
 					chunkReqs := func(funcs []funcRef) [][]funcRef {
@@ -903,6 +903,11 @@ var docNameKeywords = []string{
 	"guide", "manual", "tutorial", "getting-started", "getting_started",
 	"用户指南", "使用指南", "用户手册", "使用手册", "操作手册", "快速开始", "入门",
 }
+
+// FuncDescConcurrency bounds the number of concurrent LLM requests in the
+// function-description stage (A6). Default 10; override via the generate
+// command's -concurrency flag for large repos or rate-limited endpoints.
+var FuncDescConcurrency = 10
 
 // docFileExts 限定可作为文档读取的文本扩展名。
 var docFileExts = map[string]bool{
