@@ -193,6 +193,94 @@ func TestGenerateCommandMaxFunctions(t *testing.T) {
 	assert.FileExists(t, filepath.Join(outDir, "00-overview.md"))
 }
 
+// TestGenerateIncrementalPreservesCheckpoint verifies A3: a file change
+// (astChanged=true) must NOT clear the wiki checkpoint. The checkpoint now
+// serves as persistent incremental state consumed by A2 on the next run.
+func TestGenerateIncrementalPreservesCheckpoint(t *testing.T) {
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "repo")
+	outDir := filepath.Join(tmpDir, "wiki")
+	require.NoError(t, os.MkdirAll(filepath.Join(repoPath, "app"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "app", "main.py"), []byte("def main(): pass\n"), 0644))
+
+	// Pre-seed a checkpoint with a cached function description.
+	cpDir := filepath.Join(repoPath, ".codewiki", "checkpoint")
+	require.NoError(t, os.MkdirAll(cpDir, 0755))
+	cpPath := filepath.Join(cpDir, "wiki.json")
+	require.NoError(t, os.WriteFile(cpPath, []byte(`{"func_desc_map":{"app/main#main":"CACHED_DESC"}}`), 0644))
+
+	// Isolate from user's real LLM config
+	oldHome := os.Getenv("HOME")
+	oldUserProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", tmpDir)
+	os.Setenv("USERPROFILE", tmpDir)
+	defer func() {
+		os.Setenv("HOME", oldHome)
+		os.Setenv("USERPROFILE", oldUserProfile)
+	}()
+	clearCodewikiEnv(t)
+
+	cfg := &Config{
+		SourceDir:       repoPath,
+		OutputDir:       outDir,
+		Language:        "python",
+		ProjectName:     "incr-test",
+		MaxLLMFunctions: 0, // skip function-description stage (no LLM in test)
+	}
+
+	err := RunGenerate(cfg)
+	require.NoError(t, err)
+
+	// A3: checkpoint file must survive an incremental (non-force) generate.
+	assert.FileExists(t, cpPath, "incremental generate must NOT clear checkpoint")
+	data, err := os.ReadFile(cpPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "CACHED_DESC", "cached function description must survive incremental run")
+}
+
+// TestGenerateForceClearsCheckpoint verifies that --force still discards the
+// checkpoint so a full regeneration starts clean.
+func TestGenerateForceClearsCheckpoint(t *testing.T) {
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "repo")
+	outDir := filepath.Join(tmpDir, "wiki")
+	require.NoError(t, os.MkdirAll(filepath.Join(repoPath, "app"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "app", "main.py"), []byte("def main(): pass\n"), 0644))
+
+	cpDir := filepath.Join(repoPath, ".codewiki", "checkpoint")
+	require.NoError(t, os.MkdirAll(cpDir, 0755))
+	cpPath := filepath.Join(cpDir, "wiki.json")
+	require.NoError(t, os.WriteFile(cpPath, []byte(`{"func_desc_map":{"app/main#main":"CACHED_DESC"}}`), 0644))
+
+	oldHome := os.Getenv("HOME")
+	oldUserProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", tmpDir)
+	os.Setenv("USERPROFILE", tmpDir)
+	defer func() {
+		os.Setenv("HOME", oldHome)
+		os.Setenv("USERPROFILE", oldUserProfile)
+	}()
+	clearCodewikiEnv(t)
+
+	cfg := &Config{
+		SourceDir:       repoPath,
+		OutputDir:       outDir,
+		Language:        "python",
+		ProjectName:     "force-test",
+		MaxLLMFunctions: 0,
+		Force:           true,
+	}
+
+	err := RunGenerate(cfg)
+	require.NoError(t, err)
+
+	// After --force, the previously-cached description must be gone. The file
+	// may or may not exist (regenerated empty), but it must not carry the marker.
+	if data, err := os.ReadFile(cpPath); err == nil {
+		assert.NotContains(t, string(data), "CACHED_DESC", "--force must discard cached checkpoint")
+	}
+}
+
 func TestWikiHandler(t *testing.T) {
 	tmpDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "overview.md"), []byte("# Test\n"), 0644))

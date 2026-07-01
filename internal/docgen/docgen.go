@@ -481,9 +481,18 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 					}
 
 					// Restore cached descriptions, then compute the pending subset.
+					// Only entries that still appear in topFuncs are carried forward;
+					// stale entries (renamed/removed functions) are dropped so the
+					// checkpoint does not accumulate dead keys over incremental runs.
 					fdm := make(map[string]string)
+					topKeys := make(map[string]bool, len(topFuncs))
+					for _, f := range topFuncs {
+						topKeys[funcDescKey(f)] = true
+					}
 					for k, v := range cp.FuncDescMap {
-						fdm[k] = v
+						if topKeys[k] {
+							fdm[k] = v
+						}
 					}
 					restored := len(fdm)
 					pending := pendingFuncs(topFuncs, cp.FuncDescMap)
@@ -603,7 +612,13 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 			cp.WhatItDoes = whatItDoes
 			cp.KeyConcepts = keyConcepts
 			cp.ArchNarrative = archNarrative
-			cp.FuncDescMap = funcDescMap
+			// Only persist when the function-description stage actually ran.
+			// When maxLLMFunctions == 0 the stage is skipped and funcDescMap
+			// stays nil — we must not overwrite the cached descriptions in that
+			// case (A3: preserve incremental state across runs).
+			if funcDescMap != nil {
+				cp.FuncDescMap = funcDescMap
+			}
 			cp.ProjectStructure = projectStructureNarrative
 			cp.ModuleChineseNames = moduleChineseNames
 			_ = saveWikiCheckpoint(cpPath, cp)
@@ -764,10 +779,11 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 	learningPath += buildWhereToGoNext("05-learning-path.md", hasConcepts)
 	apiRef += buildWhereToGoNext("api-reference.md", hasConcepts)
 
-	// Clear checkpoint on success
-	if cpPath != "" {
-		_ = os.Remove(cpPath)
-	}
+	// A3: keep the checkpoint on success. It now serves as persistent
+	// incremental state — the next run resumes from it via pendingFuncs (A2),
+	// only re-requesting functions whose description is missing. The checkpoint
+	// is discarded only by an explicit --force (cli.RunGenerate) or a cache
+	// version bump, not by normal completion.
 
 	return &Wiki{
 		ProjectName:         projectName,

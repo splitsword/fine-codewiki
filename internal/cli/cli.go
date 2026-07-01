@@ -97,11 +97,14 @@ func RunGenerate(cfg *Config) error {
 	c.Prune(paths)
 
 	astChanged := len(jobs) > 0
-	if astChanged || cfg.Force {
+	// A3: only an explicit --force discards the wiki checkpoint. Incremental
+	// file changes are resumed fine-grained inside docgen (A2: only functions
+	// without a cached description are re-requested). Clearing on every change
+	// would discard hundreds of cached descriptions in large repos and force a
+	// full LLM re-run on every single-file edit.
+	if cfg.Force {
 		docgen.ClearWikiCheckpoint(cfg.SourceDir)
-		if cfg.Force {
-			fmt.Println("--force 已指定，强制重新解析所有文件并重新生成")
-		}
+		fmt.Println("--force 已指定，强制重新解析所有文件并重新生成")
 	}
 	if astChanged || cfg.Force {
 		if cfg.Force {
