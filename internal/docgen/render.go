@@ -474,6 +474,12 @@ body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto San
 .topbar-search .search-icon { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text3); pointer-events:none; }
 .topbar-search kbd { position:absolute; right:92px; top:50%; transform:translateY(-50%); font-size:11px; padding:2px 6px; background:var(--bg3); border:1px solid var(--border); border-radius:4px; color:var(--text3); font-family:inherit; }
 .topbar-search .topbar-btn { position:absolute; right:10px; top:50%; transform:translateY(-50%); }
+.topbar-suggest { position:absolute; top:100%; left:0; right:140px; max-height:320px; overflow-y:auto; background:var(--bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.14); display:none; z-index:70; margin-top:4px; }
+.topbar-suggest-item { display:flex; align-items:center; gap:8px; padding:8px 12px; color:var(--text); text-decoration:none; border-bottom:1px solid var(--border2); font-size:13px; }
+.topbar-suggest-item:last-child { border-bottom:0; }
+.topbar-suggest-item:hover { background:var(--accent-glow); }
+.topbar-suggest-item small { margin-left:auto; color:var(--text3); font-size:11px; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.topbar-suggest-empty { padding:10px 12px; color:var(--text3); font-size:12px; }
 .topbar-actions { display:flex; align-items:center; gap:8px; margin-left:auto; }
 .topbar-btn { display:inline-flex; align-items:center; gap:6px; padding:6px 14px; font-size:12px; font-weight:600; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text2); cursor:pointer; transition:all .2s; text-decoration:none; }
 .topbar-btn:hover { background:var(--bg2); border-color:var(--accent); color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
@@ -840,6 +846,45 @@ document.addEventListener('keydown',function(e){
   else if(e.key==='Enter'){e.preventDefault();var it=_rpSearchItems[_rpSearchSel];if(it){rpPushRecent(rpSafe(it.title));window.location=it.path;}}
 });
 function rpUpdateSel(){var els=document.querySelectorAll('#rp-search-results .rp-result');for(var i=0;i<els.length;i++){els[i].classList.toggle('selected',i===_rpSearchSel);}}
+// Top-bar inline suggest: type in the main search box → dropdown candidates;
+// Enter → results land in the right-side search panel (no focus jump on click).
+function topbarSuggest(q){
+  var box=document.getElementById('topbar-suggest');if(!box)return;
+  q=q.trim();
+  if(!q){box.innerHTML='';box.style.display='none';return;}
+  var ql=q.toLowerCase(),out=[];
+  if(typeof _navIdx!=='undefined'){
+    for(var i=0;i<_navIdx.length&&out.length<8;i++){
+      var n=_navIdx[i];
+      if(n.t.toLowerCase().indexOf(ql)>=0||n.f.toLowerCase().indexOf(ql)>=0){out.push(n);}
+    }
+  }
+  if(!out.length){box.innerHTML='<div class="topbar-suggest-empty">无即时匹配，按 Enter 语义搜索</div>';box.style.display='block';return;}
+  box.innerHTML=out.map(function(n){return '<a class="topbar-suggest-item" href="'+n.f+'" onclick="topbarSuggestPick(\''+rpSafe(n.f)+'\');return false"><span class="rp-result-icon">📄</span><span>'+rpHighlight(n.t,q)+'</span><small>'+rpEscape(n.f)+'</small></a>';}).join('');
+  box.style.display='block';
+}
+function topbarSuggestPick(path){
+  var box=document.getElementById('topbar-suggest');if(box){box.innerHTML='';box.style.display='none';}
+  var trig=document.getElementById('topbar-search-trigger');if(trig){trig.value='';}
+  window.location=path;
+}
+function topbarSearchKey(e){
+  if(e.key!=='Enter')return;
+  e.preventDefault();
+  var trig=document.getElementById('topbar-search-trigger');
+  var q=trig?trig.value.trim():'';
+  if(!q)return;
+  if(trig)trig.value='';
+  var box=document.getElementById('topbar-suggest');if(box){box.innerHTML='';box.style.display='none';}
+  togglePanel('search');
+  var rp=document.getElementById('rp-search-input');
+  if(rp){rp.value=q;rp.focus();rpFilterSearch(q);}
+}
+document.addEventListener('click',function(e){
+  var box=document.getElementById('topbar-suggest');
+  var trig=document.getElementById('topbar-search-trigger');
+  if(box&&trig&&!trig.contains(e.target)&&!box.contains(e.target)){box.innerHTML='';box.style.display='none';}
+});
 var _rpHistory=[];
 function rpAskSend(){
   var inp=document.getElementById('rp-ai-input');
@@ -977,7 +1022,7 @@ function rpAppendMsg(role,text,sources){
   chat.scrollTop=chat.scrollHeight;
 }
 document.addEventListener('keydown',function(e){
-  if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();togglePanel('search');}
+  if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();var t=document.getElementById('topbar-search-trigger');if(t){t.focus();t.select();}else{togglePanel('search');}}
   if(e.key==='Escape')closePanel();
 });
 
@@ -1163,7 +1208,8 @@ func BuildWikiPage(title, body, currentURL string, sections []NavSection, totalA
 		out.WriteString(`</div>
 <div class="topbar-search">
 <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-<input type="text" placeholder="` + "搜索文章、模块..." + `" readonly onclick="togglePanel('search')">
+<input type="text" id="topbar-search-trigger" placeholder="` + "搜索文章、模块..." + `" autocomplete="off" oninput="topbarSuggest(this.value)" onkeydown="topbarSearchKey(event)">
+<div class="topbar-suggest" id="topbar-suggest"></div>
 <kbd>Ctrl+K</kbd>
 	<button onclick="togglePanel('ai')" class="topbar-btn primary" style="margin-left:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Ask AI</button>
 </div>
