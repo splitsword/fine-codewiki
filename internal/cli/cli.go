@@ -1025,6 +1025,17 @@ body.rp-open .topbar { right:380px; transition:right .25s cubic-bezier(.4,0,.2,1
 .topbar-search { max-width:560px; }
 .topbar-search kbd { right:92px; }
 .topbar-search .topbar-btn { position:absolute; right:10px; top:50%; transform:translateY(-50%); }
+.topbar-suggest { position:absolute; top:100%; left:0; right:140px; max-height:320px; overflow-y:auto; background:var(--bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.14); display:none; z-index:70; margin-top:4px; }
+.topbar-suggest-item { display:flex; align-items:center; gap:8px; padding:8px 12px; color:var(--text); text-decoration:none; border-bottom:1px solid var(--border2); font-size:13px; }
+.topbar-suggest-item:last-child { border-bottom:0; }
+.topbar-suggest-item:hover { background:var(--accent-glow); }
+.topbar-suggest-item small { margin-left:auto; color:var(--text3); font-size:11px; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.topbar-suggest-empty { padding:10px 12px; color:var(--text3); font-size:12px; }
+.rp-result-icon { margin-right:4px; }
+.rp-result-snippet { font-size:12px; color:var(--text2); display:block; margin-top:2px; }
+.rp-result.selected { background:var(--accent-glow); border-left:3px solid var(--accent); padding-left:13px; }
+.rp-result mark { background:#ffe58f; color:inherit; border-radius:2px; padding:0 1px; }
+.rp-section-label { padding:10px 16px 4px; font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:.05em; }
 `
 	html = strings.Replace(html, "</style>", rpCSS+"</style>", 1)
 
@@ -1032,10 +1043,11 @@ body.rp-open .topbar { right:380px; transition:right .25s cubic-bezier(.4,0,.2,1
 	askBtn := `<button onclick="togglePanel('ai')" class="topbar-btn primary" style="margin-left:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Ask AI</button>`
 	html = strings.Replace(html, `<kbd>Ctrl+K</kbd>`, `<kbd>Ctrl+K</kbd>`+"\n"+askBtn, 1)
 
-	// 3. Search box — make it open the right panel instead of the old overlay
+	// 3. Search box — inline-editable with dropdown suggestions; Enter lands
+	// results in the right panel (no focus jump on click).
 	html = strings.Replace(html,
 		`<input type="text" id="topbar-search-trigger" placeholder="搜索文章、模块..." readonly>`,
-		`<input type="text" id="topbar-search-trigger" placeholder="搜索文章、模块..." readonly onclick="togglePanel('search')">`,
+		`<input type="text" id="topbar-search-trigger" placeholder="搜索文章、模块..." autocomplete="off" oninput="topbarSuggest(this.value)" onkeydown="topbarSearchKey(event)"><div class="topbar-suggest" id="topbar-suggest"></div>`,
 		1)
 
 	// 4. Right panel HTML + JS — inject before </body>
@@ -1072,6 +1084,15 @@ document.querySelectorAll('.nav-group-items a').forEach(function(a){
   var t=a.querySelector('.nav-title');
   if(t)_navIdx.push({f:a.getAttribute('href'),t:t.textContent});
 });
+// Neutralise the old search-overlay: clone the trigger to drop its old
+// click->overlay listener, and remove the overlay element so the main box is
+// inline-only (results land in the right panel on Enter).
+(function(){
+  var t=document.getElementById('topbar-search-trigger');
+  if(t){t.parentNode.replaceChild(t.cloneNode(true),t);}
+  var ov=document.querySelector('.search-overlay');
+  if(ov)ov.remove();
+})();
 
 function togglePanel(tab){
   var p=document.getElementById('right-panel');
@@ -1103,18 +1124,93 @@ function switchTab(tab){
   if(inp)setTimeout(function(){inp.focus();},50);
 }
 function rpFilterSearch(q){
-  var r=document.getElementById('rp-search-results');
-  if(!r)return;
-  q=q.toLowerCase();
-  if(!q){r.innerHTML='';return;}
-  var html='';
-  _navIdx.forEach(function(n){
-    if(n.t.toLowerCase().indexOf(q)>=0||(n.f&&n.f.toLowerCase().indexOf(q)>=0)){
-      html+='<a class="rp-result" href="'+n.f+'"><span class="rp-result-title">'+n.t+'</span></a>';
-    }
-  });
-  r.innerHTML=html||'<div class="rp-empty">未找到匹配结果</div>';
+  _rpSearchQ=q;var r=document.getElementById('rp-search-results');if(!r)return;
+  q=q.trim();
+  if(!q){_rpSearchItems=[];r.innerHTML=rpRecentHTML();return;}
+  var ql=q.toLowerCase(),inst=[];
+  if(typeof _navIdx!=='undefined'){
+    _navIdx.forEach(function(n){
+      if(n.t.toLowerCase().indexOf(ql)>=0||(n.f&&n.f.toLowerCase().indexOf(ql)>=0)){
+        inst.push({type:'article',title:n.t,path:n.f,snippet:''});
+      }
+    });
+  }
+  rpRenderResults(inst.slice(0,20),q,false);
+  if(_rpSearchTimer)clearTimeout(_rpSearchTimer);
+  _rpSearchTimer=setTimeout(function(){
+    fetch('/api/search?q='+encodeURIComponent(q)).then(function(res){return res.json();}).then(function(hits){
+      if(_rpSearchQ!==q||!hits||!hits.length)return;rpRenderResults(hits,q,false);
+    }).catch(function(){});
+  },200);
 }
+var _rpSearchTimer=null,_rpSearchItems=[],_rpSearchSel=0,_rpSearchQ='';
+function rpEscape(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function rpHighlight(text,q){if(!q)return rpEscape(text);var i=text.toLowerCase().indexOf(q.toLowerCase());if(i<0)return rpEscape(text);return rpEscape(text.slice(0,i))+'<mark>'+rpEscape(text.slice(i,i+q.length))+'</mark>'+rpEscape(text.slice(i+q.length));}
+function rpIcon(t){return {article:'📄',class:'🏛️',function:'🔧',module:'📦',import:'🔗'}[t]||'📄';}
+function rpSafe(s){return String(s).replace(/'/g,'');}
+function rpRecent(){try{return JSON.parse(localStorage.getItem('_rpRecent')||'[]');}catch(e){return [];}}
+function rpPushRecent(q){if(!q)return;var r=rpRecent().filter(function(x){return x!==q});r.unshift(q);if(r.length>5)r=r.slice(0,5);localStorage.setItem('_rpRecent',JSON.stringify(r));}
+function rpRecentHTML(){var r=rpRecent();if(!r.length)return '';return '<div class="rp-section-label">最近搜索</div>'+r.map(function(q){return '<a class="rp-result" href="#" onclick="rpSearchClickRecent(\''+rpSafe(q)+'\');return false"><span class="rp-result-icon">🕑</span><span class="rp-result-title">'+rpEscape(q)+'</span></a>';}).join('');}
+function rpSearchClickRecent(q){var inp=document.getElementById('rp-search-input');if(inp){inp.value=q;}rpFilterSearch(q);}
+function rpSearchToAI(q){switchTab('ai');var inp=document.getElementById('rp-ai-input');if(inp){inp.value=q;inp.focus();}}
+function rpRenderResults(items,q,showRecent){
+  var r=document.getElementById('rp-search-results');if(!r)return;
+  if(!items.length){
+    r.innerHTML=showRecent&&rpRecent().length?rpRecentHTML():'<div class="rp-empty">未找到"'+rpEscape(q)+'"<br><a href="#" onclick="rpSearchToAI(\''+rpSafe(q)+'\');return false">按 Enter 向 AI 提问 →</a></div>';
+    return;
+  }
+  _rpSearchItems=items;_rpSearchSel=0;
+  r.innerHTML=items.map(function(n,i){
+    return '<a class="rp-result'+(i===0?' selected':'')+'" href="'+(n.path||'#')+'" onclick="rpPushRecent(\''+rpSafe(n.title)+'\')" data-i="'+i+'">'
+      +'<span class="rp-result-icon">'+rpIcon(n.type)+'</span>'
+      +'<span class="rp-result-title">'+rpHighlight(n.title,q)+'</span>'
+      +(n.snippet?'<span class="rp-result-snippet">'+rpHighlight(n.snippet,q)+'</span>':'')
+      +'<span class="rp-result-path">'+rpEscape(n.path||'')+'</span></a>';
+  }).join('');
+}
+function rpUpdateSel(){var els=document.querySelectorAll('#rp-search-results .rp-result');for(var i=0;i<els.length;i++){els[i].classList.toggle('selected',i===_rpSearchSel);}}
+document.addEventListener('keydown',function(e){
+  if(!document.querySelector('.rp-search-pane.active')||!_rpSearchItems.length)return;
+  if(e.key==='ArrowDown'){e.preventDefault();_rpSearchSel=Math.min(_rpSearchSel+1,_rpSearchItems.length-1);rpUpdateSel();}
+  else if(e.key==='ArrowUp'){e.preventDefault();_rpSearchSel=Math.max(_rpSearchSel-1,0);rpUpdateSel();}
+  else if(e.key==='Enter'){e.preventDefault();var it=_rpSearchItems[_rpSearchSel];if(it){rpPushRecent(rpSafe(it.title));window.location=it.path;}}
+});
+// Top-bar inline suggest: type in main box → dropdown; Enter → results in right panel.
+function topbarSuggest(q){
+  var box=document.getElementById('topbar-suggest');if(!box)return;
+  q=q.trim();
+  if(!q){box.innerHTML='';box.style.display='none';return;}
+  var ql=q.toLowerCase(),out=[];
+  if(typeof _navIdx!=='undefined'){
+    for(var i=0;i<_navIdx.length&&out.length<8;i++){
+      var n=_navIdx[i];
+      if(n.t.toLowerCase().indexOf(ql)>=0||(n.f&&n.f.toLowerCase().indexOf(ql)>=0)){out.push(n);}
+    }
+  }
+  if(!out.length){box.innerHTML='<div class="topbar-suggest-empty">无即时匹配，按 Enter 语义搜索</div>';box.style.display='block';return;}
+  box.innerHTML=out.map(function(n){return '<a class="topbar-suggest-item" href="'+n.f+'" onclick="topbarSuggestPick(\''+rpSafe(n.f)+'\');return false"><span class="rp-result-icon">📄</span><span>'+rpHighlight(n.t,q)+'</span><small>'+rpEscape(n.f)+'</small></a>';}).join('');
+  box.style.display='block';
+}
+function topbarSuggestPick(path){var box=document.getElementById('topbar-suggest');if(box){box.innerHTML='';box.style.display='none';}var trig=document.getElementById('topbar-search-trigger');if(trig){trig.value='';}window.location=path;}
+function topbarSearchKey(e){
+  if(e.key!=='Enter')return;
+  e.preventDefault();
+  var trig=document.getElementById('topbar-search-trigger');
+  var q=trig?trig.value.trim():'';
+  if(!q)return;
+  if(trig)trig.value='';
+  var box=document.getElementById('topbar-suggest');if(box){box.innerHTML='';box.style.display='none';}
+  togglePanel('search');
+  var rp=document.getElementById('rp-search-input');
+  if(rp){rp.value=q;rp.focus();rpFilterSearch(q);}
+}
+document.addEventListener('click',function(e){
+  var box=document.getElementById('topbar-suggest');
+  var trig=document.getElementById('topbar-search-trigger');
+  if(box&&trig&&!trig.contains(e.target)&&!box.contains(e.target)){box.innerHTML='';box.style.display='none';}
+});
+// Ctrl+K focuses the main search box (in-place input).
+document.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();var t=document.getElementById('topbar-search-trigger');if(t){t.focus();t.select();}}});
 var _rpHistory=[];
 function rpAskSend(){
   var inp=document.getElementById('rp-ai-input');

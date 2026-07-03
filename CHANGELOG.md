@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-03 — fix(cli): serve index 搜索框就地输入+下拉+Enter 右侧面板 (be72f6e)
+
 - 2026-07-03 — fix(render): 主搜索框就地输入+下拉候选，Enter 后结果落右侧面板 (0af14eb)
 
 - 2026-07-03 — fix(docgen): 修复进度条超 100%（A1 重试轮 tick/bump 失衡） (8a888d4)
