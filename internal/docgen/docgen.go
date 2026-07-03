@@ -486,6 +486,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 						if len(cp.FuncDescMap) > 0 {
 							funcDescMap = cp.FuncDescMap
 						}
+						pr.bump(1) // this branch ends in done; keep total in sync
 						pr.done("函数描述", "无需描述的函数")
 						return
 					}
@@ -509,6 +510,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 					if len(pending) == 0 {
 						funcDescMap = fdm
+						pr.bump(1) // this branch ends in done; keep total in sync
 						pr.done("函数描述", fmt.Sprintf("从 checkpoint 恢复 %d 个函数，无新增", len(fdm)))
 						return
 					}
@@ -562,7 +564,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 										failed = append(failed, fns...)
 										failedMu.Unlock()
 										if err != nil {
-											pr.tick("函数描述", fmt.Sprintf("%s批次 %d/%d 失败 (%v)", label, batchNum, totalBatches, err))
+											pr.log(fmt.Sprintf("[函数描述] %s批次 %d/%d 失败 (%v)", label, batchNum, totalBatches, err))
 										}
 										return
 									}
@@ -575,6 +577,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 								}(r)
 							}
 							batchWG.Wait()
+							pr.bump(1) // each completed batch advances completed and total 1:1 (A1 retry-safe)
 							pr.tick("函数描述", fmt.Sprintf("%s第 %d/%d 批完成（累计 %d/%d 个函数）", label, batchNum, totalBatches, len(fdm), len(topFuncs)))
 						}
 						return failed
@@ -587,10 +590,6 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 					} else {
 						pr.update("函数描述", fmt.Sprintf("开始生成 %d 个函数（每请求 %d 个，每批并发 %d 个，共 %d 批）...", len(pending), funcsPerReq, concurrency, totalBatches))
 					}
-					if totalBatches > 1 {
-						pr.bump(totalBatches - 1)
-					}
-
 					// A1: Round 0 uses stream-first; rounds 1..maxRetries retry the
 					// failures via plain non-stream Complete (more robust, skips the
 					// stream setup that may have been the failure cause).
@@ -600,7 +599,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 					failed := runRound("", reqs, streamFn)
 					for round := 1; round <= maxRetries && len(failed) > 0; round++ {
-						pr.tick("函数描述", fmt.Sprintf("第 %d 轮重试 %d 个失败函数（非流式）...", round, len(failed)))
+						pr.log(fmt.Sprintf("[函数描述] 第 %d 轮重试 %d 个失败函数（非流式）...", round, len(failed)))
 						failed = runRound(fmt.Sprintf("R%d-", round), chunkReqs(failed), nonStreamFn)
 					}
 

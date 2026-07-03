@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-03 — fix(docgen): 修复进度条超 100%（A1 重试轮 tick/bump 失衡） (8a888d4)
+
 - 2026-07-03 — docs(readme,changelog): 同步 M3.5 + M4-B 到 README 与 CHANGELOG (a628578)
 
 - 2026-07-03 — fix(docgen): B1 模块阶段进度与整体进度条对齐 (d225b34)

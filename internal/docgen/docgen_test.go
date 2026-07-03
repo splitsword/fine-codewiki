@@ -1350,6 +1350,44 @@ func TestAPIReferenceGroupedByModule(t *testing.T) {
 	assert.Contains(t, md, "User")
 }
 
+// TestProgressStaysWithin100Percent verifies the progress bar never exceeds
+// 100%: after a full generate (including the A1 retry path), completed must
+// not exceed total. Guards against the retry-tick asymmetry that previously
+// pushed it to 107%+.
+func TestProgressStaysWithin100Percent(t *testing.T) {
+	activeRenderer = nil
+	files := []*analyzer.FileResult{
+		{Filename: "mod1.go", Functions: []analyzer.FunctionInfo{
+			{Name: "f1"}, {Name: "f2"}, {Name: "f3"}, {Name: "f4"}, {Name: "f5"}, {Name: "f6"},
+		}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	// Make function-description requests fail once then succeed, exercising the
+	// A1 retry path that previously inflated completed past total.
+	prov := &retryableProvider{
+		streamErr: errors.New("stream unavailable"),
+		failFirst: 1,
+		respFn: func(prompt string) string {
+			if strings.Contains(prompt, "撰写深度语义分析") {
+				return "f1: d\nf2: d\nf3: d\nf4: d\nf5: d\nf6: d"
+			}
+			if strings.Contains(prompt, "模块职责卡") {
+				return "## 职责\nLCM"
+			}
+			return ""
+		},
+	}
+
+	_, err := GenerateWikiEnhancedWithMaxFunctions(context.Background(), prov, graph, "", "pct-test", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "", -1)
+	require.NoError(t, err)
+
+	pr := activeRenderer
+	require.NotNil(t, pr)
+	assert.LessOrEqual(t, pr.completed, pr.total, "completed must not exceed total (was >100%%)")
+	assert.Greater(t, pr.total, 0)
+}
+
 func TestGenerateModuleDocs(t *testing.T) {
 	files := []*analyzer.FileResult{
 		{
