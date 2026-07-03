@@ -536,6 +536,11 @@ body.rp-open .topbar { right:380px; transition:right .25s cubic-bezier(.4,0,.2,1
 .rp-result:hover { background:var(--accent-glow); }
 .rp-result-title { font-size:13px; font-weight:600; display:block; }
 .rp-result-path { font-size:11px; color:var(--text3); display:block; margin-top:2px; }
+.rp-result-icon { float:left; margin-right:8px; font-size:14px; line-height:18px; }
+.rp-result-snippet { font-size:12px; color:var(--text2); display:block; margin-top:2px; }
+.rp-result.selected, .rp-result:focus { background:var(--accent-glow); border-left:3px solid var(--accent); padding-left:13px; outline:none; }
+.rp-result mark { background:#ffe58f; color:inherit; border-radius:2px; padding:0 1px; }
+.rp-section-label { padding:10px 16px 4px; font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:.05em; }
 .rp-empty { padding:24px 16px; text-align:center; color:var(--text3); font-size:13px; }
 .rp-chat { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
 .rp-msg { max-width:95%; animation:fadeUp .3s ease-out; }
@@ -778,20 +783,63 @@ function switchTab(tab){
   if(inp)setTimeout(function(){inp.focus();},50);
 }
 function rpFilterSearch(q){
-  var r=document.getElementById('rp-search-results');
-  if(!r)return;
-  q=q.toLowerCase();
-  if(!q){r.innerHTML='';return;}
-  var html='';
+  _rpSearchQ=q;var r=document.getElementById('rp-search-results');if(!r)return;
+  q=q.trim();
+  if(!q){_rpSearchItems=[];r.innerHTML=rpRecentHTML();return;}
+  // Instant client-side indexOf over _navIdx (no empty window while /api/search is in flight).
+  var ql=q.toLowerCase(),inst=[];
   if(typeof _navIdx!=='undefined'){
     _navIdx.forEach(function(n){
-      if(n.t.toLowerCase().indexOf(q)>=0||n.f.toLowerCase().indexOf(q)>=0){
-        html+='<a class="rp-result" href="'+n.f+'"><span class="rp-result-title">'+n.t+'</span><span class="rp-result-path">'+n.f+'</span></a>';
+      if(n.t.toLowerCase().indexOf(ql)>=0||n.f.toLowerCase().indexOf(ql)>=0){
+        inst.push({type:'article',title:n.t,path:n.f,snippet:''});
       }
     });
   }
-  r.innerHTML=html||'<div class="rp-empty">未找到匹配结果</div>';
+  rpRenderResults(inst.slice(0,20),q,false);
+  // Debounced semantic search via /api/search (B2).
+  if(_rpSearchTimer)clearTimeout(_rpSearchTimer);
+  _rpSearchTimer=setTimeout(function(){
+    fetch('/api/search?q='+encodeURIComponent(q)).then(function(res){return res.json();}).then(function(hits){
+      if(_rpSearchQ!==q||!hits||!hits.length)return;rpRenderResults(hits,q,false);
+    }).catch(function(){});
+  },200);
 }
+var _rpSearchTimer=null,_rpSearchItems=[],_rpSearchSel=0,_rpSearchQ='';
+function rpEscape(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function rpHighlight(text,q){
+  if(!q)return rpEscape(text);
+  var idx=text.toLowerCase().indexOf(q.toLowerCase());if(idx<0)return rpEscape(text);
+  return rpEscape(text.slice(0,idx))+'<mark>'+rpEscape(text.slice(idx,idx+q.length))+'</mark>'+rpEscape(text.slice(idx+q.length));
+}
+function rpIcon(t){return {article:'📄',class:'🏛️',function:'🔧',module:'📦',import:'🔗'}[t]||'📄';}
+function rpSafe(s){return String(s).replace(/'/g,'');}
+function rpRecent(){try{return JSON.parse(localStorage.getItem('_rpRecent')||'[]');}catch(e){return [];}}
+function rpPushRecent(q){if(!q)return;var r=rpRecent().filter(function(x){return x!==q});r.unshift(q);if(r.length>5)r=r.slice(0,5);localStorage.setItem('_rpRecent',JSON.stringify(r));}
+function rpRecentHTML(){var r=rpRecent();if(!r.length)return '';return '<div class="rp-section-label">最近搜索</div>'+r.map(function(q){return '<a class="rp-result" href="#" onclick="rpSearchClickRecent(\''+rpSafe(q)+'\');return false"><span class="rp-result-icon">🕑</span><span class="rp-result-title">'+rpEscape(q)+'</span></a>';}).join('');}
+function rpSearchClickRecent(q){var inp=document.getElementById('rp-search-input');if(inp){inp.value=q;}rpFilterSearch(q);}
+function rpSearchToAI(q){switchTab('ai');var inp=document.getElementById('rp-ai-input');if(inp){inp.value=q;inp.focus();}}
+function rpRenderResults(items,q,showRecent){
+  var r=document.getElementById('rp-search-results');if(!r)return;
+  if(!items.length){
+    r.innerHTML=showRecent&&rpRecent().length?rpRecentHTML():'<div class="rp-empty">未找到"'+rpEscape(q)+'"<br><a href="#" onclick="rpSearchToAI(\''+rpSafe(q)+'\');return false">按 Enter 向 AI 提问 →</a></div>';
+    return;
+  }
+  _rpSearchItems=items;_rpSearchSel=0;
+  r.innerHTML=items.map(function(n,i){
+    return '<a class="rp-result'+(i===0?' selected':'')+'" href="'+n.path+'" onclick="rpPushRecent(\''+rpSafe(n.title)+'\')" data-i="'+i+'">'
+      +'<span class="rp-result-icon">'+rpIcon(n.type)+'</span>'
+      +'<span class="rp-result-title">'+rpHighlight(n.title,q)+'</span>'
+      +(n.snippet?'<span class="rp-result-snippet">'+rpHighlight(n.snippet,q)+'</span>':'')
+      +'<span class="rp-result-path">'+rpEscape(n.path)+'</span></a>';
+  }).join('');
+}
+document.addEventListener('keydown',function(e){
+  if(!document.querySelector('.rp-search-pane.active')||!_rpSearchItems.length)return;
+  if(e.key==='ArrowDown'){e.preventDefault();_rpSearchSel=Math.min(_rpSearchSel+1,_rpSearchItems.length-1);rpUpdateSel();}
+  else if(e.key==='ArrowUp'){e.preventDefault();_rpSearchSel=Math.max(_rpSearchSel-1,0);rpUpdateSel();}
+  else if(e.key==='Enter'){e.preventDefault();var it=_rpSearchItems[_rpSearchSel];if(it){rpPushRecent(rpSafe(it.title));window.location=it.path;}}
+});
+function rpUpdateSel(){var els=document.querySelectorAll('#rp-search-results .rp-result');for(var i=0;i<els.length;i++){els[i].classList.toggle('selected',i===_rpSearchSel);}}
 var _rpHistory=[];
 function rpAskSend(){
   var inp=document.getElementById('rp-ai-input');

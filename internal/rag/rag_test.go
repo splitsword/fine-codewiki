@@ -85,6 +85,33 @@ func TestAskBasic(t *testing.T) {
 	assert.Equal(t, 1, mock.completeCalls)
 }
 
+// TestEngineSearch verifies B2 semantic retrieval: the closest chunk by vector
+// ranks first, and results carry title/snippet/type.
+func TestEngineSearch(t *testing.T) {
+	store := vectorstore.New()
+	store.Upsert("c1", []float32{1, 0, 0}, &chunker.Chunk{
+		ID: "c1", Type: chunker.TypeFunction, Content: "Function reimbursementSubmit(amount) submits an expense", Filename: "finance/expense.py", Name: "reimbursementSubmit",
+	})
+	store.Upsert("c2", []float32{0, 1, 0}, &chunker.Chunk{
+		ID: "c2", Type: chunker.TypeClass, Content: "Class User", Filename: "models/user.py", Name: "User",
+	})
+
+	mock := &mockRAGProvider{embedVecs: [][]float32{{1, 0, 0}}} // query vector close to c1
+	engine := NewEngine(mock, store)
+	engine.SetTopK(2)
+	engine.SetMinSimilarity(0)
+
+	res, err := engine.Search(context.Background(), "报销流程", 2)
+	require.NoError(t, err)
+	require.Len(t, res, 2)
+
+	// Closest vector (reimbursementSubmit) ranks first — proving semantic recall.
+	assert.Equal(t, "reimbursementSubmit", res[0].Title)
+	assert.Equal(t, "function", res[0].Type)
+	assert.Contains(t, res[0].Snippet, "reimbursementSubmit")
+	assert.Greater(t, res[0].Score, res[1].Score)
+}
+
 func TestAskNoProvider(t *testing.T) {
 	store := vectorstore.New()
 	engine := NewEngine(nil, store)

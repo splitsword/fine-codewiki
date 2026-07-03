@@ -510,6 +510,12 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Semantic search endpoint (B2): hybrid retrieval over wiki chunks.
+	if rawPath == "/api/search" && r.Method == http.MethodGet {
+		h.handleSearchAPI(w, r)
+		return
+	}
+
 	if rawPath == "/api/source" && h.sourceDir != "" {
 		h.handleSourceAPI(w, r)
 		return
@@ -598,6 +604,81 @@ func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", contentTypeFor(path))
 	w.Write(data)
+}
+
+// handleSearchAPI serves /api/search (B2): hybrid retrieval over wiki chunks.
+// Semantic recall (0.6) + literal match (0.4) + exact-symbol boost (0.2).
+// Returns []searchHit as JSON. On engine/embedding failure returns an empty
+// list so the front-end falls back to client-side indexOf.
+func (h *serverHandler) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, []searchHit{})
+		return
+	}
+	if h.engine == nil {
+		writeJSON(w, []searchHit{})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	hits, err := h.engine.Search(ctx, q, 20)
+	if err != nil {
+		writeJSON(w, []searchHit{})
+		return
+	}
+
+	ql := strings.ToLower(q)
+	out := make([]searchHit, 0, len(hits))
+	for _, s := range hits {
+		titleLower := strings.ToLower(s.Title)
+		pathLower := strings.ToLower(s.Path)
+		literal := 0.0
+		if strings.Contains(titleLower, ql) || strings.Contains(pathLower, ql) {
+			literal = 1.0
+		}
+		exact := 0.0
+		if titleLower == ql {
+			exact = 1.0
+		}
+		mixed := mixScore(s.Score, literal, exact)
+		out = append(out, searchHit{
+			Type:    s.Type,
+			Title:   s.Title,
+			Path:    s.Path,
+			Snippet: s.Snippet,
+			Score:   mixed,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	// Cap to 20 after re-sort.
+	if len(out) > 20 {
+		out = out[:20]
+	}
+	writeJSON(w, out)
+}
+
+type searchHit struct {
+	Type    string  `json:"type"`
+	Title   string  `json:"title"`
+	Path    string  `json:"path"`
+	Snippet string  `json:"snippet"`
+	Score   float64 `json:"score"`
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		http.Error(w, `{"error":"encode failed"}`, http.StatusInternalServerError)
+	}
+}
+
+// mixScore combines the three retrieval signals for /api/search (B2):
+//   semantic (vector similarity)  weight 0.6
+//   literal  (title/path contains query)  weight 0.4
+//   exact    (title == query, precise symbol hit)  weight 0.2 boost
+func mixScore(semantic, literal, exact float64) float64 {
+	return 0.6*semantic + 0.4*literal + 0.2*exact
 }
 
 // handleAskAPI processes a Q&A request and returns a JSON answer (or SSE stream).

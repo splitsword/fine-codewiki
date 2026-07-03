@@ -274,6 +274,74 @@ func collectSources(results []vectorstore.SearchResult) []Source {
 	return sources
 }
 
+// SearchResult is a single retrieval hit for the /api/search endpoint (B2).
+type SearchResult struct {
+	Type    string  `json:"type"` // article | class | function | module | import
+	Title   string  `json:"title"`
+	Path    string  `json:"path"`
+	Snippet string `json:"snippet"`
+	Score   float64 `json:"score"`
+}
+
+func chunkTypeLabel(t chunker.ChunkType) string {
+	switch t {
+	case chunker.TypeDocument:
+		return "article"
+	default:
+		return string(t)
+	}
+}
+
+func truncateSnippet(s string, n int) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "  ", " ")
+	if len([]rune(s)) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "…"
+}
+
+// Search returns semantic retrieval hits for query (B2). Pure retrieval — it
+// embeds the query and searches the store, but does NOT invoke the generation
+// LLM. topK<=0 falls back to the engine default.
+func (e *Engine) Search(ctx context.Context, query string, topK int) ([]SearchResult, error) {
+	p := e.gen()
+	if p == nil {
+		return nil, fmt.Errorf("no embedding provider")
+	}
+	vecs, err := p.Embed(ctx, []string{query})
+	if err != nil {
+		return nil, fmt.Errorf("embed query: %w", err)
+	}
+	if len(vecs) == 0 {
+		return nil, fmt.Errorf("empty embedding")
+	}
+	if topK <= 0 {
+		topK = e.topK
+	}
+	raw := e.store.Search(vecs[0], topK, e.minSimilarity)
+	out := make([]SearchResult, 0, len(raw))
+	for _, r := range raw {
+		if r.Record.Chunk == nil {
+			continue
+		}
+		c := r.Record.Chunk
+		title := c.Name
+		if title == "" {
+			title = c.Filename
+		}
+		out = append(out, SearchResult{
+			Type:    chunkTypeLabel(c.Type),
+			Title:   title,
+			Path:    c.Filename,
+			Snippet: truncateSnippet(c.Content, 120),
+			Score:   r.Similarity,
+		})
+	}
+	return out, nil
+}
+
 func (e *Engine) buildRAGPrompt(question string, results []vectorstore.SearchResult, session *Session) string {
 	var b strings.Builder
 

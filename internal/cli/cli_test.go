@@ -71,6 +71,31 @@ func clearCodewikiEnv(t *testing.T) {
 	}
 }
 
+func TestMixScore(t *testing.T) {
+	// weights: 0.6 semantic + 0.4 literal + 0.2 exact
+	assert.InDelta(t, 0.6, mixScore(1, 0, 0), 1e-9)
+	assert.InDelta(t, 1.2, mixScore(1, 1, 1), 1e-9)
+	// exact symbol hit must outrank a semantic-only match (B2 design)
+	assert.Greater(t, mixScore(0.5, 1, 1), mixScore(1, 0, 0))
+}
+
+// TestSearchAPIHandlerDegraded verifies the /api/search degrade path: with no
+// RAG engine (or empty query) it returns an empty list so the front-end falls
+// back to client-side indexOf. (B2)
+func TestSearchAPIHandlerDegraded(t *testing.T) {
+	h := &serverHandler{root: "", engine: nil} // engine nil
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?q=", nil)
+	rec := httptest.NewRecorder()
+	h.handleSearchAPI(rec, req)
+	assert.Contains(t, rec.Body.String(), "[")
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/search?q=anything", nil)
+	rec2 := httptest.NewRecorder()
+	h.handleSearchAPI(rec2, req2)
+	assert.Contains(t, rec2.Body.String(), "[]", "nil engine → empty list (front-end fallback)")
+}
+
 func TestGenerateCommand(t *testing.T) {
 	repoPath := filepath.Join("..", "..", "testdata", "repos", "python-basic")
 	_, err := os.Stat(repoPath)
