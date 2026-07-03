@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-03 — feat(docgen): B3 API 参考按模块分组 (619fa0e)
+
 - 2026-07-03 — feat(docgen): M4-B 计划 + B1 模块文档 LLM 增强（重要度+被引用权重覆盖） (d94cf97)
 
 - 2026-07-01 — docs(prd): M3.5 规模化可靠性加固全部完成 (5dd33cd)

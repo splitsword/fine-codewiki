@@ -102,13 +102,17 @@ func TestGenerateAPIReferenceMarkdown(t *testing.T) {
 	// Should contain API reference heading
 	assert.Contains(t, md, "# API 参考")
 
-	// Should contain class documentation
-	assert.Contains(t, md, "## User")
+	// B3: grouped by module header.
+	assert.Contains(t, md, "## models/user")
+	assert.Contains(t, md, "## utils/logger")
+
+	// Should contain class documentation under the module
+	assert.Contains(t, md, "### 类 `User`")
 	assert.Contains(t, md, "BaseModel")
 	assert.Contains(t, md, "authenticate")
 
-	// Should contain function documentation
-	assert.Contains(t, md, "## get_logger")
+	// Should contain function documentation under the module
+	assert.Contains(t, md, "### 函数 `get_logger`")
 	assert.Contains(t, md, "name")
 	assert.Contains(t, md, "Logger")
 }
@@ -1320,6 +1324,30 @@ func TestModuleDocsLLMEnhanced(t *testing.T) {
 	cpData, readErr := os.ReadFile(cpPath)
 	require.NoError(t, readErr, "checkpoint persisted")
 	assert.Contains(t, string(cpData), "LLM_CARD_FOR_TARGET", "ModuleDescMap written to checkpoint")
+}
+
+// TestAPIReferenceGroupedByModule verifies B3: API reference renders under
+// per-module headers (with role), not a flat class/function dump.
+func TestAPIReferenceGroupedByModule(t *testing.T) {
+	files := []*analyzer.FileResult{
+		{Filename: "services/api.py", Classes: []analyzer.ClassInfo{{Name: "Api", Methods: []analyzer.FunctionInfo{{Name: "get"}}}}, Functions: []analyzer.FunctionInfo{{Name: "create_app"}}},
+		{Filename: "models/user.py", Classes: []analyzer.ClassInfo{{Name: "User", Methods: []analyzer.FunctionInfo{{Name: "save"}}}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	md, err := GenerateAPIReferenceMarkdown(graph, nil)
+	require.NoError(t, err)
+
+	// Both modules appear as group headers.
+	assert.Contains(t, md, "## services/api")
+	assert.Contains(t, md, "## models/user")
+	// No more flat "## 类" / "## 函数" sections.
+	assert.NotContains(t, md, "\n## 类\n")
+	assert.NotContains(t, md, "\n## 函数\n")
+	// Symbols still present.
+	assert.Contains(t, md, "Api")
+	assert.Contains(t, md, "create_app")
+	assert.Contains(t, md, "User")
 }
 
 func TestGenerateModuleDocs(t *testing.T) {

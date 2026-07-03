@@ -4310,82 +4310,64 @@ func GenerateAPIReferenceMarkdown(graph *grapher.Graph, llmDesc map[string]strin
 		return b.String(), nil
 	}
 
-	resolveDesc := func(module, name, params, returnType string) string {
+	resolveDesc := func(module, name string, params []string, returnType string) string {
 		key := module + "#" + name
 		if d, ok := llmDesc[key]; ok && d != "" {
 			return d
 		}
-		return describeFunction(name, strings.Split(params, ", "), returnType)
+		return describeFunction(name, params, returnType)
 	}
 
-	// Classes
-	var hasClasses bool
+	// B3: group by module, ordered by role importance then name.
+	roleOf := make(map[string]string, len(graph.Nodes))
+	for _, r := range graph.InferModuleRoles() {
+		roleOf[r.Name] = r.Role
+	}
+	nodes := make([]*grapher.Node, 0, len(graph.Nodes))
 	for _, n := range graph.Nodes {
-		if len(n.Classes) > 0 {
-			hasClasses = true
-			break
+		if len(n.Classes) == 0 && len(n.Functions) == 0 {
+			continue // skip symbol-less modules
 		}
+		nodes = append(nodes, n)
 	}
+	sort.Slice(nodes, func(i, j int) bool {
+		wi, wj := moduleRoleWeight(roleOf[nodes[i].Name]), moduleRoleWeight(roleOf[nodes[j].Name])
+		if wi != wj {
+			return wi > wj
+		}
+		return nodes[i].Name < nodes[j].Name
+	})
 
-	if hasClasses {
-		b.WriteString("## 类\n\n")
-		// Deduplicate classes by name, keeping the one with the most methods.
-		type classInfo struct {
-			info   analyzer.ClassInfo
-			source string
+	for _, n := range nodes {
+		header := fmt.Sprintf("## %s", n.Name)
+		if role := roleOf[n.Name]; role != "" {
+			header += "（" + role + "）"
 		}
-		classMap := make(map[string]classInfo)
-		for _, n := range graph.Nodes {
-			for _, c := range n.Classes {
-				if existing, ok := classMap[c.Name]; !ok || len(c.Methods) > len(existing.info.Methods) {
-					classMap[c.Name] = classInfo{info: c, source: n.Name}
-				}
+		b.WriteString(header + "\n\n")
+
+		// Classes
+		for _, c := range n.Classes {
+			b.WriteString(fmt.Sprintf("### 类 `%s`\n\n", c.Name))
+			if len(c.Bases) > 0 {
+				b.WriteString(fmt.Sprintf("**继承**：%s\n\n", strings.Join(c.Bases, ", ")))
 			}
-		}
-		var classNames []string
-		for name := range classMap {
-			classNames = append(classNames, name)
-		}
-		sort.Strings(classNames)
-		for _, name := range classNames {
-			c := classMap[name]
-			b.WriteString(fmt.Sprintf("### %s\n\n", c.info.Name))
-			if len(c.info.Bases) > 0 {
-				b.WriteString(fmt.Sprintf("**继承**：%s\n\n", strings.Join(c.info.Bases, ", ")))
-			}
-			b.WriteString(fmt.Sprintf("*来源：`%s`*\n\n", c.source))
-			if len(c.info.Methods) > 0 {
-				b.WriteString("#### 方法\n\n")
-				for _, m := range c.info.Methods {
+			if len(c.Methods) > 0 {
+				for _, m := range c.Methods {
 					sig := formatSignature(m.Name, m.Params, m.ReturnType)
-					desc := resolveDesc(name, m.Name, strings.Join(m.Params, ", "), m.ReturnType)
+					desc := resolveDesc(n.Name, c.Name+"."+m.Name, m.Params, m.ReturnType)
 					b.WriteString(fmt.Sprintf("- `%s` — %s\n", sig, desc))
 				}
 				b.WriteString("\n")
 			}
 		}
-	}
 
-	// Functions
-	var hasFunctions bool
-	for _, n := range graph.Nodes {
-		if len(n.Functions) > 0 {
-			hasFunctions = true
-			break
-		}
-	}
-
-	if hasFunctions {
-		b.WriteString("## 函数\n\n")
-		for _, n := range graph.Nodes {
-			for _, f := range n.Functions {
-				b.WriteString(fmt.Sprintf("### %s\n\n", f.Name))
-				sig := formatSignature(f.Name, f.Params, f.ReturnType)
-				desc := resolveDesc(n.Name, f.Name, strings.Join(f.Params, ", "), f.ReturnType)
-				b.WriteString(fmt.Sprintf("```\n%s\n```\n\n", sig))
-				b.WriteString(fmt.Sprintf("%s\n\n", desc))
-				b.WriteString(fmt.Sprintf("*来源：`%s`*\n\n", n.Name))
-			}
+		// Functions
+		for _, f := range n.Functions {
+			b.WriteString(fmt.Sprintf("### 函数 `%s`\n\n", f.Name))
+			sig := formatSignature(f.Name, f.Params, f.ReturnType)
+			desc := resolveDesc(n.Name, f.Name, f.Params, f.ReturnType)
+			b.WriteString(fmt.Sprintf("```\n%s\n```\n\n", sig))
+			b.WriteString(fmt.Sprintf("%s\n\n", desc))
 		}
 	}
 
