@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-03 — fix(docgen): B1 模块阶段进度与整体进度条对齐 (d225b34)
+
 - 2026-07-03 — feat(rag,cli,render): B2 serve 语义搜索 + 8 项浏览器体验 + M4-B 完成 (129d2aa)
 
 - 2026-07-03 — feat(docgen): B3 API 参考按模块分组 (619fa0e)

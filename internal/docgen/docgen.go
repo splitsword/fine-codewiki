@@ -3444,6 +3444,12 @@ func generateModuleDescriptions(ctx context.Context, provider llm.Provider, grap
 	if len(selected) == 0 {
 		return nil
 	}
+	// B1: this stage counts as one progress step (matches the pr.done at the end,
+	// and the pr.done in the checkpoint-restore branch). bump(1) keeps the
+	// overall progress bar's completed/total in sync.
+	if pr != nil {
+		pr.bump(1)
+	}
 	nodeOf := make(map[string]*grapher.Node, len(graph.Nodes))
 	for _, n := range graph.Nodes {
 		nodeOf[n.Name] = n
@@ -3517,13 +3523,13 @@ func generateModuleDescriptions(ctx context.Context, provider llm.Provider, grap
 	failed := runBatch(pending, streamFn)
 	for round := 1; round <= 2 && len(failed) > 0; round++ {
 		if pr != nil {
-			pr.tick("模块职责", fmt.Sprintf("第 %d 轮重试 %d 个模块（非流式）...", round, len(failed)))
+			// log, not tick — avoids incrementing completed without a matching total.
+			pr.log(fmt.Sprintf("[模块职责] 第 %d 轮重试 %d 个模块（非流式）...", round, len(failed)))
 		}
 		failed = runBatch(failed, nonStreamFn)
 	}
 	if pr != nil {
-		pr.log(fmt.Sprintf("[模块职责] 完成：%d/%d", len(descs), len(selected)))
-		pr.remove("模块职责")
+		pr.done("模块职责", fmt.Sprintf("完成 %d/%d", len(descs), len(selected)))
 	}
 	return descs
 }
