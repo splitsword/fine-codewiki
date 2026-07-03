@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-03 — docs(readme,changelog): 同步 M3.5 + M4-B 到 README 与 CHANGELOG (a628578)
+
 - 2026-07-03 — fix(docgen): B1 模块阶段进度与整体进度条对齐 (d225b34)
 
 - 2026-07-03 — feat(rag,cli,render): B2 serve 语义搜索 + 8 项浏览器体验 + M4-B 完成 (129d2aa)
@@ -29,6 +31,16 @@
 - 2026-07-01 — feat(docgen): A2 checkpoint 函数级精细化续传 (9ff1590)
 
 - 2026-07-01 — docs(prd): 新增 M3.5 规模化可靠性加固里程碑（v1.0 RC） (fdccc99)
+
+### M4-B 信息架构升级 — 已完成
+
+第三方评估报告最核心痛点（"函数级粒度过细、像字典不像说明书" + "搜索浅层"）的落地，3 项任务全部 TDD + 全量回归：
+
+- **B1 模块文档 LLM 增强**：`selectTopModules` 按 0.5×norm(PageRank)+0.3×norm(入度)+0.2×角色 评分覆盖；分段（≤30 全 / 30-80 取 70% / >80 取 50%）+ 入口/核心必选；复用 A1/A2 重试+checkpoint（`ModuleDescMap`）；`-max-modules` flag；进度与整体进度条对齐
+- **B3 API 参考按模块分组**：`GenerateAPIReferenceMarkdown` 按 `graph.Nodes` 分组、标角色、按重要度排序，平铺字典变可浏览目录
+- **B2 serve 语义搜索**：`rag.Engine.Search` 公开检索 + `/api/search` 混合分（mixScore 0.6 语义 + 0.4 字面 + 0.2 精确 boost）；render.go 重写搜索面板 8 项体验（即时反馈/键盘/分类图标/高亮/snippet/Enter首项/最近搜索/空结果转AI）；库不可用前端 indexOf 兜底
+
+详见 `prd.md` § M4-B 与 `PRD_COVERAGE.md`。
 
 ### M3.5 规模化可靠性加固（v1.0 RC）— 已完成
 

@@ -18,6 +18,8 @@
 - **自然语言问答**：RAG 检索增强生成，答案附带源码文件路径与行号，支持多轮对话
 - **来源溯源弹窗**：每个段落标注来源文件，点击弹出暗色代码窗口，语法高亮显示源码内容
 - **静态 HTML 导出**：一键导出带三栏布局（导航+内容+文件树）的完整离线 Wiki，支持暗色主题、Ctrl+K 搜索、滚动导航高亮
+- **模块视角文档**：按重要度（PageRank）+ 被引用权重为模块生成 LLM 职责卡，API 参考按模块分组，从"函数字典"变"可理解说明书"
+- **语义搜索**：serve 模式混合检索（向量召回 + 字面精确命中），业务词（如"报销流程"）也能搜到对应代码符号，配键盘导航/高亮/最近搜索
 - **多语言支持**：Python、JavaScript / TypeScript、Go、Java（持续扩展中），自动检测项目语言
 - **单二进制零依赖**：Go 编译为单一可执行文件，跨平台（macOS / Linux / Windows）
 - **增量索引**：基于文件修改时间和大小的增量向量索引，避免重复计算
@@ -251,6 +253,17 @@ go tool cover -func=coverage.out
   - ✅ GitHub Releases 自动发布 + `codewiki update` 自更新
   - ✅ PDF 导出（纯 Go 零依赖，CJK 中文字体自动检测）
   - ❌ Homebrew / npm / winget（待后续补全）
+- **M3.5**（已完成）：规模化可靠性加固（v1.0 RC）—— 大仓生成可靠性，直击 465 文件级仓库的流式超时/函数描述丢失/单文件改动清盘等问题
+  - ✅ 失败函数描述批次重试队列（2 轮非流式重试 + FailedFuncs 记录下次补做）
+  - ✅ checkpoint 函数级精细化续传（只对未缓存函数发请求，stale 自动淘汰）
+  - ✅ 单文件改动不再清空整盘 checkpoint（仅 `--force` 清盘）
+  - ✅ 降级非流式加独立 5min 超时（单次失败不再挂近 1 小时）
+  - ✅ 流式 idle 超时自适应（首 token 8min thinking 友好 + token 间 3min 双预算）
+  - ✅ 并发可配（`-concurrency`）+ 流式 429 退避重试
+- **M4-B**（已完成）：信息架构升级 —— 从"函数字典"升级为"以模块为单位的可理解说明书"
+  - ✅ 模块文档 LLM 增强：按重要度（PageRank）+ 被引用权重（入度）+ 角色评分覆盖，入口/核心模块必选；`-max-modules` 可控
+  - ✅ API 参考按模块分组（标架构角色，按重要度排序）
+  - ✅ serve 语义搜索：混合检索（语义 0.6 + 字面 0.4 + 精确符号 boost 0.2）+ 8 项浏览器体验（即时反馈/键盘导航/分类图标/高亮/snippet/Enter 首项/最近搜索/空结果转 AI）
 - **V2 规划**：生态扩展 —— Rust / C++ 支持、VS Code 扩展、CI 集成（GitHub Action）、图结构自然语言查询
 
 详见 [prd.md](prd.md)。
@@ -294,6 +307,8 @@ Generate flags:
   -lang string     Language filter: python, javascript, typescript, go, java, rust, c, cpp
   -name string     Project name
   -max-functions   Max functions for LLM semantic description: -1=auto, 0=skip, N=cap
+  -max-modules     Max modules for LLM responsibility cards: -1=auto, 0=skip, N=cap
+  -concurrency     Max concurrent LLM requests for function-description stage (0 = default 10)
   -force           Force full regeneration, ignore checkpoints
 
 Browse flags:
