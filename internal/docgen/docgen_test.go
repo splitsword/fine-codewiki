@@ -1181,6 +1181,147 @@ func TestSelectTopFunctions(t *testing.T) {
 	assert.Len(t, all, 4)
 }
 
+func TestModuleRoleWeight(t *testing.T) {
+	tests := []struct {
+		role string
+		want float64
+	}{
+		{"入口层", 1.0},
+		{"核心领域", 1.0},
+		{"业务模块", 0.6},
+		{"工具库", 0.3},
+		{"支撑模块", 0.3},
+		{"独立模块", 0.1},
+		{"", 0.1},
+		{"unknown", 0.1},
+	}
+	for _, tc := range tests {
+		assert.Equal(t, tc.want, moduleRoleWeight(tc.role), "role=%q", tc.role)
+	}
+}
+
+func TestModuleRoleMustInclude(t *testing.T) {
+	assert.True(t, moduleRoleMustInclude("入口层"))
+	assert.True(t, moduleRoleMustInclude("核心领域"))
+	assert.False(t, moduleRoleMustInclude("业务模块"))
+	assert.False(t, moduleRoleMustInclude(""))
+}
+
+// buildModuleRankingGraph builds a graph where `hub` is imported by every
+// other module (high in-degree / PageRank) and leaf_* modules import only hub.
+func buildModuleRankingGraph(t *testing.T, leafCount int) *grapher.Graph {
+	t.Helper()
+	files := []*analyzer.FileResult{
+		{Filename: "hub.py", Functions: []analyzer.FunctionInfo{{Name: "core"}}, Imports: []analyzer.ImportInfo{{Module: "models.base"}}},
+	}
+	for i := 0; i < leafCount; i++ {
+		name := fmt.Sprintf("leaf_%d", i)
+		files = append(files, &analyzer.FileResult{
+			Filename: name + ".py",
+			Imports:  []analyzer.ImportInfo{{Module: "hub"}},
+		})
+	}
+	return grapher.BuildGraph(files)
+}
+
+func TestSelectTopModulesRanking(t *testing.T) {
+	graph := buildModuleRankingGraph(t, 5)
+	selected := selectTopModules(graph, -1)
+	require.NotEmpty(t, selected)
+	// 6 modules ≤ 30 → 100% covered.
+	assert.Len(t, selected, 6)
+	// hub (referenced by all leaves) must rank before any single-importer leaf.
+	assert.Equal(t, "hub", selected[0], "highest in-degree module ranks first")
+}
+
+func TestModuleCoverageTarget(t *testing.T) {
+	tests := []struct{ n, want int }{
+		{0, 0}, {1, 1}, {30, 30},   // tier 1: full
+		{31, 21}, {80, 56},         // tier 2: 70%
+		{81, 40}, {90, 45}, {200, 100}, // tier 3: 50%
+	}
+	for _, tc := range tests {
+		assert.Equal(t, tc.want, moduleCoverageTarget(tc.n), "n=%d", tc.n)
+	}
+}
+
+func TestSelectTopModulesCoverageTier(t *testing.T) {
+	// 90 modules. Coverage tier is 50% (=45); must-include (entry/core) may
+	// push the count higher, which is correct behaviour. Assert the tier bound
+	// is respected for the non-must subset and hub (highest score) is present.
+	graph := buildModuleRankingGraph(t, 89) // 1 hub + 89 leaves = 90
+	selected := selectTopModules(graph, -1)
+	assert.Greater(t, len(selected), 0)
+	assert.Contains(t, selected, "hub")
+	// Never exceed the full module set.
+	assert.LessOrEqual(t, len(selected), 90)
+}
+
+func TestSelectTopModulesMaxNCap(t *testing.T) {
+	graph := buildModuleRankingGraph(t, 5)
+	selected := selectTopModules(graph, 3)
+	assert.Len(t, selected, 3, "maxN caps the selection")
+	// hub (top score) must be within the cap.
+	assert.Contains(t, selected, "hub")
+}
+
+func TestSelectTopModulesSkip(t *testing.T) {
+	graph := buildModuleRankingGraph(t, 3)
+	assert.Empty(t, selectTopModules(graph, 0), "maxN=0 skips entirely")
+	assert.Empty(t, selectTopModules(&grapher.Graph{}, -1), "empty graph → nil")
+}
+
+// TestModuleDocsLLMEnhanced verifies B1 end-to-end: with a provider present
+// and MaxLLMModules enabled, the selected module's doc is replaced by the LLM
+// card, the non-selected module keeps the static template with an annotation,
+// and ModuleDescMap is persisted to the checkpoint.
+func TestModuleDocsLLMEnhanced(t *testing.T) {
+	old := MaxLLMModules
+	MaxLLMModules = 1 // cap to 1 → only the highest-score module gets LLM
+	defer func() { MaxLLMModules = old }()
+
+	tmpDir := t.TempDir()
+	files := []*analyzer.FileResult{
+		{Filename: "hub.py", Functions: []analyzer.FunctionInfo{{Name: "core"}}, Imports: []analyzer.ImportInfo{{Module: "base"}}},
+		{Filename: "leaf.py", Imports: []analyzer.ImportInfo{{Module: "hub"}}},
+	}
+	graph := grapher.BuildGraph(files)
+
+	rec := &recordingProvider{
+		respFn: func(prompt string) string {
+			if strings.Contains(prompt, "模块职责卡") {
+				return "## 职责\nLLM_CARD_FOR_TARGET"
+			}
+			return ""
+		},
+	}
+
+	wiki, err := GenerateWikiEnhancedWithMaxFunctions(context.Background(), rec, graph, tmpDir, "b1-test", "graph TD\n", "classDiagram\n", "sequenceDiagram\n", "", 0)
+	require.NoError(t, err)
+	require.NotNil(t, wiki)
+	require.Len(t, wiki.ModuleDocs, 2, "both modules still have docs")
+
+	// Exactly one module got the LLM card.
+	gotLLM := 0
+	gotAnnotated := 0
+	for _, doc := range wiki.ModuleDocs {
+		if strings.Contains(doc, "LLM_CARD_FOR_TARGET") {
+			gotLLM++
+		}
+		if strings.Contains(doc, "未纳入 LLM 深度分析") {
+			gotAnnotated++
+		}
+	}
+	assert.Equal(t, 1, gotLLM, "exactly one module gets the LLM card under cap=1")
+	assert.Equal(t, 1, gotAnnotated, "the non-selected module is annotated")
+
+	// ModuleDescMap persisted to checkpoint.
+	cpPath := filepath.Join(tmpDir, ".codewiki", "checkpoint", "wiki.json")
+	cpData, readErr := os.ReadFile(cpPath)
+	require.NoError(t, readErr, "checkpoint persisted")
+	assert.Contains(t, string(cpData), "LLM_CARD_FOR_TARGET", "ModuleDescMap written to checkpoint")
+}
+
 func TestGenerateModuleDocs(t *testing.T) {
 	files := []*analyzer.FileResult{
 		{

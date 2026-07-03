@@ -112,6 +112,7 @@ func runGenerate(args []string) {
 	lang := fs.String("lang", "", "Language filter: python, javascript, typescript, go, java, rust, c, cpp (empty = auto-detect)")
 	name := fs.String("name", "", "Project name (default: directory name)")
 	maxFunctions := fs.Int("max-functions", -1, "Max functions for LLM semantic description: -1=auto (30%%), 0=skip, N=cap")
+	maxModules := fs.Int("max-modules", -1, "Max modules for LLM responsibility cards: -1=auto (tiered, entry/core always covered), 0=skip, N=cap")
 	force := fs.Bool("force", false, "Force full regeneration, ignore checkpoints")
 	concurrency := fs.Int("concurrency", 0, "Max concurrent LLM requests for function-description stage (0 = default 10). Lower for rate-limited endpoints, raise for throughput on large repos.")
 	fs.Parse(args)
@@ -122,6 +123,7 @@ func runGenerate(args []string) {
 		Language:        *lang,
 		ProjectName:     *name,
 		MaxLLMFunctions: *maxFunctions,
+		MaxModules:      *maxModules,
 		Force:           *force,
 		Concurrency:     *concurrency,
 	}
@@ -276,6 +278,7 @@ Generate flags:
   -lang string     Language filter: python, javascript, typescript, go, java, rust, c, cpp
   -name string     Project name
   -max-functions   Max functions for LLM semantic description: -1=auto, 0=skip, N=cap
+  -max-modules     Max modules for LLM responsibility cards: -1=auto, 0=skip, N=cap
   -concurrency     Max concurrent LLM requests for function-description stage (0 = default 10)
   -force           Force full regeneration, ignore checkpoints
 

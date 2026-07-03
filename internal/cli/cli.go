@@ -44,6 +44,7 @@ type Config struct {
 	Version         string
 	PDFOutputPath   string // for export pdf command
 	Concurrency     int // A6: LLM concurrency for function-description stage (0 = default 10)
+	MaxModules      int // B1: max modules for LLM responsibility cards: -1=auto, 0=skip, N=cap
 }
 
 // RunGenerate executes the full generate pipeline: parse → graph → diagram → doc.
@@ -57,6 +58,10 @@ func RunGenerate(cfg *Config) error {
 	// A6: allow caller to tune LLM concurrency for the function-description stage.
 	if cfg.Concurrency > 0 {
 		docgen.FuncDescConcurrency = cfg.Concurrency
+	}
+	// B1: -max-modules controls LLM module responsibility cards.
+	if cfg.MaxModules != 0 {
+		docgen.MaxLLMModules = cfg.MaxModules
 	}
 
 	fmt.Printf("正在解析 %s 中的源文件...\n", cfg.SourceDir)

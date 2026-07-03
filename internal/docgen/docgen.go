@@ -75,6 +75,9 @@ type wikiCheckpoint struct {
 	// run's pendingFuncs will naturally re-request them; this field exists for
 	// diagnostics and explicit tracking. (A1)
 	FailedFuncs []string `json:"failed_funcs,omitempty"`
+	// ModuleDescMap caches LLM-generated module responsibility cards (B1),
+	// keyed by module name. Persisted for incremental resume.
+	ModuleDescMap map[string]string `json:"module_desc_map,omitempty"`
 }
 
 func loadWikiCheckpoint(path string) *wikiCheckpoint {
@@ -625,6 +628,31 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 				}()
 			}
 
+		// Task 6: Module responsibility cards (B1). LLM-enhance the selected
+		// modules; keep the static template for the rest, annotated so readers
+		// understand why those cards are shallow.
+		if provider != nil && MaxLLMModules != 0 {
+			func() {
+				selected := selectTopModules(graph, MaxLLMModules)
+				selectedSet := make(map[string]bool, len(selected))
+				for _, m := range selected {
+					selectedSet[m] = true
+				}
+				descs := generateModuleDescriptions(ctx, provider, graph, selected, cp, pr)
+				for k, v := range descs {
+					moduleDocs[k] = v
+				}
+				if len(selected) > 0 {
+					const note = "> 📜 静态概览（未纳入 LLM 深度分析，可用 `-max-modules` 调整）\n\n"
+					for m, doc := range moduleDocs {
+						if !selectedSet[m] && !strings.HasPrefix(doc, note) {
+							moduleDocs[m] = note + doc
+						}
+					}
+				}
+				cp.ModuleDescMap = descs
+			}()
+		}
 
 		pr.log(fmt.Sprintf("[Phase 1] 全部完成（耗时 %v）", time.Since(phase1Start).Round(time.Second)))
 
@@ -908,6 +936,11 @@ var docNameKeywords = []string{
 // function-description stage (A6). Default 10; override via the generate
 // command's -concurrency flag for large repos or rate-limited endpoints.
 var FuncDescConcurrency = 10
+
+// MaxLLMModules bounds how many modules get LLM-enhanced description cards
+// (B1). -1 = auto (tiered by repo size with must-include for entry/core),
+// 0 = skip module LLM enhancement, N = hard cap. Set via -max-modules flag.
+var MaxLLMModules = -1
 
 // docFileExts 限定可作为文档读取的文本扩展名。
 var docFileExts = map[string]bool{
@@ -3240,6 +3273,259 @@ func inferModuleDifficulty(n *grapher.Node, graph *grapher.Graph) string {
 	default:
 		return "⭐ 入门"
 	}
+}
+
+// moduleRoleWeight maps an InferModuleRoles role label to a business-importance
+// weight in [0,1]. Entry/core modules rank highest because they are the parts
+// a reader must understand first.
+func moduleRoleWeight(role string) float64 {
+	switch role {
+	case "入口层", "核心领域":
+		return 1.0
+	case "业务模块":
+		return 0.6
+	case "工具库", "支撑模块":
+		return 0.3
+	default: // "独立模块" or ""
+		return 0.1
+	}
+}
+
+// moduleRoleMustInclude reports whether a role forces inclusion in the LLM-
+// enhanced module set regardless of score (entry/core modules must always be
+// covered so readers always get a description of the entry point and core
+// domain).
+func moduleRoleMustInclude(role string) bool {
+	return role == "入口层" || role == "核心领域"
+}
+
+// moduleCoverageTarget returns how many modules the LLM-enhancement stage
+// should target, tiered by total module count: small repos get full coverage,
+// large repos get partial coverage to bound LLM cost. (B1)
+func moduleCoverageTarget(n int) int {
+	switch {
+	case n <= 30:
+		return n
+	case n <= 80:
+		return int(float64(n) * 0.7)
+	default:
+		return int(float64(n) * 0.5)
+	}
+}
+
+// selectTopModules picks the modules to receive LLM-enhanced description cards
+// (B1), ranked by an importance score combining PageRank (topology), in-degree
+// (referenced weight / reuse), and business role. Coverage is tiered by repo
+// size; entry/core modules are always selected regardless of score.
+//
+// maxN: -1 = auto (tiered), 0 = none, N = hard cap.
+func selectTopModules(graph *grapher.Graph, maxN int) []string {
+	if len(graph.Nodes) == 0 || maxN == 0 {
+		return nil
+	}
+
+	pr := graph.PageRank()
+	inDeg := make(map[string]int, len(graph.Nodes))
+	for _, e := range graph.Edges {
+		inDeg[e.To]++
+	}
+	roleOf := make(map[string]string, len(graph.Nodes))
+	roleWt := make(map[string]float64, len(graph.Nodes))
+	for _, r := range graph.InferModuleRoles() {
+		roleOf[r.Name] = r.Role
+		roleWt[r.Name] = moduleRoleWeight(r.Role)
+	}
+
+	// min-max normalisation bounds (init from first node to avoid importing math).
+	first := graph.Nodes[0].Name
+	prMin, prMax := pr[first], pr[first]
+	inMin, inMax := float64(inDeg[first]), float64(inDeg[first])
+	for _, n := range graph.Nodes {
+		p := pr[n.Name]
+		d := float64(inDeg[n.Name])
+		if p < prMin {
+			prMin = p
+		}
+		if p > prMax {
+			prMax = p
+		}
+		if d < inMin {
+			inMin = d
+		}
+		if d > inMax {
+			inMax = d
+		}
+	}
+	norm := func(v, lo, hi float64) float64 {
+		if hi <= lo {
+			return 0
+		}
+		return (v - lo) / (hi - lo)
+	}
+
+	type modScore struct {
+		name  string
+		score float64
+		must  bool
+	}
+	all := make([]modScore, 0, len(graph.Nodes))
+	mustCount := 0
+	for _, n := range graph.Nodes {
+		score := 0.5*norm(pr[n.Name], prMin, prMax) +
+			0.3*norm(float64(inDeg[n.Name]), inMin, inMax) +
+			0.2*roleWt[n.Name]
+		must := moduleRoleMustInclude(roleOf[n.Name])
+		if must {
+			mustCount++
+		}
+		all = append(all, modScore{name: n.Name, score: score, must: must})
+	}
+
+	// Sort: must-first, then score desc, then name for determinism.
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].must != all[j].must {
+			return all[i].must
+		}
+		if all[i].score != all[j].score {
+			return all[i].score > all[j].score
+		}
+		return all[i].name < all[j].name
+	})
+
+	// Coverage tier.
+	n := len(all)
+	target := moduleCoverageTarget(n)
+
+	// Lower bound: include every must-have. Upper bound: cap.
+	limit := target
+	if limit < mustCount {
+		limit = mustCount
+	}
+	if maxN > 0 && limit > maxN {
+		limit = maxN
+	}
+	if limit > len(all) {
+		limit = len(all)
+	}
+
+	order := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		order = append(order, all[i].name)
+	}
+	return order
+}
+
+// buildModuleDescPrompt builds the LLM prompt for a module responsibility card (B1).
+func buildModuleDescPrompt(n *grapher.Node, role string, deps []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "你是资深软件架构师。请为模块 `%s` 撰写一张「模块职责卡」（简体中文，150-250 字）。\n\n", n.Name)
+	fmt.Fprintf(&b, "该模块包含：\n")
+	for _, c := range n.Classes {
+		fmt.Fprintf(&b, "- 类 %s（%d 个方法）\n", c.Name, len(c.Methods))
+	}
+	for _, f := range n.Functions {
+		fmt.Fprintf(&b, "- 函数 %s\n", f.Name)
+	}
+	if role != "" {
+		fmt.Fprintf(&b, "\n推断架构角色：%s\n", role)
+	}
+	if len(deps) > 0 {
+		fmt.Fprintf(&b, "依赖模块：%s\n", strings.Join(deps, "、"))
+	}
+	fmt.Fprintf(&b, "\n用 Markdown 输出三段：\n## 职责\n（一句话核心职责 + 业务场景）\n## 关键设计\n（2-3 个设计要点）\n## 注意事项\n（维护/扩展注意点，可省略）\n")
+	return b.String()
+}
+
+// generateModuleDescriptions produces LLM responsibility cards for the selected
+// modules (B1). Reuses stream-first + 2-round non-stream retry (A1 pattern),
+// the FuncDescConcurrency bound, and checkpoint resume (ModuleDescMap).
+// pr may be nil in unit-test contexts.
+func generateModuleDescriptions(ctx context.Context, provider llm.Provider, graph *grapher.Graph, selected []string, cp *wikiCheckpoint, pr *progressRenderer) map[string]string {
+	if len(selected) == 0 {
+		return nil
+	}
+	nodeOf := make(map[string]*grapher.Node, len(graph.Nodes))
+	for _, n := range graph.Nodes {
+		nodeOf[n.Name] = n
+	}
+	roleOf := make(map[string]string)
+	for _, r := range graph.InferModuleRoles() {
+		roleOf[r.Name] = r.Role
+	}
+
+	// Checkpoint restore.
+	descs := make(map[string]string, len(selected))
+	for _, m := range selected {
+		if v, ok := cp.ModuleDescMap[m]; ok {
+			descs[m] = v
+		}
+	}
+	pending := make([]string, 0, len(selected))
+	for _, m := range selected {
+		if _, ok := descs[m]; !ok {
+			pending = append(pending, m)
+		}
+	}
+	if len(pending) == 0 {
+		if pr != nil {
+			pr.done("模块职责", fmt.Sprintf("从 checkpoint 恢复 %d 个模块", len(descs)))
+		}
+		return descs
+	}
+	if pr != nil {
+		pr.update("模块职责", fmt.Sprintf("生成 %d 个模块职责卡（并发 %d）...", len(pending), FuncDescConcurrency))
+	}
+
+	var mu sync.Mutex
+	runBatch := func(curPending []string, completeFn func(context.Context, string) (string, error)) []string {
+		var failedMu sync.Mutex
+		var failed []string
+		sem := make(chan struct{}, FuncDescConcurrency)
+		var wg sync.WaitGroup
+		for _, m := range curPending {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(mod string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				n := nodeOf[mod]
+				if n == nil {
+					return
+				}
+				prompt := buildModuleDescPrompt(n, roleOf[mod], graph.DependenciesOf(mod))
+				reqCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+				defer cancel()
+				resp, err := completeFn(reqCtx, prompt)
+				if err != nil || strings.TrimSpace(resp) == "" {
+					failedMu.Lock()
+					failed = append(failed, mod)
+					failedMu.Unlock()
+					return
+				}
+				mu.Lock()
+				descs[mod] = resp
+				mu.Unlock()
+			}(m)
+		}
+		wg.Wait()
+		return failed
+	}
+
+	streamFn := func(c context.Context, p string) (string, error) { return streamComplete(c, provider, p) }
+	nonStreamFn := func(c context.Context, p string) (string, error) { return provider.Complete(c, p) }
+
+	failed := runBatch(pending, streamFn)
+	for round := 1; round <= 2 && len(failed) > 0; round++ {
+		if pr != nil {
+			pr.tick("模块职责", fmt.Sprintf("第 %d 轮重试 %d 个模块（非流式）...", round, len(failed)))
+		}
+		failed = runBatch(failed, nonStreamFn)
+	}
+	if pr != nil {
+		pr.log(fmt.Sprintf("[模块职责] 完成：%d/%d", len(descs), len(selected)))
+		pr.remove("模块职责")
+	}
+	return descs
 }
 
 // GenerateModuleDocs creates per-module documentation mapping module name to markdown content.

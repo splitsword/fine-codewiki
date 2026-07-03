@@ -1274,6 +1274,128 @@ E2E 验证（人工 + testdata）
 
 ---
 
+### M4-B — 信息架构升级（模块视角 + 语义搜索）
+
+> **定位**：M3.5 解决大仓可靠性后，本里程碑直击第三方评估最核心痛点——"函数级粒度过细、像字典不像说明书"（`modules/*.md` 空壳 + API 参考平铺）与"搜索浅层文本匹配"。属 v1.0 正式版前的产品力跃升。
+
+#### 目标
+
+让生成的 Wiki 从"函数字典"升级为"以模块为单位的可理解说明书"，并在 serve 模式提供语义搜索体验。
+
+#### 任务总览
+
+| # | 任务 | 价值 | 顺序 |
+|---|------|------|------|
+| B1 | `modules/*.md` 接入 LLM 增强（模块职责卡，按重要度+被引用权重覆盖） | 消除空壳字典，对齐章节叙事质量 | 1 |
+| B3 | API 参考按模块分组 | 平铺字典变可浏览目录 | 2 |
+| B2 | serve 语义搜索 + 浏览器体验增强 | 业务词搜到代码符号 | 3 |
+
+---
+
+#### B1 — 模块文档 LLM 增强
+
+**问题根因**：`GenerateModuleDocs`（`docgen.go:3247`）纯模板无 LLM；`inferModuleResponsibility` 大量 default 占位文案（"该模块是项目的组成部分…"），与 `chapters/*.html` 的高质量叙事割裂。
+
+**重要度评分**（复用 grapher 已有信号）：
+
+```
+moduleScore = 0.5 × norm(PageRank)        // 拓扑全局重要度（主信号）
+            + 0.3 × norm(inDegree)         // 被引用权重（复用度）
+            + 0.2 × roleScore              // 业务角色
+```
+
+- `norm`：min-max 归一到 [0,1]
+- `roleScore`：入口层/核心领域=1.0，业务模块=0.6，工具库/支撑=0.3，独立=0.1
+
+**覆盖率分段**（沿用 A2 哲学）：
+
+| 模块总数 N | 覆盖策略 |
+|---|---|
+| N ≤ 30 | 100% |
+| 30 < N ≤ 80 | 按 score 降序取前 70% |
+| N > 80 | 按 score 降序取前 50% |
+
+**必选规则**：所有「入口层」「核心领域」角色模块强制覆盖，无论评分（保证 main/cli 入口与核心业务模块一定有 LLM 职责卡）。
+
+**CLI flag**：`-max-modules`（-1=auto 上面的分段, 0=skip LLM, N=cap），与 `-max-functions` 对齐。
+
+**实现**：
+- 新增 `selectTopModules(graph, maxN) []string`（评分 → 排序 → 分段 → 必选合并 → cap）
+- `GenerateModuleDocs` 改造：选中模块走 LLM 职责卡 prompt；未选中保留静态模板，并在顶部标注「📜 静态概览（未纳入深度分析，可用 `-max-modules` 调整）」
+- 复用 A1 批次重试 + A2 checkpoint（`wikiCheckpoint` 加 `ModuleDescMap map[string]string`）
+
+**测试方案**：
+- `TestSelectTopModules`：评分排序、覆盖率分段、入口/核心必选、cap
+- `TestModuleDocsLLMEnhanced`：mock provider 验证选中模块含 LLM 职责卡、未选中保留模板
+- `TestModuleDocsCheckpointResume`：`ModuleDescMap` 增量续传
+
+**验收**：`modules/*.md` 不再出现占位文案（除显式标注的未选中模块）；职责卡与章节叙事质量一致。
+
+---
+
+#### B3 — API 参考按模块分组
+
+**问题根因**：`GenerateAPIReferenceMarkdown`（`docgen.go:3894`）平铺所有 `Node.Functions`/`Classes`，无模块归类，像字典。
+
+**方案**：按 `graph.Nodes` 分组渲染——每模块 `## 模块名（角色）` 小节，列其类（含方法）+ 顶层函数。复用 `InferModuleRoles` 标角色。纯 docgen 改造，无 LLM。
+
+**测试**：`TestAPIReferenceGroupedByModule`——markdown 含 `## ` 模块分组标题；类归到所属模块；模块按角色/重要度排序。
+
+**验收**：API 参考从平铺字典变为可浏览的模块目录。
+
+---
+
+#### B2 — serve 语义搜索 + 浏览器体验增强
+
+**问题根因**：`rpFilterSearch`（`render.go:780`）纯前端 `indexOf` `_navIdx`（仅标题+文件名）；serve 模式已建 vectorstore 但搜索未使用。
+
+**架构：混合检索**（新增 `/api/search`，复用 `rag.Engine` 的 store + embedder）：
+
+```
+混合分 = 0.6 × 语义分 + 0.4 × 字面分       // 精确符号命中 + 0.2 boost
+       → 去重 + 按混合分降序 + top 20
+       → [{type, title, path, anchor, snippet, score}]
+```
+
+字面加权保证搜 `reimbursementSubmit` 精确命中排前；语义召回保证"报销流程"也能找到它。
+
+**降级链**：库有数据 → 混合检索；embedding 失败/库空 → 字面匹配；前端永远先 `indexOf` 即时显示，API 失败不影响可用。
+
+**浏览器端体验清单（8 项全做）**：
+
+1. **无空窗即时反馈**：输入即前端 `indexOf` 显示，debounce 200ms 调 `/api/search`，结果到达平滑替换
+2. **键盘全导航**：↑↓ 选结果、Enter 跳转、Esc 关闭、Ctrl+K 唤起
+3. **结果分类 + 图标**：📄 文章 / 📦 模块 / 🔧 函数 / 📖 API，分组展示
+4. **高亮匹配片段**：`<mark>` 高亮 q 命中
+5. **来源徽章 + snippet**：每条一句上下文摘录
+6. **Enter 默认首项**：回车跳转最高分结果
+7. **最近搜索**：`localStorage` 存最近 5 条，空 query 展示
+8. **空结果转 AI**：「未找到，按 Enter 向 AI 提问 →」一键转 `/api/ask`
+
+**静态 HTML 形态**：本轮只做 1/2/3/4/6/7 的前端部分（扩面索引：标题+符号名+首段），不向量化。语义召回是 serve 专属。
+
+**测试方案**：
+- `TestSearchSemanticRecall`：`/api/search?q=报销流程` 召回含 `reimbursementSubmit` 的模块
+- `TestSearchExactSymbolBoost`：`q=reimbursementSubmit` 字面精确排第一
+- `TestSearchFallback`：库空降级字面匹配
+- 前端体验人工验收
+
+**验收**：业务词搜到代码符号；精确符号排前；库空降级；键盘流全程可用。
+
+---
+
+#### M4-B 发布门禁
+
+| 门禁 | 标准 |
+|------|------|
+| 模块文档质量 | `modules/*.md` 占位文案仅出现在显式标注的未选中模块 |
+| API 可浏览性 | API 参考按模块分组、标角色 |
+| 搜索召回 | serve 下业务词召回代码符号、精确符号排前、库空降级 |
+| 搜索体验 | 8 项前端体验全部可用 |
+| 回归 | 全量 `go test ./...` 绿 |
+
+---
+
 ### M4 — 生态扩展 (V2)
 
 > **M4 整体延后至 V2，不在 v1.0 Beta 范围内。**

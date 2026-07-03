@@ -13,6 +13,7 @@
 | M2 — 问答与图表增强 | ✅ 已完成 | RAG/时序图/本地LLM/配置/中文 | 无 |
 | M3 — 产品化打磨 | ✅ 已完成 | 主题导向叙事文档、多图叙事化架构说明、静态 HTML/PDF 导出、流式 AI 问答、Web UI 14项特性、4 阶段并发管线、流式优先 LLM、update 自更新、GitHub Releases 自动发布 | 无 |
 | M3.5 — 规模化可靠性加固 | ✅ 已完成 | 失败重试队列、checkpoint 函数级续传、增量不清盘、降级独立超时、idle 自适应、并发可配+流式429退避 | 无 |
+| M4-B — 信息架构升级 | 🔜 计划中 | modules 文档 LLM 增强(重要度+被引用覆盖)、API 参考按模块分组、serve 语义搜索+8项体验 | 待 B1→B3→B2 排期 |
 | M4 — 生态扩展 | ⏳ 延后至 V2 | Rust/C++ 支持、VS Code 扩展、CI 集成（GitHub Action）、图结构自然语言查询 | 无 |
 
 ---
@@ -229,6 +230,30 @@
 | A4 降级 ctx deadline 隔离 | 🔜 | 捕获 Complete 的 ctx，断言独立 deadline |
 | A5 reasoning 计入活跃 / 普通仍 3min | 🔜 | mock reasoning token 间隔 4min 不超时 |
 | A6 流式 429 退避 / -concurrency 生效 | 🔜 | mock 429+Retry-After；并发计数 |
+
+---
+
+## M4-B 交付物细拆（计划中：信息架构升级）
+
+> 详见 `prd.md` § M4-B。实现顺序 B1 → B3 → B2。
+
+| # | 任务 | 实现文件 | 测试文件（计划） | 状态 |
+|---|------|----------|------------------|------|
+| B1 | 模块文档 LLM 增强（重要度+被引用权重覆盖） | `internal/docgen/docgen.go`（GenerateModuleDocs + 新 selectTopModules） | `docgen_test.go::TestSelectTopModules / TestModuleDocsLLMEnhanced / TestModuleDocsCheckpointResume` | 🔜 未开始 |
+| B3 | API 参考按模块分组 | `internal/docgen/docgen.go`（GenerateAPIReferenceMarkdown） | `docgen_test.go::TestAPIReferenceGroupedByModule` | 🔜 未开始 |
+| B2 | serve 语义搜索 + 8 项浏览器体验 | `internal/cli/cli.go`（/api/search）+ `internal/docgen/render.go`（前端 JS）+ 新增混合检索 | `cli_test.go::TestSearchSemanticRecall / TestSearchExactSymbolBoost / TestSearchFallback` | 🔜 未开始 |
+
+### M4-B 成功标准核对
+
+| 标准 | 验证方式 |
+|------|----------|
+| modules/*.md 占位文案仅出现在显式标注的未选中模块 | 检查生成产物 + TestModuleDocsLLMEnhanced |
+| API 参考按模块分组、标角色 | TestAPIReferenceGroupedByModule |
+| serve 业务词召回代码符号 | TestSearchSemanticRecall |
+| 精确符号字面命中排前 | TestSearchExactSymbolBoost |
+| 库空降级字面 | TestSearchFallback |
+| 8 项前端体验可用 | 人工验收 |
+| 无回归 | `go test -race ./...` 全绿 |
 
 ---
 
