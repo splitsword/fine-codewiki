@@ -1078,11 +1078,21 @@ body.rp-open .topbar { right:380px; transition:right .25s cubic-bezier(.4,0,.2,1
 </div>
 </div>
 <script>
-// Build _navIdx from sidebar links for search
+// Build _navIdx from sidebar links AND in-page section headings (h2/h3) so
+// instant search covers module/function/API sub-headings, not just the handful
+// of top-level nav entries.
 var _navIdx=[];
 document.querySelectorAll('.nav-group-items a').forEach(function(a){
   var t=a.querySelector('.nav-title');
   if(t)_navIdx.push({f:a.getAttribute('href'),t:t.textContent});
+});
+document.querySelectorAll('section[id]').forEach(function(sec){
+  var sid=sec.getAttribute('id');
+  sec.querySelectorAll('h2,h3').forEach(function(h){
+    var txt=(h.textContent||'').trim();
+    if(!txt)return;
+    _navIdx.push({f:h.id?('#'+h.id):('#'+sid),t:txt});
+  });
 });
 // Neutralise the old search-overlay: clone the trigger to drop its old
 // click->overlay listener, and remove the overlay element so the main box is

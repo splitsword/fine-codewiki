@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-04 — fix(cli): 扩展即时搜索数据源，覆盖 section 子标题 (e2fdb9c)
+
 - 2026-07-03 — fix(cli): serve index 搜索框就地输入+下拉+Enter 右侧面板 (be72f6e)
 
 - 2026-07-03 — fix(render): 主搜索框就地输入+下拉候选，Enter 后结果落右侧面板 (0af14eb)
