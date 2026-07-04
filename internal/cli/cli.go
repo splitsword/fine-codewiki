@@ -990,9 +990,12 @@ body.rp-open .topbar { right:380px; transition:right .25s cubic-bezier(.4,0,.2,1
 .rp-body { flex:1; overflow:hidden; display:flex; flex-direction:column; }
 .rp-pane { display:none; flex-direction:column; flex:1; overflow:hidden; }
 .rp-pane.active { display:flex; }
-.rp-search-input { width:100%; padding:12px 16px; border:none; border-bottom:1px solid var(--border); font-size:14px; background:var(--bg); color:var(--text); outline:none; flex-shrink:0; }
+.rp-search-input { width:100%; padding:12px 40px 12px 16px; border:none; font-size:14px; background:var(--bg); color:var(--text); outline:none; flex-shrink:0; }
 .rp-search-input:focus { background:var(--bg2); }
 .rp-search-input::placeholder { color:var(--text3); }
+.rp-search-bar { position:relative; flex-shrink:0; border-bottom:1px solid var(--border); }
+.rp-search-clear { position:absolute; right:8px; top:50%; transform:translateY(-50%); width:22px; height:22px; border:none; background:var(--bg3); color:var(--text2); border-radius:50%; cursor:pointer; font-size:11px; display:none; align-items:center; justify-content:center; line-height:1; }
+.rp-search-clear:hover { background:var(--accent); color:#fff; }
 .rp-results { flex:1; overflow-y:auto; }
 .rp-result { display:block; padding:12px 16px; color:var(--text); text-decoration:none; border-bottom:1px solid var(--border2); transition:background .1s; cursor:pointer; }
 .rp-result:hover { background:var(--accent-glow); }
@@ -1059,7 +1062,10 @@ body.rp-open .topbar { right:380px; transition:right .25s cubic-bezier(.4,0,.2,1
 </div>
 <div class="rp-body">
 <div class="rp-pane rp-search-pane active" data-pane="search">
-<input class="rp-search-input" type="text" id="rp-search-input" placeholder="搜索文章、模块..." oninput="rpFilterSearch(this.value)">
+<div class="rp-search-bar">
+<input class="rp-search-input" type="text" id="rp-search-input" placeholder="输入关键词搜索，或清空重搜..." oninput="rpFilterSearch(this.value)" onkeydown="if(event.key==='Enter'){rpFilterSearch(this.value);}">
+<button class="rp-search-clear" id="rp-search-clear" onclick="rpClearSearch()" title="清空重搜">✕</button>
+</div>
 <div class="rp-results" id="rp-search-results"></div>
 </div>
 <div class="rp-pane rp-ai-pane" data-pane="ai">
@@ -1162,6 +1168,9 @@ function rpRecent(){try{return JSON.parse(localStorage.getItem('_rpRecent')||'[]
 function rpPushRecent(q){if(!q)return;var r=rpRecent().filter(function(x){return x!==q});r.unshift(q);if(r.length>5)r=r.slice(0,5);localStorage.setItem('_rpRecent',JSON.stringify(r));}
 function rpRecentHTML(){var r=rpRecent();if(!r.length)return '';return '<div class="rp-section-label">最近搜索</div>'+r.map(function(q){return '<a class="rp-result" href="#" onclick="rpSearchClickRecent(\''+rpSafe(q)+'\');return false"><span class="rp-result-icon">🕑</span><span class="rp-result-title">'+rpEscape(q)+'</span></a>';}).join('');}
 function rpSearchClickRecent(q){var inp=document.getElementById('rp-search-input');if(inp){inp.value=q;}rpFilterSearch(q);}
+function rpClearSearch(){var inp=document.getElementById('rp-search-input');if(inp){inp.value='';inp.focus();rpFilterSearch('');}}
+function rpSyncClear(){var inp=document.getElementById('rp-search-input');var clr=document.getElementById('rp-search-clear');if(inp&&clr){clr.style.display=inp.value?'flex':'none';}}
+(function(){var inp=document.getElementById('rp-search-input');if(inp)inp.addEventListener('input',rpSyncClear);})();
 function rpSearchToAI(q){switchTab('ai');var inp=document.getElementById('rp-ai-input');if(inp){inp.value=q;inp.focus();}}
 function rpRenderResults(items,q,showRecent){
   var r=document.getElementById('rp-search-results');if(!r)return;
@@ -1212,7 +1221,7 @@ function topbarSearchKey(e){
   var box=document.getElementById('topbar-suggest');if(box){box.innerHTML='';box.style.display='none';}
   togglePanel('search');
   var rp=document.getElementById('rp-search-input');
-  if(rp){rp.value=q;rp.focus();rpFilterSearch(q);}
+  if(rp){rp.value=q;rp.focus();rpFilterSearch(q);rpSyncClear();}
 }
 document.addEventListener('click',function(e){
   var box=document.getElementById('topbar-suggest');

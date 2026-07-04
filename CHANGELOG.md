@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-04 — fix(cli): 右侧搜索面板加清除按钮，支持换关键词重搜 (fbd47b1)
+
 - 2026-07-04 — fix(cli): 扩展即时搜索数据源，覆盖 section 子标题 (e2fdb9c)
 
 - 2026-07-03 — fix(cli): serve index 搜索框就地输入+下拉+Enter 右侧面板 (be72f6e)
