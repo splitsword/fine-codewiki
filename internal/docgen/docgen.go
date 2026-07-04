@@ -639,7 +639,23 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 				}
 				descs := generateModuleDescriptions(ctx, provider, graph, selected, cp, pr)
 				for k, v := range descs {
-					moduleDocs[k] = v
+					if existing := moduleDocs[k]; existing != "" {
+						// Merge, not replace: keep the rich static detail produced by
+						// GenerateModuleDocs (key code snippets, dependency graph,
+						// function/class list) and prepend the LLM responsibility card.
+						// Strip the redundant "# 模块名" h1 — the chapter summary
+						// already shows the name, and a second h1 inside the module
+						// body would render oversized.
+						rest := existing
+						if strings.HasPrefix(rest, "# ") {
+							if nl := strings.Index(rest, "\n"); nl >= 0 {
+								rest = strings.TrimSpace(rest[nl+1:])
+							}
+						}
+						moduleDocs[k] = v + "\n\n---\n\n" + rest
+					} else {
+						moduleDocs[k] = v
+					}
 				}
 				if len(selected) > 0 {
 					const note = "> 📜 静态概览（未纳入 LLM 深度分析，可用 `-max-modules` 调整）\n\n"
