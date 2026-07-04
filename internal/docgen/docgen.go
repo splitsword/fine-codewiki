@@ -4755,19 +4755,12 @@ func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
 	}{"api-reference", "API 参考", wiki.APIReference})
 
 	primaryExt := primaryExtForLang(wiki.Language)
-	for _, sec := range sections {
-		body.WriteString(fmt.Sprintf("<section id=\"%s\">\n", sec.id))
-		body.WriteString(makeSourceRefsClickable(RenderMarkdownBody([]byte(sec.content)), primaryExt))
-		body.WriteString("</section>\n")
-	}
-
-	// Diagrams are now embedded inside their thematic articles via Markdown
-	// mermaid code blocks, so RenderMarkdownBody already renders them inline.
-	// No standalone diagram sections needed.
-
-
-	// Chapter listing — links to standalone chapter pages with contextual sidebar
-	if len(wiki.ModuleThemes) > 0 {
+	// Chapter listing — built as a closure so it can be inserted right after
+	// project-structure, matching the sidebar nav order (项目结构 → 深入剖析 → 核心概念).
+	writeChapterListing := func() {
+		if len(wiki.ModuleThemes) == 0 {
+			return
+		}
 		body.WriteString(`<section id="chapters">` + "\n")
 		body.WriteString(`<h2>📕 深入剖析</h2>` + "\n")
 		body.WriteString(`<p>以下章节按功能主题组织，每个章节包含相关模块的详细文档和上下文源码导航。</p>` + "\n")
@@ -4797,6 +4790,20 @@ func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
 		body.WriteString(`</div>` + "\n")
 		body.WriteString(`</section>` + "\n")
 	}
+	for _, sec := range sections {
+		body.WriteString(fmt.Sprintf("<section id=\"%s\">\n", sec.id))
+		body.WriteString(makeSourceRefsClickable(RenderMarkdownBody([]byte(sec.content)), primaryExt))
+		body.WriteString("</section>\n")
+		// Insert the chapter listing right after project-structure so the body
+		// order matches the sidebar (项目结构 → 深入剖析 → 核心概念).
+		if sec.id == "project-structure" {
+			writeChapterListing()
+		}
+	}
+
+	// Diagrams are now embedded inside their thematic articles via Markdown
+	// mermaid code blocks, so RenderMarkdownBody already renders them inline.
+	// No standalone diagram sections needed.
 	var nav strings.Builder
 	nav.WriteString(`<nav class="sidebar">
 <div class="sidebar-header"><span class="logo-dot"></span><a href="#" style="color:inherit;text-decoration:none;font-weight:700;">`)
