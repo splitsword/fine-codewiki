@@ -34,6 +34,18 @@ func extractHeadings(html string) []heading {
 	return result
 }
 
+// downgradeModuleHeadings demotes h2→h4 and h3→h5 inside module-detail bodies so
+// their internal section headings (e.g. 职责/关键设计/注意事项 from B1 LLM cards, or
+// the static template's 功能说明) do NOT pollute the chapter TOC, which only
+// indexes h2/h3. Visual sizing is restored via .module-body CSS.
+func downgradeModuleHeadings(html string) string {
+	html = strings.ReplaceAll(html, "<h2", "<h4")
+	html = strings.ReplaceAll(html, "</h2>", "</h4>")
+	html = strings.ReplaceAll(html, "<h3", "<h5")
+	html = strings.ReplaceAll(html, "</h3>", "</h5>")
+	return html
+}
+
 // GenerateChapterPage builds a standalone HTML page for one theme chapter,
 // with contextual right sidebar showing only the related source files.
 func GenerateChapterPage(wiki *Wiki, theme string, graph *grapher.Graph) string {
@@ -200,11 +212,11 @@ func GenerateChapterPage(wiki *Wiki, theme string, graph *grapher.Graph) string 
 				}
 				body.WriteString(fmt.Sprintf(`<summary>%s</summary>`, summaryLabel))
 				body.WriteString(`<div class="module-body">`)
-				body.WriteString(makeSourceRefsClickable(RenderMarkdownBody([]byte(doc)), primaryExt))
+				body.WriteString(downgradeModuleHeadings(makeSourceRefsClickable(RenderMarkdownBody([]byte(doc)), primaryExt)))
 				body.WriteString("</div></details>\n")
 			} else {
 				body.WriteString(fmt.Sprintf(`<section id="%s">`, secID))
-				body.WriteString(makeSourceRefsClickable(RenderMarkdownBody([]byte(doc)), primaryExt))
+				body.WriteString(downgradeModuleHeadings(makeSourceRefsClickable(RenderMarkdownBody([]byte(doc)), primaryExt)))
 				body.WriteString("</section>\n")
 			}
 		}
@@ -491,6 +503,8 @@ section { scroll-margin-top:calc(var(--topbar-h) + 16px); }
 .module-detail[open] summary::before { transform:rotate(90deg); }
 .module-detail[open] summary { border-bottom:1px solid var(--border2); background:var(--accent-glow); }
 .module-detail .module-body { padding:16px; }
+.module-body h4 { font-size:1.1em; font-weight:700; margin:16px 0 6px; color:var(--text); }
+.module-body h5 { font-size:1em; font-weight:600; margin:12px 0 4px; color:var(--text2); }
 /* ---- Sidebar sub-items ---- */
 .nav-sub-items { list-style:none; padding:0; margin:2px 0 4px 0; }
 .nav-sub-items li a { padding:4px 16px 4px 44px; font-size:12px; color:var(--text3); display:flex; align-items:center; gap:4px; text-decoration:none; transition:all .15s; }

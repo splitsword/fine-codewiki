@@ -494,6 +494,9 @@ func TestGenerateChapterPageTOC(t *testing.T) {
 		ModuleThemes: map[string][]string{
 			"核心": {"core/engine"},
 		},
+		ChapterNarratives: map[string]string{
+			"核心": "# 引擎\n\n## 架构总览\n\n叙事。\n\n## 核心流程\n\n流程。\n",
+		},
 		ModuleDocs: map[string]string{
 			"core/engine": "# 引擎核心\n\n## 初始化流程\n\n初始化说明。\n\n## 配置管理\n\n配置说明。\n\n### 环境变量\n\n环境变量说明。\n",
 		},
@@ -506,6 +509,10 @@ func TestGenerateChapterPageTOC(t *testing.T) {
 	assert.Contains(t, html, "本章目录")
 	assert.Contains(t, html, "toc-list")
 	assert.Contains(t, html, "toc-item")
+	// Narrative headings enter the TOC
+	assert.Contains(t, html, ">架构总览</a>")
+	// Module-detail internal headings are demoted, not in TOC
+	assert.NotContains(t, html, ">初始化流程</a>")
 }
 
 func TestExtractHeadings(t *testing.T) {
@@ -548,4 +555,17 @@ func TestExtractHeadingsStripsInnerHTML(t *testing.T) {
 	headings := extractHeadings(html)
 	require.Len(t, headings, 1)
 	assert.Equal(t, "链接标题", headings[0].text)
+}
+
+// TestDowngradeModuleHeadings verifies module-detail internal headings are
+// demoted out of the h2/h3 range so they don't enter the chapter TOC.
+func TestDowngradeModuleHeadings(t *testing.T) {
+	in := `<h2 id="职责">职责</h2><p>x</p><h3 id="关键设计">关键设计</h3>`
+	out := downgradeModuleHeadings(in)
+	assert.Contains(t, out, "<h4 id=\"职责\">职责</h4>")
+	assert.Contains(t, out, "<h5 id=\"关键设计\">关键设计</h5>")
+	assert.NotContains(t, out, "<h2")
+	assert.NotContains(t, out, "<h3")
+	// headingRe only matches h2/h3 → demoted headings won't be picked up.
+	assert.Empty(t, extractHeadings(out))
 }
