@@ -499,6 +499,7 @@ body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto San
 .sidebar ul { list-style:none; padding:0; margin:0; }
 .nav-group { border-bottom:1px solid var(--border2); }
 .nav-group-header { display:flex; align-items:center; justify-content:space-between; padding:12px 18px 8px; font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:.8px; cursor:pointer; user-select:none; transition:color .15s; }
+.nav-group-header.spy-active { color:var(--accent); }
 .nav-group-header:hover { color:var(--accent); }
 .nav-group-header .chevron { transition:transform .25s; font-size:10px; }
 .nav-group.collapsed .chevron { transform:rotate(-90deg); }

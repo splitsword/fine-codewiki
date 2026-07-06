@@ -736,6 +736,7 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 
 
 	hasConcepts := keyConcepts != ""
+	hasChapters := len(moduleThemes) > 0
 
 	if provider != nil {
 		var wg2 sync.WaitGroup
@@ -871,15 +872,15 @@ func generateWikiEnhanced(ctx context.Context, provider llm.Provider, graph *gra
 		learningPath += "\n## 关键调用流程\n\n下图展示了系统中一条典型调用链的交互顺序：\n\n```mermaid\n" + seqDSL + "\n```\n"
 	}
 
-	overview += buildWhereToGoNext("00-overview.md", hasConcepts)
-	whatItDoes += buildWhereToGoNext("01-what-it-does.md", hasConcepts)
-	arch += buildWhereToGoNext("02-architecture.md", hasConcepts)
-	projectStructure += buildWhereToGoNext("03-project-structure.md", hasConcepts)
+	overview += buildWhereToGoNext("00-overview.md", hasConcepts, hasChapters)
+	whatItDoes += buildWhereToGoNext("01-what-it-does.md", hasConcepts, hasChapters)
+	arch += buildWhereToGoNext("02-architecture.md", hasConcepts, hasChapters)
+	projectStructure += buildWhereToGoNext("03-project-structure.md", hasConcepts, hasChapters)
 	if keyConcepts != "" {
-		keyConcepts += buildWhereToGoNext("04-key-concepts.md", hasConcepts)
+		keyConcepts += buildWhereToGoNext("04-key-concepts.md", hasConcepts, hasChapters)
 	}
-	learningPath += buildWhereToGoNext("05-learning-path.md", hasConcepts)
-	apiRef += buildWhereToGoNext("api-reference.md", hasConcepts)
+	learningPath += buildWhereToGoNext("05-learning-path.md", hasConcepts, hasChapters)
+	apiRef += buildWhereToGoNext("api-reference.md", hasConcepts, hasChapters)
 
 	// A3: keep the checkpoint on success. It now serves as persistent
 	// incremental state — the next run resumes from it via pendingFuncs (A2),
@@ -4854,7 +4855,7 @@ func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
 
 		// 📕 深入剖析
 		nav.WriteString(`<div class="nav-group">
-	<div class="nav-group-header"><span class="nav-group-label">📕 深入剖析</span><span class="nav-group-count">`)
+	<div class="nav-group-header nav-chapters-group"><span class="nav-group-label">📕 深入剖析</span><span class="nav-group-count">`)
 		nav.WriteString(fmt.Sprintf("%d", len(wiki.ModuleThemes)))
 		nav.WriteString(`</span><span class="chevron">&#9660;</span></div>
 	<ul class="nav-group-items">
@@ -5026,11 +5027,15 @@ var observer = new IntersectionObserver(function(entries) {
       document.querySelectorAll('.file-tree a.active').forEach(function(el){el.classList.remove('active');});
       ftLink.classList.add('active');
     }
-    // Highlight sidebar nav link
-    var navLink = document.querySelector('.sidebar a[href="#' + id + '"]');
-    if (navLink) {
-      document.querySelectorAll('.nav-group-items a.active').forEach(function(el){el.classList.remove('active');});
-      navLink.classList.add('active');
+    // Highlight sidebar nav link (or the 深入剖析 group header for the chapters section)
+    document.querySelectorAll('.nav-group-items a.active').forEach(function(el){el.classList.remove('active');});
+    document.querySelectorAll('.nav-chapters-group.spy-active').forEach(function(el){el.classList.remove('spy-active');});
+    if (id === 'chapters') {
+      var cg = document.querySelector('.nav-chapters-group');
+      if (cg) cg.classList.add('spy-active');
+    } else {
+      var navLink = document.querySelector('.sidebar a[href="#' + id + '"]');
+      if (navLink) navLink.classList.add('active');
     }
   });
 }, { rootMargin: '-' + (52+20) + 'px 0px -70% 0px' });
@@ -5116,7 +5121,7 @@ func buildSourcesFooter(graph *grapher.Graph, maxSources int) string {
 }
 
 // buildWhereToGoNext creates a "next reading" navigation footer for narrative articles.
-func buildWhereToGoNext(currentFile string, hasKeyConcepts bool) string {
+func buildWhereToGoNext(currentFile string, hasKeyConcepts, hasChapters bool) string {
 	var nextFile, nextTitle, nextDesc string
 	switch currentFile {
 	case "00-overview.md":
@@ -5126,7 +5131,11 @@ func buildWhereToGoNext(currentFile string, hasKeyConcepts bool) string {
 	case "02-architecture.md":
 		nextFile, nextTitle, nextDesc = "03-project-structure.md", "项目结构", "熟悉目录组织方式和模块职责"
 	case "03-project-structure.md":
-		if hasKeyConcepts {
+		// chapters (深入剖析) sits between project-structure and key-concepts in
+		// the sidebar order; route the "next" link there when chapters exist.
+		if hasChapters {
+			nextFile, nextTitle, nextDesc = "index.html#chapters", "深入剖析", "按功能主题深入各模块的职责与实现"
+		} else if hasKeyConcepts {
 			nextFile, nextTitle, nextDesc = "04-key-concepts.md", "核心概念", "深入理解关键设计决策与架构思想"
 		} else {
 			nextFile, nextTitle, nextDesc = "05-learning-path.md", "学习路径", "按目标选择最适合的阅读路径"

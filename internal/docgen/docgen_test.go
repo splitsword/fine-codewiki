@@ -2003,21 +2003,24 @@ func TestInferCapabilityFromName(t *testing.T) {
 }
 
 func TestBuildWhereToGoNext(t *testing.T) {
-	assert.Contains(t, buildWhereToGoNext("00-overview.md", true), "项目能做什么")
-	assert.Contains(t, buildWhereToGoNext("01-what-it-does.md", true), "架构说明")
-	assert.Contains(t, buildWhereToGoNext("02-architecture.md", true), "项目结构")
+	assert.Contains(t, buildWhereToGoNext("00-overview.md", true, false), "项目能做什么")
+	assert.Contains(t, buildWhereToGoNext("01-what-it-does.md", true, false), "架构说明")
+	assert.Contains(t, buildWhereToGoNext("02-architecture.md", true, false), "项目结构")
 
-	// With key concepts
-	assert.Contains(t, buildWhereToGoNext("03-project-structure.md", true), "核心概念")
-	// Without key concepts
-	assert.Contains(t, buildWhereToGoNext("03-project-structure.md", false), "学习路径")
+	// With key concepts, no chapters
+	assert.Contains(t, buildWhereToGoNext("03-project-structure.md", true, false), "核心概念")
+	// Without key concepts, no chapters
+	assert.Contains(t, buildWhereToGoNext("03-project-structure.md", false, false), "学习路径")
+	// With chapters → next is 深入剖析 (not 核心概念)
+	assert.Contains(t, buildWhereToGoNext("03-project-structure.md", true, true), "深入剖析")
+	assert.NotContains(t, buildWhereToGoNext("03-project-structure.md", true, true), "核心概念")
 
-	assert.Contains(t, buildWhereToGoNext("04-key-concepts.md", true), "学习路径")
-	assert.Contains(t, buildWhereToGoNext("05-learning-path.md", true), "API 参考")
-	assert.Contains(t, buildWhereToGoNext("api-reference.md", true), "阅读完成")
+	assert.Contains(t, buildWhereToGoNext("04-key-concepts.md", true, false), "学习路径")
+	assert.Contains(t, buildWhereToGoNext("05-learning-path.md", true, false), "API 参考")
+	assert.Contains(t, buildWhereToGoNext("api-reference.md", true, false), "阅读完成")
 
 	// Unknown file returns empty
-	assert.Empty(t, buildWhereToGoNext("unknown.md", true))
+	assert.Empty(t, buildWhereToGoNext("unknown.md", true, false))
 }
 
 func TestGenerateWikiEnhancedWithWhereToGoNext(t *testing.T) {
