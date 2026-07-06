@@ -673,6 +673,9 @@ em a[href]:hover { color:var(--accent2); }
 	/* ---- Chapter grid & cards ---- */
 	.chapter-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; margin:20px 0; }
 	.chapter-card { display:flex; flex-direction:column; gap:6px; padding:20px; border-radius:var(--radius-lg); border:1px solid var(--border); background:var(--bg); text-decoration:none; color:var(--text); transition:all .2s; }
+	#chapters { padding:48px 0; margin-top:32px; border-top:2px solid var(--border); scroll-margin-top:calc(var(--topbar-h, 56px) + 16px); }
+	#chapters > h2 { font-size:1.8em; font-weight:800; margin-bottom:8px; }
+	#chapters > p { color:var(--text2); margin-bottom:24px; }
 	.chapter-card:hover { border-color:var(--accent); box-shadow:0 4px 16px var(--accent-glow); transform:translateY(-2px); }
 	.chapter-card-title { font-size:1.05em; font-weight:700; color:var(--text); }
 	.chapter-card-subtitle { font-size:0.9em; color:var(--text2); line-height:1.4; }

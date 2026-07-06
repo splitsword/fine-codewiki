@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-06 — style(docgen): 增强 index 深入剖析区块视觉，避免滚轮一带而过 (103cac1)
+
 - 2026-07-06 — fix(docgen): index 页"下一步"链接与 scroll spy 纳入深入剖析区块 (2f8e91f)
 
 - 2026-07-04 — fix(docgen): index 页 chapters 区块移到项目结构之后，匹配侧边栏顺序 (00bac7f)
