@@ -676,6 +676,16 @@ em a[href]:hover { color:var(--accent2); }
 	#chapters { padding:48px 0; margin-top:32px; border-top:2px solid var(--border); scroll-margin-top:calc(var(--topbar-h, 56px) + 16px); }
 	#chapters > h2 { font-size:1.8em; font-weight:800; margin-bottom:8px; }
 	#chapters > p { color:var(--text2); margin-bottom:24px; }
+	.chapter-inline { padding:24px 0; border-bottom:1px solid var(--border2); scroll-margin-top:calc(var(--topbar-h, 56px) + 16px); }
+	.chapter-inline:last-of-type { border-bottom:0; }
+	.chapter-inline-title { font-size:1.5em; font-weight:700; color:var(--text); margin-bottom:4px; }
+	.chapter-inline-subtitle { color:var(--text2); font-size:1.05em; margin-bottom:8px; }
+	.chapter-inline-meta { display:flex; gap:12px; margin-bottom:16px; font-size:0.9em; color:var(--text3); }
+	.chapter-inline-body { line-height:1.8; }
+	.chapter-inline-body h4 { font-size:1.15em; font-weight:700; margin:18px 0 8px; color:var(--text); }
+	.chapter-inline-body h5 { font-size:1em; font-weight:600; margin:14px 0 6px; color:var(--text2); }
+	.chapter-inline-detail { margin-top:20px; padding:12px 16px; background:var(--accent-glow); border-radius:var(--radius); }
+	.chapter-inline-detail a { color:var(--accent); font-weight:600; text-decoration:none; }
 	.chapter-card:hover { border-color:var(--accent); box-shadow:0 4px 16px var(--accent-glow); transform:translateY(-2px); }
 	.chapter-card-title { font-size:1.05em; font-weight:700; color:var(--text); }
 	.chapter-card-subtitle { font-size:0.9em; color:var(--text2); line-height:1.4; }

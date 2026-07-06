@@ -4764,8 +4764,7 @@ func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
 		}
 		body.WriteString(`<section id="chapters">` + "\n")
 		body.WriteString(`<h2>📕 深入剖析</h2>` + "\n")
-		body.WriteString(`<p>以下章节按功能主题组织，每个章节包含相关模块的详细文档和上下文源码导航。</p>` + "\n")
-		body.WriteString(`<div class="chapter-grid">` + "\n")
+		body.WriteString(`<p>以下按功能主题逐章展开叙事，向下滚动依次阅读；每章末尾可进入完整模块详情页（含代码片段、依赖图）。</p>` + "\n")
 		for _, theme := range sortedThemeKeys(wiki.ModuleThemes) {
 			safeName := safeThemeName(theme)
 			ct, ok := wiki.ChapterTitles[theme]
@@ -4780,15 +4779,21 @@ func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
 				}
 			}
 			modCount := len(wiki.ModuleThemes[theme])
-			body.WriteString(fmt.Sprintf(`<a class="chapter-card" href="chapters/%s.html">`, safeName))
-			body.WriteString(fmt.Sprintf(`<span class="chapter-card-title">%s</span>`, title))
+			secID := "chapter-" + safeName
+			body.WriteString(fmt.Sprintf(`<section id="%s" class="chapter-inline">`+"\n", secID))
+			body.WriteString(fmt.Sprintf(`<h3 class="chapter-inline-title">%s</h3>`+"\n", HTMLEscape(title)))
 			if subtitle != "" {
-				body.WriteString(fmt.Sprintf(`<span class="chapter-card-subtitle">%s</span>`, subtitle))
+				body.WriteString(fmt.Sprintf(`<p class="chapter-inline-subtitle">%s</p>`+"\n", HTMLEscape(subtitle)))
 			}
-			body.WriteString(fmt.Sprintf(`<span class="chapter-card-meta"><span>%s</span><span>%d 个模块</span></span>`, diff, modCount))
-			body.WriteString(`</a>` + "\n")
+			body.WriteString(fmt.Sprintf(`<div class="chapter-inline-meta"><span>%s</span><span>%d 个模块</span></div>`+"\n", HTMLEscape(diff), modCount))
+			if narrative := wiki.ChapterNarratives[theme]; narrative != "" {
+				body.WriteString(`<div class="chapter-inline-body">` + "\n")
+				body.WriteString(downgradeModuleHeadings(makeSourceRefsClickable(RenderMarkdownBody([]byte(narrative)), primaryExt)))
+				body.WriteString(`</div>` + "\n")
+			}
+			body.WriteString(fmt.Sprintf(`<p class="chapter-inline-detail"><a href="chapters/%s.html">查看「%s」完整模块详情 →</a></p>`+"\n", safeName, HTMLEscape(title)))
+			body.WriteString(`</section>` + "\n")
 		}
-		body.WriteString(`</div>` + "\n")
 		body.WriteString(`</section>` + "\n")
 	}
 	for _, sec := range sections {
@@ -4872,7 +4877,7 @@ func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
 				if ok {
 					icon = "🏷️"
 				}
-				nav.WriteString(fmt.Sprintf(`<li><a href="chapters/%s.html"><span class="nav-icon">%s</span><span class="nav-title">%s</span>`, safeName, icon, title))
+				nav.WriteString(fmt.Sprintf(`<li><a href="#chapter-%s"><span class="nav-icon">%s</span><span class="nav-title">%s</span>`, safeName, icon, title))
 				if ct.Difficulty != "" {
 					nav.WriteString(fmt.Sprintf(`<span class="nav-meta"><span class="nav-diff">%s</span></span>`, ct.Difficulty))
 				}

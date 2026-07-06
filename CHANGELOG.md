@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 2026-07-06 — feat(docgen): index 深入剖析改为逐章内联叙事，滚动连续阅读 (50fca4e)
+
 - 2026-07-06 — style(docgen): 增强 index 深入剖析区块视觉，避免滚轮一带而过 (103cac1)
 
 - 2026-07-06 — fix(docgen): index 页"下一步"链接与 scroll spy 纳入深入剖析区块 (2f8e91f)
