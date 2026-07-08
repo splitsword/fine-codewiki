@@ -4877,7 +4877,7 @@ func GenerateStaticHTML(wiki *Wiki, graph *grapher.Graph) string {
 				if ok {
 					icon = "🏷️"
 				}
-				nav.WriteString(fmt.Sprintf(`<li><a href="#chapter-%s"><span class="nav-icon">%s</span><span class="nav-title">%s</span>`, safeName, icon, title))
+				nav.WriteString(fmt.Sprintf(`<li><a href="chapters/%s.html" data-spy-target="chapter-%s"><span class="nav-icon">%s</span><span class="nav-title">%s</span>`, safeName, safeName, icon, title))
 				if ct.Difficulty != "" {
 					nav.WriteString(fmt.Sprintf(`<span class="nav-meta"><span class="nav-diff">%s</span></span>`, ct.Difficulty))
 				}
@@ -5038,6 +5038,11 @@ var observer = new IntersectionObserver(function(entries) {
     if (id === 'chapters') {
       var cg = document.querySelector('.nav-chapters-group');
       if (cg) cg.classList.add('spy-active');
+    } else if (id.indexOf('chapter-') === 0) {
+      // inline chapter narrative: highlight the sidebar item by data-spy-target
+      // (the link itself is an external chapter page link, not an #anchor)
+      var item = document.querySelector('[data-spy-target="' + id + '"]');
+      if (item) item.classList.add('active');
     } else {
       var navLink = document.querySelector('.sidebar a[href="#' + id + '"]');
       if (navLink) navLink.classList.add('active');
